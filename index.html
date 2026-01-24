@@ -1459,36 +1459,7 @@ async function sendChat(){
       
       return; // Чтобы сообщение не улетело в чат
   }  
-  // 3. Насильная смена имени: /id rename НовоеИмя
-  if (txt.startsWith('/') && txt.includes(' rename ')) {
-      chatInputOverlay.value = '';
-      const parts = txt.replace('/', '').split(' rename ');
-      const targetId = parts[0].trim();
-      const newName = parts[1] ? parts[1].trim() : '';
   
-      if (!targetId || !newName) {
-        console.log('Неверный формат: /id rename НовоеИмя');
-        return;
-      }
-  
-      // Меняем в users
-      const userRef = ref(db, `${basePath}/users/${targetId}`);
-      await update(userRef, { name: newName });
-      console.log(`Имя в users/${targetId} → ${newName}`);
-  
-      // Меняем в presence
-      const presenceRef = ref(db, `${basePath}/presence/${targetId}`);
-      await update(presenceRef, { 
-        name: newName,
-        ts: Date.now()  // чтобы presence не "умер"
-      });
-      console.log(`Имя в presence/${targetId} → ${newName}`);
-  
-      // Если хочешь — можно ещё обновить points (голоса), но они по uid, имя там берётся из presence/users
-      // await update(ref(db, `${basePath}/points/${targetId}`), { name: newName });
-  
-    return;
-  }
 // 2. Команда накопительного очерепнения с IP-баном: /id skull
   if (txt.startsWith('/') && txt.endsWith(' skull')) {
     chatInputOverlay.value = '';
