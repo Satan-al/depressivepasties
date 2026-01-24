@@ -1459,8 +1459,7 @@ async function sendChat(){
       
       return; // Чтобы сообщение не улетело в чат
   }  
-  if
-    // 3. Насильная смена имени: /id rename НовоеИмя
+  // 3. Насильная смена имени: /id rename НовоеИмя
   if (txt.startsWith('/') && txt.includes(' rename ')) {
       chatInputOverlay.value = '';
       const parts = txt.replace('/', '').split(' rename ');
