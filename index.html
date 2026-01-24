@@ -1458,9 +1458,10 @@ async function sendChat(){
 
       
       return; // Чтобы сообщение не улетело в чат
-  }
+  }  
+  if
     // 3. Насильная смена имени: /id rename НовоеИмя
-    if (txt.startsWith('/') && txt.includes(' rename ')) {
+  if (txt.startsWith('/') && txt.includes(' rename ')) {
       chatInputOverlay.value = '';
       const parts = txt.replace('/', '').split(' rename ');
       const targetId = parts[0].trim();
@@ -1487,8 +1488,8 @@ async function sendChat(){
       // Если хочешь — можно ещё обновить points (голоса), но они по uid, имя там берётся из presence/users
       // await update(ref(db, `${basePath}/points/${targetId}`), { name: newName });
   
-      return;
-    }
+    return;
+  }
 // 2. Команда накопительного очерепнения с IP-баном: /id skull
   if (txt.startsWith('/') && txt.endsWith(' skull')) {
     chatInputOverlay.value = '';
