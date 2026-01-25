@@ -411,6 +411,25 @@
       pointer-events: none;
       opacity: 0.6;
     }
+
+    /* Панель эмодзи для оверлея */
+    .overlay-emoji-panel {
+        position: fixed;
+        bottom: 110px; left: 50%;
+        transform: translateX(-50%) translateY(20px);
+        background: rgba(15, 23, 34, 0.9);
+        backdrop-filter: blur(12px);
+        border: 1px solid rgba(22, 199, 183, 0.3);
+        border-radius: 16px;
+        padding: 12px;
+        display: flex; gap: 8px;
+        opacity: 0; pointer-events: none;
+        transition: 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+        z-index: 10000;
+    }
+    .overlay-emoji-panel.show { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
+    .overlay-emoji-panel button { font-size: 1.5em !important; cursor: pointer; }
+
   </style>
 </head>
 <body>
@@ -433,24 +452,24 @@
 
     <!-- реакции -->
     <div id="reactionsBar" style="display:flex;gap:8px;align-items:center;margin-left:8px">
-      <button class="btn ghost small" data-emo="👍" style="font-size:1.4em;padding:8px 14px">👍</button>
-      <button class="btn ghost small" data-emo="👎" style="font-size:1.4em;padding:8px 14px">👎</button>
-      <button class="btn ghost small" data-emo="❤️" style="font-size:1.4em;padding:8px 14px">❤️</button>
-      <button class="btn ghost small" data-emo="😂" style="font-size:1.4em;padding:8px 14px">😂</button>
-      <button class="btn ghost small" data-emo="😮" style="font-size:1.4em;padding:8px 14px">😮</button>
-      <button class="btn ghost small" data-emo="😢" style="font-size:1.4em;padding:8px 14px">😢</button>
-      <button class="btn ghost small" data-emo="🔥" style="font-size:1.4em;padding:8px 14px">🔥</button>
-      <button class="btn ghost small" data-emo="🤡" style="font-size:1.4em;padding:8px 14px">🤡</button>
-      <button class="btn ghost small" data-emo="🤬" style="font-size:1.4em;padding:8px 14px">🤬</button>
-      <button class="btn ghost small" data-emo="🍷" style="font-size:1.4em;padding:8px 14px">🍷</button>
-      <button class="btn ghost small" data-emo="🧐" style="font-size:1.4em;padding:8px 14px">🧐</button>
-      <button class="btn ghost small" data-emo="💃" style="font-size:1.4em;padding:8px 14px">💃</button>
-      <button class="btn ghost small" data-emo="🚩" style="font-size:1.4em;padding:8px 14px">🚩</button>
-      <button class="btn ghost small" data-emo="🤷‍♂️" style="font-size:1.4em;padding:8px 14px">🤷‍♂️</button>
-      <button class="btn ghost small" data-emo="🙄" style="font-size:1.4em;padding:8px 14px">🙄</button>
-      <button class="btn ghost small" data-emo="💔" style="font-size:1.4em;padding:8px 14px">💔</button>
-      <button class="btn ghost small" data-emo="🤯" style="font-size:1.4em;padding:8px 14px">🤯</button>
-      <button class="btn ghost small" data-emo="🔔" style="font-size:1.4em;padding:8px 14px">🔔</button>
+      <button id="emoBtn_0" class="btn ghost small" data-emo="👍" style="font-size:1.4em;padding:8px 14px">👍</button>
+      <button id="emoBtn_1" class="btn ghost small" data-emo="👎" style="font-size:1.4em;padding:8px 14px">👎</button>
+      <button id="emoBtn_2"  class="btn ghost small" data-emo="❤️" style="font-size:1.4em;padding:8px 14px">❤️</button>
+      <button id="emoBtn_3"  class="btn ghost small" data-emo="😂" style="font-size:1.4em;padding:8px 14px">😂</button>
+      <button id="emoBtn_4"  class="btn ghost small" data-emo="😮" style="font-size:1.4em;padding:8px 14px">😮</button>
+      <button id="emoBtn_5"  class="btn ghost small" data-emo="😢" style="font-size:1.4em;padding:8px 14px">😢</button>
+      <button id="emoBtn_6"  class="btn ghost small" data-emo="🔥" style="font-size:1.4em;padding:8px 14px">🔥</button>
+      <button id="emoBtn_7"  class="btn ghost small" data-emo="🤡" style="font-size:1.4em;padding:8px 14px">🤡</button>
+      <button id="emoBtn_8"  class="btn ghost small" data-emo="🤬" style="font-size:1.4em;padding:8px 14px">🤬</button>
+      <button id="emoBtn_9"  class="btn ghost small" data-emo="🍷" style="font-size:1.4em;padding:8px 14px">🍷</button>
+      <button id="emoBtn_10"  class="btn ghost small" data-emo="🧐" style="font-size:1.4em;padding:8px 14px">🧐</button>
+      <button id="emoBtn_11"  class="btn ghost small" data-emo="💃" style="font-size:1.4em;padding:8px 14px">💃</button>
+      <button id="emoBtn_12"  class="btn ghost small" data-emo="🚩" style="font-size:1.4em;padding:8px 14px">🚩</button>
+      <button id="emoBtn_13"  class="btn ghost small" data-emo="🤷‍♂️" style="font-size:1.4em;padding:8px 14px">🤷‍♂️</button>
+      <button id="emoBtn_14"  class="btn ghost small" data-emo="🙄" style="font-size:1.4em;padding:8px 14px">🙄</button>
+      <button id="emoBtn_15"  class="btn ghost small" data-emo="💔" style="font-size:1.4em;padding:8px 14px">💔</button>
+      <button id="emoBtn_16"  class="btn ghost small" data-emo="🤯" style="font-size:1.4em;padding:8px 14px">🤯</button>
+      <button id="emoBtn_17"  class="btn ghost small" data-emo="🔔" style="font-size:1.4em;padding:8px 14px">🔔</button>
       <button class="btn ghost small" data-reaction-type="png" data-reaction-src="images/crying.png" data-reaction-key="плачу" style="font-size:1.4em;padding:8px 14px">
         <img src="images/crying.png" alt="Плачу" style="width: 24px; height: 24px; vertical-align: middle;">
       </button>
@@ -830,6 +849,34 @@
   });
 
   /* ======= DATA LISTENERS ======= */
+
+  let userEmojis = []; // Сюда загрузим твои кастомные штуки
+
+  function setupEmojiListener(uid) {
+    const emojiRef = ref(db, `${basePath}/users/${uid}/settings/emojis`);
+    onValue(emojiRef, (snap) => {
+      const val = snap.val();
+      if (val && Array.isArray(val)) {
+        userEmojis = val;
+        applyUserEmojis(); // Красим кнопки
+      }
+    });
+  }
+
+  // Функция, которая берет массив и "засовывает" эмодзи в твои кнопки
+  function applyUserEmojis() {
+    userEmojis.forEach((emo, i) => {
+      const btn = document.getElementById(`emoBtn_${i}`);
+      if (btn) {
+        btn.innerHTML = emo;
+        btn.setAttribute('data-emo', emo);
+      }
+    });
+    // Если есть панель оверлея, её тоже обновим
+    if (typeof renderOverlayEmojis === 'function') renderOverlayEmojis();
+  }
+
+
   onValue(pointsRoot, (snap)=>{
     const val=snap.val()||{}; 
     state.points.clear(); 
@@ -1209,7 +1256,7 @@ if (!window.__reactionsBound) {
   $statusText.textContent='Оффлайн'; $dotAuth.classList.add('warn');
 
   onAuthStateChanged(auth, (user)=>{
-    if (user) { state.authed = true; $dotAuth.classList.remove('warn'); $dotAuth.classList.add('ok'); $statusText.textContent='Онлайн'; heartbeat(); }
+    if (user) { state.authed = true; $dotAuth.classList.remove('warn'); $dotAuth.classList.add('ok'); $statusText.textContent='Онлайн'; heartbeat();setupEmojiListener(user.uid); }
     else { state.authed = false; $dotAuth.classList.remove('ok'); $dotAuth.classList.add('warn'); $statusText.textContent='Оффлайн'; }
   });
 
@@ -1458,8 +1505,8 @@ async function sendChat(){
 
       
       return; // Чтобы сообщение не улетело в чат
-  }  
-  
+  }
+
 // 2. Команда накопительного очерепнения с IP-баном: /id skull
   if (txt.startsWith('/') && txt.endsWith(' skull')) {
     chatInputOverlay.value = '';
@@ -3082,6 +3129,57 @@ window.spawnEmoji = spawnEmoji;
     });
   }
   
+  // Функция вызова панели эмодзи (для Python)
+  window.toggleEmojiPanel = function() {
+    const panel = document.getElementById('overlayEmojiPanel');
+    if (!panel) return false;
+    
+    if (panel.innerHTML.trim() === "") {
+      const bar = document.getElementById('reactionsBar');
+      if (bar) {
+        panel.innerHTML = bar.innerHTML;
+        const hotkeys = ['Q','W','E','R','T','A','S','D','F','G','Z','X','C','V','B'];
+        panel.querySelectorAll('button').forEach((btn, index) => {
+          btn.removeAttribute('id');
+          if (hotkeys[index]) btn.title = `Alt + ${hotkeys[index]}`;
+          
+          btn.onclick = () => {
+            const type = btn.getAttribute('data-reaction-type');
+            const emo = btn.getAttribute('data-emo');
+            const src = btn.getAttribute('data-reaction-src');
+            const key = btn.getAttribute('data-reaction-key');
+
+            // ОТПРАВКА в базу
+            if (type === 'png') {
+              if (typeof sendReaction === 'function') sendReaction({ type: 'png', src, key });
+              // ЛОКАЛЬНЫЙ ПОЛЕТ (визуально для тебя)
+              if (window.createFlyingEmoji) window.createFlyingEmoji(src, true);
+            } else {
+              const char = emo || btn.textContent;
+              if (typeof sendReaction === 'function') sendReaction(char);
+              // ЛОКАЛЬНЫЙ ПОЛЕТ
+              if (window.createFlyingEmoji) window.createFlyingEmoji(char, false);
+            }
+          };
+        });
+      }
+    }
+    return panel.classList.toggle('show');
+  };
+
+  // Исправленный обработчик хоткеев
+  window.overlayHotkey = function(idx) {
+    const bar = document.getElementById('reactionsBar');
+    if (!bar) return;
+    const btns = bar.querySelectorAll('button');
+    // ВАЖНО: проверяем индекс (Python пришлет 0 для первой кнопки)
+    if (btns[idx]) {
+        btns[idx].click();
+    }
+  };
+    
+
+
   // Отвязать Telegram
   window.unlinkTelegram = async function() {
     if (!confirm('Отвязать Telegram аккаунт?')) return;
@@ -3203,6 +3301,59 @@ window.spawnEmoji = spawnEmoji;
     }
   `;
   document.head.appendChild(telegramAnimStyle);
+  
+    // Сохранение
+  function saveEmojiToDb(index, newValue) {
+    if (!auth.currentUser) return;
+    userEmojis[index] = newValue;
+    const emojiRef = ref(db, `${basePath}/users/${auth.currentUser.uid}/settings`);
+    update(emojiRef, { emojis: userEmojis });
+  }
+
+  // Вешаем правый клик на все кнопки при загрузке
+  document.querySelectorAll('[id^="emoBtn_"]').forEach((btn, i) => {
+    btn.oncontextmenu = (e) => {
+      e.preventDefault();
+      const current = btn.getAttribute('data-emo');
+      const newValue = prompt("Изменить эмодзи/текст:", current);
+      if (newValue !== null && newValue !== "") {
+        saveEmojiToDb(i, newValue);
+      }
+    };
+  });
+
+  // Для Python: нажал Alt+1..15 -> вылетела реакция
+  window.overlayHotkey = function(idx) {
+      const bar = document.getElementById('reactionsBar');
+      if (!bar) return;
+      
+      const btns = bar.querySelectorAll('button');
+      const btn = btns[idx];
+      if (btn) {
+          // 1. Кликаем по кнопке (отправка в базу)
+          btn.click(); 
+
+          // 2. Ищем, как на твоем сайте называется функция полета
+          // Обычно это createFlyingEmoji, spawnEmoji или что-то похожее
+          const flyFunc = window.createFlyingEmoji || window.spawnEmoji || window.addEmoji;
+          
+          if (typeof flyFunc === 'function') {
+              const type = btn.getAttribute('data-reaction-type');
+              const emo = btn.getAttribute('data-emo');
+              const src = btn.getAttribute('data-reaction-src');
+              
+              if (type === 'png' || src) {
+                  // Если картинка (PNG)
+                  flyFunc(src || btn.querySelector('img').src, true);
+              } else {
+                  // Если текст (Emoji)
+                  flyFunc(emo || btn.textContent, false);
+              }
+          } else {
+              console.log("ОШИБКА: Функция полета не найдена. Проверь название в index.html");
+          }
+      }
+  };
 </script>
 
 <!-- Модальное окно привязки Telegram -->
@@ -3263,5 +3414,8 @@ window.spawnEmoji = spawnEmoji;
   </div>
 </div>
 
+
+
+<div id="overlayEmojiPanel" class="overlay-emoji-panel"></div>
 </body>
 </html>
