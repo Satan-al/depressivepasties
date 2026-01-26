@@ -859,19 +859,6 @@
       });
     }
 
-    const emojiSetup = document.querySelector('.emoji-setup-container');
-    const emojiPreview = emojiSetup ? emojiSetup.querySelector('.preview-container') : null;
-    if (emojiSetup) emojiSetup.classList.remove('open');
-    if (emojiPreview) {
-      emojiPreview.addEventListener('click', (e)=>{
-        e.preventDefault();
-        e.stopPropagation();
-        emojiSetup.classList.toggle('open');
-      });
-      document.addEventListener('click', (ev)=>{
-        if (!emojiSetup.contains(ev.target)) emojiSetup.classList.remove('open');
-      });
-    }
 
 
   // chat
@@ -4067,6 +4054,12 @@ if (typeof window._drawTintedEmoji !== 'function') {
   };
 }
 
+
+// === gate helper: gray check (used for disabling sepia/hue for grayscale colors) ===
+function isGray(rgb){
+  return !!rgb && rgb.r === rgb.g && rgb.g === rgb.b;
+}
+
 function boot(){
     const gateColor = document.getElementById('gateColor');
     const emojiGrid = document.getElementById('emojiGrid');
@@ -4159,10 +4152,37 @@ function boot(){
         emojiDisplay.style.filter = 'grayscale(1) brightness(1.08) contrast(1.22)';
       } else {
         const hue = hueFromRgb(rgb.r, rgb.g, rgb.b);
-        // sepia base + hue rotate gives internal gradients instead of flat tint
-        emojiDisplay.style.filter = `grayscale(1) sepia(1) saturate(1.35) hue-rotate(${hue}deg) brightness(0.95) contrast(1.12)`;
+        // sepia base shifts the hue wheel (≈ +60°). Compensate so the picked HEX hue matches the preview.
+        const hueAdj = ((hue - 60) % 360 + 360) % 360;
+        emojiDisplay.style.filter = `grayscale(1) sepia(1) saturate(1.35) hue-rotate(${hueAdj}deg) brightness(0.95) contrast(1.12)`;
       }
     }
+      // Outline + subtle glow (like clusters), so the avatar doesn't drown in same-color bubble.
+      function lightenHex(hex, amt){
+        const h = (hex||'#00ffd5').replace('#','');
+        const n = parseInt(h.length===3 ? (h[0]+h[0]+h[1]+h[1]+h[2]+h[2]) : h, 16);
+        let r=(n>>16)&255, g=(n>>8)&255, b=n&255;
+        r = Math.min(255, Math.round(r + (255-r)*amt));
+        g = Math.min(255, Math.round(g + (255-g)*amt));
+        b = Math.min(255, Math.round(b + (255-b)*amt));
+        return `rgb(${r}, ${g}, ${b})`;
+      }
+
+      if (!selected){
+        emojiDisplay.style.textShadow = 'none';
+      } else if (isGray){
+        // neutral outline, no glow
+        emojiDisplay.style.textShadow =
+          '0 0 0.8px rgba(0,0,0,0.85), 0 0 2px rgba(0,0,0,0.55)';
+      } else {
+        const glow = lightenHex(hex, 0.35);
+        // fake outline with multi-shadow + soft glow
+        emojiDisplay.style.textShadow =
+          `0 0 1px ${glow}, 0 0 2px ${glow}, 0 0 8px rgba(0,0,0,0.15),
+           -1px 0 ${glow}, 1px 0 ${glow}, 0 -1px ${glow}, 0 1px ${glow},
+           -1px -1px ${glow}, 1px -1px ${glow}, -1px 1px ${glow}, 1px 1px ${glow}`;
+      }
+
 
     // color picker: keep in sync with preview
     function syncColor(){
