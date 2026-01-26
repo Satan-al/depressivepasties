@@ -656,7 +656,7 @@
     <div style="display:flex;gap:8px;align-items:center;margin-left:8px" id="toolsBar">
       <button class="btn small" id="toolToggle" title="Переключить голос/рисование">Рисовать</button>
       <button class="btn ghost small" id="toolErase" title="Ластик">Ластик</button>
-      <button class="btn ghost small art-only" id="toolFill" title="Заливка" style="display:none">🪣</button>
+      <button class="btn ghost small art-only" id="toolFill" title="Заливка" >🪣</button>
       <button class="btn ghost small art-only" id="toolPick" title="Пипетка" style="display:none">🔍</button>
       <button class="btn ghost small danger" id="toolClear" title="Очистить холст">Очистить</button>
       <!-- Размер кисти -->
@@ -2952,7 +2952,7 @@ function spawnEmoji(it){
     el.className = 'emoji stroke';
     el.style.setProperty('--emoji-stroke', stroke);
 
-    const emo = (it.emoji ?? it.emo);
+    const emo = (it.emoji ?? it.emo) || '❤️';
     el.textContent = emo;
 }
 
@@ -3507,7 +3507,7 @@ function _floodFillOnCtx(ctx2, sx, sy, hex){
   const stack = [sx,sy];
   // tolerance-based match to avoid tiny "black seams" from anti-aliasing
 const tol = 18; // color tolerance
-const aMin = 1; // include transparent pixels as target too
+const aMin = 0; // include transparent pixels as target too
 const match = (i)=> {
   const dr = d[i]-target[0], dg=d[i+1]-target[1], db=d[i+2]-target[2], da=d[i+3]-target[3];
   return (Math.abs(dr)<=tol && Math.abs(dg)<=tol && Math.abs(db)<=tol && Math.abs(da)<=tol && d[i+3]>=aMin);
@@ -3940,7 +3940,7 @@ if (s && s.fill){
       try { await set(ref(db, `${basePath}/points/${uid}`), p); } catch {}
       return;
     }
-    if (state.tool==='fill' && state.artEnabled){
+    if (state.tool==='fill'){
       e.preventDefault();
       const uid = auth.currentUser?.uid || state.id;
       const pos = normFromEvent(e);
@@ -4552,9 +4552,14 @@ window.closeLinkModal = function() {
     // Сохранение
   function saveEmojiToDb(index, newValue) {
     if (!auth.currentUser) return;
+    // нормализуем массив до нужной длины
+    if (!Array.isArray(userEmojis)) userEmojis = [];
+    while (userEmojis.length <= index) userEmojis.push('');
     userEmojis[index] = newValue;
-    const emojiRef = ref(db, `${basePath}/users/${auth.currentUser.uid}/settings`);
-    update(emojiRef, { emojis: userEmojis });
+
+    // RTDB лучше хранить как массив через set на child-путь, а читать уметь и объектом тоже
+    const emojiRef = ref(db, `${basePath}/users/${auth.currentUser.uid}/settings/emojis`);
+    set(emojiRef, userEmojis).then(()=>{ try{ applyUserEmojis(); }catch{} }).catch(()=>{});
   }
 
   // Вешаем правый клик на все кнопки при загрузке
