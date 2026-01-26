@@ -1111,6 +1111,19 @@ window.addEventListener('cc_emoji_changed', async (e) => {
   const reactsRoot = ref(db, `${basePath}/reactions`);
   const ratModeRef = ref(db, `${basePath}/rat_mode`);  // Флаг RAT режима
   const tgLinksRoot = ref(db, `${basePath}/telegram_links`);
+  // Telegram links index: tgUserId -> siteUserId (нужно для toast-ов от Telegram)
+  onValue(tgLinksRoot, (snap)=>{
+    try{
+      const v = snap.val() || {};
+      const m = new Map();
+      for (const [siteUid, rec] of Object.entries(v)){
+        const tgId = rec && (rec.tgUserId ?? rec.telegramUserId);
+        if (tgId != null) m.set(String(tgId), siteUid);
+      }
+      state.tgIndex = m;
+    }catch(e){ console.warn('tgLinks index failed', e); }
+  });
+
 
 
   /* ======= PRESENCE ======= */
@@ -1190,9 +1203,19 @@ setInterval(heartbeat, 8000);
   onValue(tgLinksRoot, (snap)=>{
     const all = snap.val() || {};
     const idx = new Map();
-    for (const [uid,info] of Object.entries(all)){
-      const tgUserId = info && (info.tgUserId || info.telegramUserId || info.userId);
-      if (tgUserId != null) idx.set(String(tgUserId), uid);
+    for (const [k,info] of Object.entries(all)){
+      // Support both schemas:
+      // A) telegram_links/<uid> = { tgUserId, ... }
+      // B) telegram_links/<tgUserId> = { uid, ... }
+      const v = info || {};
+      const tg = v.tgUserId || v.telegramUserId || v.tg_user_id || v.telegram_id || v.userId || v.telegramId || v.tgId;
+      const uid = v.uid || v.userUID || v.userUid || v.siteUid || v.siteUID;
+      const keyLooksLikeTg = /^\d+$/.test(String(k));
+      if (keyLooksLikeTg && uid){
+        idx.set(String(k), String(uid));
+      } else if (tg){
+        idx.set(String(tg), String(k));
+      }
     }
     state.tgIndex = idx;
   });
@@ -1207,61 +1230,92 @@ setInterval(heartbeat, 8000);
 
     const next = new Map();
     for (const [uid,p] of Object.entries(val)){
-      if (now - (p.ts||0) <= 12000){
-        next.set(uid, p);
+      // keep all entries; determine online/offline by ts/state later
+      next.set(uid, p || {});
+    }
+
+    // Join toast in overlay: only after initial load, only when someone APPEARS online,
+    // don't announce yourself, and anti-spam per user.
+    if (__ccPresenceInit && isOverlayMode()){
+      const me = auth.currentUser?.uid;
+      const now = Date.now();
+      window.__ccJoinToastAt = window.__ccJoinToastAt || new Map();
+
+      const onlineNow = new Set();
+      const appeared = [];
+
+      for (const [uid,pRaw] of next.entries()){
+        const p = pRaw || {};
+        const ts = Number(p.ts || 0);
+        const isFresh = ts > 0 && (now - ts) <= 12000;
+        const st = p.state || 'online';
+        const isOnline = isFresh && st !== 'offline';
+        if (isOnline) onlineNow.add(uid);
+
+        if (uid === me) continue;
+        if (isOnline && !__ccPrevOnline.has(uid)){
+          // антиспам: не чаще 1 раза в 5 минут на uid
+          const last = window.__ccJoinToastAt.get(uid) || 0;
+          if (now - last < 5*60*1000) continue;
+          window.__ccJoinToastAt.set(uid, now);
+          appeared.push(uid);
+        }
       }
-    }
 
-    // Join toast in overlay: only after initial load, only when someone appears online (or returns),
-    // and don't announce yourself.
-if (__ccPresenceInit && isOverlayMode()){
-  const me = auth.currentUser?.uid;
-  const now = Date.now();
-  window.__ccJoinToastAt = window.__ccJoinToastAt || new Map();
-
-  const newUids = [];
-  for (const [uid,p] of next.entries()){
-    if (uid === me) continue;
-    if (!__ccPrevOnline.has(uid)){
-      // антиспам: не спамим "у нас тут" чаще чем раз в 5 минут на одного и того же
-      const last = window.__ccJoinToastAt.get(uid) || 0;
-      if (now - last < 5*60*1000) continue;
-      window.__ccJoinToastAt.set(uid, now);
-      newUids.push(uid);
-    }
-  }
-
-  // подтягиваем имя из профиля/points, если presence ещё не успел его принести (первый заход)
-  for (const uid of newUids){
-    const p = next.get(uid) || {};
-    let nm = (p && p.name) ? String(p.name) : '';
-    if (!nm || nm === 'Чужой' || nm === 'Гость'){
-      try{
-        const snapU = await get(ref(db, `${basePath}/points/${uid}`));
-        const v = snapU.val();
-        if (v && v.name) nm = String(v.name);
-      }catch{}
-      if (!nm){
+      // подтягиваем имя из профиля/points, если presence ещё не успел его принести (первый заход)
+      for (const uid of appeared){
+        const p = next.get(uid) || {};
+        let nm = (p && p.name) ? String(p.name) : '';
+        if (!nm || nm === 'Чужой' || nm === 'Гость'){
+          try{
+            const snapU = await get(ref(db, `${basePath}/points/${uid}`));
+            const v = snapU.val();
+            if (v && v.name) nm = String(v.name);
+          }catch{}
+          if (!nm){
+            try{
+              const snapU2 = await get(ref(db, `${basePath}/users/${uid}`));
+              const v2 = snapU2.val();
+              if (v2 && (v2.displayName || v2.name)) nm = String(v2.displayName || v2.name);
+            }catch{}
+          }
+        }
+        if (!nm){
+          // иногда запись профиля приходит с задержкой
+          try{ await new Promise(r=>setTimeout(r, 300)); }catch{}
+          try{
+            const snapU3 = await get(ref(db, `${basePath}/points/${uid}`));
+            const v3 = snapU3.val();
+            if (v3 && v3.name) nm = String(v3.name);
+          }catch{}
+        }
+        if (!nm) nm = 'кто-то';
         try{
-          const snapU2 = await get(ref(db, `${basePath}/users/${uid}`));
-          const v2 = snapU2.val();
-          if (v2 && (v2.displayName || v2.name)) nm = String(v2.displayName || v2.name);
-        }catch{}
+          console.log('[JOIN TOAST] show', { uid, name: nm, ts: p.ts||0, state: p.state||'online', color: p.color||'#16c7b7', emoji: p.emoji||'⭕', now: Date.now(), prevOnline: (__ccPrevOnline && __ccPrevOnline.has ? __ccPrevOnline.has(uid) : undefined) });
+        }catch(e){}
+        showOverlayToast({ uid, color: p.color || '#16c7b7', emoji: p.emoji || '⭕', text: `У нас тут ${nm}` });
       }
+
+      __ccPrevOnline = onlineNow;
     }
-    if (!nm) nm = 'кто-то';
-    showOverlayToast({ uid, color: p.color || '#16c7b7', emoji: p.emoji || '⭕', text: `У нас тут ${nm}` });
-  }
-}
-
 state.presence.clear();
-
-    state.presence.clear();
     for (const [uid,p] of next.entries()){
       state.presence.set(uid,p);
     }
 
-    __ccPrevOnline = new Set(next.keys());
+    // keep a rolling set of who is ONLINE right now (fresh ts)
+    __ccPrevOnline = (()=>{ 
+      const s = new Set(); 
+      const now = Date.now();
+      for (const [uid,pRaw] of next.entries()){
+        const p = pRaw || {};
+        const ts = Number(p.ts || 0);
+        const isFresh = ts > 0 && (now - ts) <= 12000;
+        const st = p.state || 'online';
+        if (isFresh && st !== 'offline') s.add(uid);
+      }
+      return s;
+    })();
     __ccPresenceInit = true;
   });
 
@@ -1926,7 +1980,7 @@ if (txt === '/kick') {
   if (typeof chatInputOverlay !== 'undefined') chatInputOverlay.value = '';
   state.kickMode = true;
   // подсказка только себе
-  try { showToast('KICK: кликни по ОФФЛАЙН морде, чтобы убрать её'); } catch {}
+  try { showToast('KICK: кликни по ЛЮБОЙ морде, чтобы убрать её'); } catch {}
   return;
 }
 
@@ -1935,60 +1989,151 @@ if (txt === '/kick') {
   // 1. Команда объединения: /id_старый+id_новый
   // Команда слияния: /ID1 + ID2
   if (txt.startsWith('/') && txt.includes(' + ')) {
-      // Убираем слэш и разбиваем строку по плюсу
-      const cleanTxt = txt.substring(1); 
-      const [oldId, newId] = cleanTxt.split('+').map(s => s.trim());
+      // Команда слияния аккаунтов: /ID1 + ID2
+      // Требование: итоговый профиль (имя/цвет/эмодзи) = у аккаунта с ПОЗЖЕЙ датой регистрации (createdAt больше),
+      // независимо от порядка ввода.
+      const cleanTxt = txt.substring(1);
+      const [idAraw, idBraw] = cleanTxt.split('+').map(s => s.trim());
+      const idA = idAraw;
+      const idB = idBraw;
 
-          // Очищаем поле ввода сразу
-          if (typeof chatInput !== 'undefined') chatInput.value = '';
+      if (typeof chatInput !== 'undefined') chatInput.value = '';
+
+      (async ()=>{
+        try{
+          const refA = ref(db, `${basePath}/users/${idA}`);
+          const refB = ref(db, `${basePath}/users/${idB}`);
+          const snapA = await get(refA);
+          const snapB = await get(refB);
+
+          if (!snapA.exists() || !snapB.exists()){
+            alert('Один из аккаунтов не найден в базе.');
+            return;
+          }
+
+          const a = snapA.val() || {};
+          const b = snapB.val() || {};
+
           
-          console.log(`LOG: Попытка слияния ${oldId} -> ${newId}`);
+          const createdA = Number(a.createdAt || 0);
+          const createdB = Number(b.createdAt || 0);
 
-          const oldRef = ref(db, `${basePath}/users/${oldId}`);
-          const newRef = ref(db, `${basePath}/users/${newId}`);
+          // MERGE правило (v47):
+          //  a) UID итогового аккаунта = СТАРЫЙ (ранний createdAt), чтобы совпадало с siteUserId в telegram_links
+          //  b) Профиль (имя/цвет/морда=emoji) берём из НОВОГО (поздний createdAt)
+          //  c) Настройки "панели эмодзи" (если они вообще есть в базе) сохраняем от СТАРОГО
+          const oldId = (createdA <= createdB) ? idA : idB;
+          const newId = (oldId === idA) ? idB : idA;
 
-          get(oldRef).then(async (oldSnap) => {
-              const newSnap = await get(newRef);
+          const keepId = oldId; // остаётся
+          const dropId = newId; // удаляется
 
-              if (oldSnap.exists() && newSnap.exists()) {
-                  const oldData = oldSnap.val();
-                  const newData = newSnap.val();
+          const oldData = (keepId === idA) ? a : b;
+          const newData = (dropId === idA) ? a : b;
 
-                  // 1. Объединяем активность (все субботы)
-                  const mergedActivity = { 
-                      ...(oldData.activity || {}), 
-                      ...(newData.activity || {}) 
-                  };
+          const keepRef = ref(db, `${basePath}/users/${keepId}`);
+          const dropRef = ref(db, `${basePath}/users/${dropId}`);
 
-                  // 2. Берем самую раннюю дату регистрации
-                  const earliestCreated = Math.min(
-                      oldData.createdAt || Date.now(), 
-                      newData.createdAt || Date.now()
-                  );
+          // 1) Мержим активность
+          const mergedActivity = {
+            ...(oldData.activity || {}),
+            ...(newData.activity || {})
+          };
 
-                  // 3. Обновляем новый аккаунт
-                  await update(newRef, {
-                      activity: mergedActivity,
-                      createdAt: earliestCreated,
-                      mergedFrom: oldId
-                  });
+          // 2) createdAt сохраняем как самую раннюю (чтобы "возраст" не омолаживался)
+          const earliestCreated = Math.min(
+            Number(oldData.createdAt || Date.now()),
+            Number(newData.createdAt || Date.now())
+          );
 
-                  // 4. Удаляем старый аккаунт
-                  await remove(oldRef);
+          // 3) Профиль (имя/цвет/морда) берём из НОВОГО
+          const profileName  = (newData.name || newData.displayName || oldData.name || oldData.displayName || 'User');
+          const profileColor = (newData.color || oldData.color || '#16c7b7');
+          const profileEmoji = (newData.emoji || oldData.emoji || '⭕');
 
-                  alert(`Слияние завершено! Данные из ${oldId} перенесены в ${newId}. Старый акк удален.`);
-                  console.log("LOG: Слияние успешно.");
-              } else {
-                  alert("Ошибка: Один из ID не найден в базе. Проверь правильность написания.");
+          // 4) "Панель эмодзи" — сохраняем от СТАРОГО (если такое поле существует)
+          const emojiPanelState =
+            (oldData.emojiPanelState ?? oldData.emojiPanel ?? oldData.emojiPicker ?? oldData.emojiPanelPrefs ?? null);
+
+          const patch = {
+            activity: mergedActivity,
+            createdAt: earliestCreated,
+            mergedFrom: dropId,
+            mergedAt: Date.now(),
+            name: profileName,
+            color: profileColor,
+            emoji: profileEmoji
+          };
+          if (emojiPanelState != null) patch.emojiPanelState = emojiPanelState;
+
+          await update(keepRef, patch);
+
+          // Обновим points "победителя" профилем, координаты не трогаем
+          try{
+            await update(ref(db, `${basePath}/points/${keepId}`), {
+              name: profileName,
+              color: profileColor,
+              emoji: profileEmoji
+            });
+          }catch{}
+
+          // 5) Переносим telegram_links:
+          // после merge запись должна лежать по ключу keepId и иметь siteUserId = keepId.
+          try{
+            const allLinksSnap = await get(ref(db, `${basePath}/telegram_links`));
+            const allLinks = allLinksSnap.val() || {};
+            let chosen = null;
+
+            for (const [k, v0] of Object.entries(allLinks)){
+              const v = v0 || {};
+              const su = v.siteUserId || k;
+              const related = (k === keepId) || (su === keepId) || (k === dropId) || (su === dropId);
+              if (!related) continue;
+
+              // предпочитаем запись с tgUserId
+              if (!chosen) chosen = { key:k, val:v };
+              else if ((chosen.val.tgUserId == null) && (v.tgUserId != null)) chosen = { key:k, val:v };
+            }
+
+            if (chosen && chosen.val){
+              const finalVal = {
+                ...chosen.val,
+                siteUserId: keepId,
+                siteName: profileName,
+                siteColor: profileColor,
+                migratedAt: Date.now()
+              };
+              await set(ref(db, `${basePath}/telegram_links/${keepId}`), finalVal);
+            }
+
+            // удаляем все прочие записи, которые указывают на keep/drop (кроме нового каноничного keepId)
+            for (const [k, v0] of Object.entries(allLinks)){
+              if (k === keepId) continue;
+              const v = v0 || {};
+              const su = v.siteUserId || k;
+              const related = (k === keepId) || (su === keepId) || (k === dropId) || (su === dropId);
+              if (related){
+                try{ await remove(ref(db, `${basePath}/telegram_links/${k}`)); }catch{}
               }
-          }).catch(e => {
-              console.error("Ошибка при слиянии:", e);
-              alert("Произошла ошибка. Проверь консоль.");
-          });
+            }
+          }catch(e){ console.warn('merge telegram_links failed', e); }
 
-      
-      return; // Чтобы сообщение не улетело в чат
-  }
+          // 6) Удаляем points/presence "нового" аккаунта, чтобы не оставалась морда-призрак
+          try{ await remove(ref(db, `${basePath}/points/${dropId}`)); }catch{}
+          try{ await remove(ref(db, `${basePath}/presence/${dropId}`)); }catch{}
+
+          // 7) Удаляем "новый" аккаунт
+          await remove(dropRef);
+
+          alert(`Слияние завершено! UID оставлен: ${keepId} (старый). Профиль взят из: ${dropId} (новый).`);
+}catch(e){
+          console.error(e);
+          alert('Ошибка при слиянии. Смотри консоль.');
+        }
+      })();
+
+      return;
+  } // Чтобы сообщение не улетело в чат
 
 // 2. Команда накопительного очерепнения с IP-баном: /id skull
   if (txt.startsWith('/') && txt.endsWith(' skull')) {
@@ -2001,8 +2146,8 @@ if (txt === '/kick') {
       
       if (!snap.exists()) {
         console.error("Пользователь не найден в базе");
-        return;
-      }
+        // no return here; handled by else
+      } else {
 
       const data = snap.val();
       const activity = data.activity || {};
@@ -2074,6 +2219,7 @@ if (txt === '/kick') {
       
       if (!found) console.warn("Не удалось добавить череп: достигнут лимит за год");
     }
+      }
     return;
   }
 
@@ -2227,9 +2373,13 @@ window.addEventListener('pointerdown', ()=>{ _ensureToastAudio(); }, { once:true
     if (!isOverlayMode()) return;
     const toast = document.getElementById('overlayToast');
     if (!toast) return;
-    const color = (m && m.color) ? m.color : (state.color || '#16c7b7');
-    const resolvedUid = (m && m.uid) ? m.uid : (m && (m.tgUserId || m.telegramUserId || m.tg_id || m.tgId) && state.tgIndex && state.tgIndex.get(String(m.tgUserId || m.telegramUserId || m.tg_id || m.tgId)));
-    const emoji = (m && (m.emoji || (resolvedUid && state.presence?.get?.(resolvedUid)?.emoji) || (resolvedUid && state.points?.get?.(resolvedUid)?.emoji))) || '💬';
+    // Resolve uid even for Telegram-sourced messages
+    const tgKey = (m && (m.tgUserId || m.telegramUserId || m.tg_user_id || m.telegram_id || m.tg_id || m.tgId || m.telegramId || m.telegramUserID || m.tguserid || m.tgUserID));
+    const resolvedUid = (m && m.uid) ? m.uid : ((tgKey != null && state.tgIndex && state.tgIndex.get) ? state.tgIndex.get(String(tgKey)) : null);
+    const resolvedColor = resolvedUid ? (state.presence?.get?.(resolvedUid)?.color || state.points?.get?.(resolvedUid)?.color) : null;
+    const color = (m && m.color) ? m.color : (resolvedColor || (state.color || '#16c7b7'));
+    const resolvedEmoji = resolvedUid ? (state.presence?.get?.(resolvedUid)?.emoji || state.points?.get?.(resolvedUid)?.emoji) : null;
+    const emoji = (m && m.emoji) ? m.emoji : (resolvedEmoji || '💬');
     const text  = (m && m.text) ? m.text : '';
     toast.style.setProperty('--ot-color', color);
     toast.setAttribute('data-color','1');
@@ -2802,7 +2952,7 @@ function spawnEmoji(it){
     el.className = 'emoji stroke';
     el.style.setProperty('--emoji-stroke', stroke);
 
-    const emo = (it.emoji ?? it.emo) || '❤️';
+    const emo = (it.emoji ?? it.emo);
     el.textContent = emo;
 }
 
@@ -3270,7 +3420,11 @@ if (!glyph) {
   ctx.stroke();
 } else {
   // Рисуем перекрашенный эмодзи без фона/квадрата
-  const inactive = !!((p && p.state && p.state !== 'online') || (p && p.lastActive && (Date.now() - p.lastActive > 10*60*1000)));
+  const inactive = !!(
+    (p && p.state && p.state !== 'online') ||
+    (p && p.ts && (Date.now() - p.ts > 20000)) ||
+    (p && p.lastActive && (Date.now() - p.lastActive > 10*60*1000))
+  );
   if (inactive) {
     _drawTintedEmoji(ctx, glyph, px, py, fontPx, '#999999', {mono:true});
   } else {
@@ -3771,10 +3925,7 @@ if (s && s.fill){
       }
       const hit = (bestUid && bestP && bestD <= (0.035*0.035));
       if (!hit) { state.kickMode = false; return; }
-      const lastA = bestP.lastActive || bestP.ts || 0;
-      const isOnline = state.presence && state.presence.has(bestUid);
-      const isOffline = !isOnline && (now - lastA > 10*60*1000);
-      if (!isOffline) { state.kickMode = false; return; }
+      // теперь можно удалять ЛЮБУЮ морду (онлайн/оффлайн/свою)
       try{ await remove(ref(db, `${basePath}/points/${bestUid}`)); }catch{}
       state.points.delete(bestUid);
       state.kickMode = false;
