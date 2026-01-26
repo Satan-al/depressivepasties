@@ -463,13 +463,27 @@
         border: 1px solid rgba(22, 199, 183, 0.3);
         border-radius: 16px;
         padding: 12px;
-        display: flex; gap: 8px;
+        display: flex;
+        flex-wrap: wrap;            /* две строки */
+        gap: 8px;
+        width: min(560px, calc(100vw - 24px)); /* чтобы реально переносилось в 2 строки */
+        max-height: 112px;          /* ~2 строки кнопок */
+        overflow-x: hidden;
+        overflow-y: hidden;
         opacity: 0; pointer-events: none;
         transition: 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
         z-index: 10000;
     }
-    .overlay-emoji-panel.show { opacity: 1; pointer-events: auto; transform: translateX(-50%) translateY(0); }
-    .overlay-emoji-panel button { font-size: 1.5em !important; cursor: pointer; }
+    .overlay-emoji-panel.show {
+        opacity: 1;
+        pointer-events: auto;
+        transform: translateX(-50%) translateY(0);
+    }
+    .overlay-emoji-panel button {
+        font-size: 1.5em !important;
+        cursor: pointer;
+        flex: 0 0 auto;
+    }
 
 
     /* === СТИЛИ ДЛЯ ВЫБОРА ЭМОДЗИ (НОВОЕ) === */
@@ -544,7 +558,7 @@
       gap: 10px;
       padding: 10px 14px;
       border-radius: 14px;
-      background: rgba(11, 20, 32, 0.72);
+      background: rgba(11, 20, 32, 0.86);
       border: 1px solid rgba(255,255,255,0.10);
       box-shadow: 0 10px 30px rgba(0,0,0,0.35);
       backdrop-filter: blur(var(--blur));
@@ -571,8 +585,18 @@
       line-height: 1;
       background: rgba(255,255,255,0.06);
       border: 1px solid rgba(255,255,255,0.10);
+      border-color: color-mix(in srgb, var(--ot-color) 45%, rgba(255,255,255,0.10));
+      box-shadow: 0 6px 18px rgba(0,0,0,0.28);
       flex: 0 0 auto;
       filter: drop-shadow(0 0 8px rgba(0,0,0,0.35));
+    }
+    .overlay-toast .ot-emoji-glyph{
+      display:block;
+      filter: grayscale(1);
+      /* свечение именно вокруг глифа, а не вокруг бокса */
+      text-shadow:
+        0 0 10px color-mix(in srgb, var(--ot-color) 70%, transparent),
+        0 0 18px color-mix(in srgb, var(--ot-color) 55%, transparent);
     }
     .overlay-toast .ot-text{
       font-size: 28px;
@@ -584,10 +608,44 @@
     }
     .overlay-toast[data-color="1"]{
       border-color: color-mix(in srgb, var(--ot-color) 55%, rgba(255,255,255,0.12));
-      box-shadow: 0 10px 30px rgba(0,0,0,0.35), 0 0 18px color-mix(in srgb, var(--ot-color) 35%, transparent);
+      box-shadow: 0 10px 30px rgba(0,0,0,0.40), 0 0 30px color-mix(in srgb, var(--ot-color) 60%, transparent);
     }
 
-  </style>
+  
+/* --- Telegram link modal (restored styles) --- */
+.link-modal{
+  position:fixed; inset:0;
+  display:none;
+  align-items:center; justify-content:center;
+  padding:18px;
+  background:rgba(0,0,0,.55);
+  z-index:9999;
+}
+.link-modal.show{ display:flex; }
+.link-modal-content{
+  width:min(520px, 96vw);
+  background:rgba(12,12,12,.92);
+  border:1px solid rgba(255,255,255,.12);
+  border-radius:14px;
+  padding:16px 16px 14px;
+  box-shadow:0 10px 40px rgba(0,0,0,.55);
+}
+.link-code{
+  user-select:none;
+  cursor:pointer;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size:20px;
+  letter-spacing:0.04em;
+  padding:10px 12px;
+  border-radius:10px;
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.12);
+  text-align:center;
+}
+.link-modal-buttons{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+#toggleSelfClusters{ display:inline-flex !important; }
+
+</style>
 </head>
 <body>
 <div class="app">
@@ -598,6 +656,8 @@
     <div style="display:flex;gap:8px;align-items:center;margin-left:8px" id="toolsBar">
       <button class="btn small" id="toolToggle" title="Переключить голос/рисование">Рисовать</button>
       <button class="btn ghost small" id="toolErase" title="Ластик">Ластик</button>
+      <button class="btn ghost small art-only" id="toolFill" title="Заливка" style="display:none">🪣</button>
+      <button class="btn ghost small art-only" id="toolPick" title="Пипетка" style="display:none">🔍</button>
       <button class="btn ghost small danger" id="toolClear" title="Очистить холст">Очистить</button>
       <!-- Размер кисти -->
       <div style="display:flex;gap:6px;align-items:center;margin-left:8px;padding-left:8px;border-left:1px solid var(--border)">
@@ -636,6 +696,8 @@
 
 </div>
 
+    <button class="btn ghost small" id="toggleSelfClusters" title="Показывать голоса (кластеры) у себя на экране">Голоса: скрыты</button>
+
     <button class="btn ghost small" id="logout" style="margin-left:auto">Выйти</button>
 
     <div id="status" style="margin-left:6px">
@@ -652,7 +714,7 @@
         <span class="chat-badge hidden" id="chatBadge">0</span>
         <!-- Кнопка привязки Telegram -->
         <button class="btn ghost small link-tg-btn" id="linkTelegramBtn" onclick="showLinkModal()" title="Связать с Telegram">
-          🔗 TG
+          📎
         </button>
       </div>
       <div style="display:flex;gap:6px">
@@ -688,6 +750,8 @@
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>Тап по видео ставит/переставляет маркер. Alt+F7 — показать/скрыть чат в оверлее. ПИН входа: 1111.</div>
       <div style="display:flex;gap:8px">
+        <button class="btn ghost small" id="artColorDot" title="Цвет (арт-режим)" style="display:none;width:32px;height:32px;border-radius:999px;padding:0;border:1px solid var(--border)"></button>
+        <input type="color" id="artColorPicker" value="#16c7b7" style="position:absolute;left:-9999px;opacity:0;width:1px;height:1px"/>
         <button class="btn ghost small danger" id="btnDeleteVotes" title="Удалить все голоса">Удалить голоса</button>
       </div>
     </div>
@@ -830,6 +894,7 @@
     }
   });
   const logoutBtn=$('#logout');
+  const toggleSelfClusters=$('#toggleSelfClusters');
   const $statusText=$('#status-text'), $dotAuth=$('#dot-auth');
 
   // footer admin controls
@@ -900,10 +965,12 @@
     emoji: localStorage.getItem('cc_emoji') || '🐶',
     mode: localStorage.getItem('cc_mode') || 'watch',
     tool: localStorage.getItem('cc_tool') || 'vote',
+    showClustersOnSite: (localStorage.getItem('cc_show_clusters') === '1' || localStorage.getItem('cc_show_clusters') === '1'),
     authed: false,
     points: new Map(),
     strokes: new Map(),
     presence: new Map(),
+    tgIndex: new Map(),
     localChat: JSON.parse(localStorage.getItem('cc_chat_cache')||'[]'),
     notifications: localStorage.getItem('cc_notifications') !== 'false',
     unreadCount: 0,
@@ -1043,21 +1110,159 @@ window.addEventListener('cc_emoji_changed', async (e) => {
   const chatRoot   = ref(db, `${basePath}/chat`);
   const reactsRoot = ref(db, `${basePath}/reactions`);
   const ratModeRef = ref(db, `${basePath}/rat_mode`);  // Флаг RAT режима
+  const tgLinksRoot = ref(db, `${basePath}/telegram_links`);
+
 
   /* ======= PRESENCE ======= */
-  async function heartbeat(){
-    if (!auth.currentUser) return;
-    const uid = auth.currentUser.uid;
-    try{ await set(ref(db, `${basePath}/presence/${uid}`), { id:uid, name: getDisplayName(state)||'Чужой', color:state.color, ts:Date.now() }); }catch{}
-  }
-  setInterval(heartbeat, 8000);
+// lastActive должен отражать РЕАЛЬНУЮ активность (клики/клавиши), а не heartbeat.
+// heartbeat нужен только чтобы держать "онлайн" и ts свежим.
+let __ccLastActiveLocal = Date.now();
+let __ccLastActivePush = 0;
 
-  onValue(presenceRootRef, (snap)=>{
-    const val=snap.val()||{}; state.presence.clear();
-    const now=Date.now();
-    for (const [uid,p] of Object.entries(val)){
-      if (now - (p.ts||0) <= 12000){ state.presence.set(uid, p); }
+function __ccIsHidden(){ return document.hidden || document.visibilityState === 'hidden'; }
+
+async function __ccWritePresence(partial){
+  if (!auth.currentUser) return;
+  const uid = auth.currentUser.uid;
+  try{ await update(ref(db, `${basePath}/presence/${uid}`), partial); }catch{}
+}
+
+async function __ccWritePoint(partial){
+  if (!auth.currentUser) return;
+  const uid = auth.currentUser.uid;
+  try{ await update(ref(db, `${basePath}/points/${uid}`), partial); }catch{}
+}
+
+async function __ccMarkActive(force=false){
+  const now = Date.now();
+  __ccLastActiveLocal = now;
+  // Дребезг: не пушим lastActive чаще чем раз в 4 секунды
+  if (!force && (now - __ccLastActivePush) < 4000) return;
+  __ccLastActivePush = now;
+  await __ccWritePresence({ state: 'online', lastActive: now });
+  await __ccWritePoint({ lastActive: now });
+}
+
+// Activity signals
+['pointerdown','keydown','wheel','touchstart'].forEach(evt=>{
+  window.addEventListener(evt, ()=>__ccMarkActive(false), {passive:true});
+});
+
+document.addEventListener('visibilitychange', ()=>{
+  if (__ccIsHidden()){
+    __ccWritePresence({ state:'away', ts: Date.now() });
+  }else{
+    __ccMarkActive(true);
+    __ccWritePresence({ state:'online', ts: Date.now() });
+  }
+});
+
+async function heartbeat(){
+  if (!auth.currentUser) return;
+  const uid = auth.currentUser.uid;
+  const nowTs = Date.now();
+  const nm = getDisplayName(state) || 'Гость';
+  // heartbeat НЕ трогает lastActive
+  await __ccWritePresence({
+    id: uid,
+    name: nm,
+    color: state.color,
+    emoji: (state.emoji||''),
+    ts: nowTs,
+    state: __ccIsHidden() ? 'away' : 'online'
+  });
+  // точки обновляем минимально, чтобы цвет/имя/эмодзи синхрились, но lastActive не трогаем
+  await __ccWritePoint({ color: state.color, name: nm, emoji: (state.emoji||'') });
+}
+setInterval(heartbeat, 8000);
+
+// onDisconnect: помечаем оффлайн (насколько это возможно в RTDB)
+(async ()=>{
+  try{
+    const uid = auth.currentUser?.uid;
+    if (!uid) return;
+    const pRef = ref(db, `${basePath}/presence/${uid}`);
+    onDisconnect(pRef).update({ state:'offline', ts: Date.now() });
+  }catch{}
+})();
+
+  /* ======= TELEGRAM LINKS INDEX (tgUserId -> uid) ======= */
+  onValue(tgLinksRoot, (snap)=>{
+    const all = snap.val() || {};
+    const idx = new Map();
+    for (const [uid,info] of Object.entries(all)){
+      const tgUserId = info && (info.tgUserId || info.telegramUserId || info.userId);
+      if (tgUserId != null) idx.set(String(tgUserId), uid);
     }
+    state.tgIndex = idx;
+  });
+
+
+  let __ccPrevOnline = new Set();
+  let __ccPresenceInit = false;
+
+  onValue(presenceRootRef, async (snap)=>{
+    const val = snap.val() || {};
+    const now = Date.now();
+
+    const next = new Map();
+    for (const [uid,p] of Object.entries(val)){
+      if (now - (p.ts||0) <= 12000){
+        next.set(uid, p);
+      }
+    }
+
+    // Join toast in overlay: only after initial load, only when someone appears online (or returns),
+    // and don't announce yourself.
+if (__ccPresenceInit && isOverlayMode()){
+  const me = auth.currentUser?.uid;
+  const now = Date.now();
+  window.__ccJoinToastAt = window.__ccJoinToastAt || new Map();
+
+  const newUids = [];
+  for (const [uid,p] of next.entries()){
+    if (uid === me) continue;
+    if (!__ccPrevOnline.has(uid)){
+      // антиспам: не спамим "у нас тут" чаще чем раз в 5 минут на одного и того же
+      const last = window.__ccJoinToastAt.get(uid) || 0;
+      if (now - last < 5*60*1000) continue;
+      window.__ccJoinToastAt.set(uid, now);
+      newUids.push(uid);
+    }
+  }
+
+  // подтягиваем имя из профиля/points, если presence ещё не успел его принести (первый заход)
+  for (const uid of newUids){
+    const p = next.get(uid) || {};
+    let nm = (p && p.name) ? String(p.name) : '';
+    if (!nm || nm === 'Чужой' || nm === 'Гость'){
+      try{
+        const snapU = await get(ref(db, `${basePath}/points/${uid}`));
+        const v = snapU.val();
+        if (v && v.name) nm = String(v.name);
+      }catch{}
+      if (!nm){
+        try{
+          const snapU2 = await get(ref(db, `${basePath}/users/${uid}`));
+          const v2 = snapU2.val();
+          if (v2 && (v2.displayName || v2.name)) nm = String(v2.displayName || v2.name);
+        }catch{}
+      }
+    }
+    if (!nm) nm = 'кто-то';
+    showOverlayToast({ uid, color: p.color || '#16c7b7', emoji: p.emoji || '⭕', text: `У нас тут ${nm}` });
+  }
+}
+
+state.presence.clear();
+
+    state.presence.clear();
+    for (const [uid,p] of next.entries()){
+      state.presence.set(uid,p);
+    }
+
+    __ccPrevOnline = new Set(next.keys());
+    __ccPresenceInit = true;
   });
 
   /* ======= DATA LISTENERS ======= */
@@ -1434,6 +1639,14 @@ if (!window.__reactionsBound) {
   // LOGOUT
   logoutBtn.addEventListener('click', async ()=>{
     console.log('Logging out and clearing session...');
+    // Удаляем свою морду (кластер) сразу, чтобы не висела как зомби
+    try{
+      const uid = auth.currentUser?.uid || state.id;
+      if (uid) {
+        await remove(ref(db, `${basePath}/points/${uid}`));
+        await remove(ref(db, `${basePath}/presence/${uid}`));
+      }
+    }catch(e){}
     try { await signOut(auth); } catch(e) {}
 
     // ПОЛНАЯ ОЧИСТКА: удаляем всё, что связано с авторизацией
@@ -1456,6 +1669,24 @@ if (!window.__reactionsBound) {
     gate.classList.remove('hidden'); 
     setBlur(true);
   });
+
+  function syncSelfClustersBtn(){
+    if (!toggleSelfClusters) return;
+    const on = !!state.showClustersOnSite;
+    toggleSelfClusters.textContent = on ? 'Голоса: видны' : 'Голоса: скрыты';
+    toggleSelfClusters.classList.toggle('active', on);
+  }
+  if (toggleSelfClusters){
+    // кнопка нужна только в режиме просмотра (не overlay)
+    if (isOverlayMode && isOverlayMode()) toggleSelfClusters.style.display = 'none';
+    toggleSelfClusters.addEventListener('click', ()=>{
+      state.showClustersOnSite = !state.showClustersOnSite;
+      localStorage.setItem('cc_show_clusters', state.showClustersOnSite ? '1' : '0');
+      syncSelfClustersBtn();
+    });
+    syncSelfClustersBtn();
+  }
+
 
   // при загрузке всё размыто
   setBlur(true);
@@ -1583,8 +1814,27 @@ if (!window.__reactionsBound) {
   // Вибрация на мобильных
   function vibrate(){
     if (!state.notifications) return;
+    // Chrome blocks vibrate until user interacts — avoid console spam.
+    if (!window.__ccUserInteracted) return;
     if (navigator.vibrate) navigator.vibrate(200);
   }
+
+  // Mark first user interaction (for vibration/audio policies)
+  (function(){
+    if (window.__ccUserInteracted) return;
+    window.__ccUserInteracted = false;
+    const mark = ()=>{ window.__ccUserInteracted = true; cleanup(); };
+    const cleanup = ()=>{
+      window.removeEventListener('pointerdown', mark, true);
+      window.removeEventListener('keydown', mark, true);
+      window.removeEventListener('mousedown', mark, true);
+      window.removeEventListener('touchstart', mark, true);
+    };
+    window.addEventListener('pointerdown', mark, true);
+    window.addEventListener('mousedown', mark, true);
+    window.addEventListener('touchstart', mark, true);
+    window.addEventListener('keydown', mark, true);
+  })()
   
   // Обновление счетчика
   function updateUnreadBadge(){
@@ -1660,6 +1910,25 @@ async function sendChat(){
     await toggleRatMode();
     return;
   }
+
+
+// Команда /art — локальный арт-режим (только для этого юзера). Команда НЕ отправляется в чат.
+if (txt === '/art') {
+  if (typeof chatInput !== 'undefined') chatInput.value = '';
+  if (typeof chatInputOverlay !== 'undefined') chatInputOverlay.value = '';
+  toggleArtMode();
+  return;
+}
+
+// Команда /kick — локальный режим: клик по оффлайн-морде удаляет её из канваса. Команда НЕ отправляется в чат.
+if (txt === '/kick') {
+  if (typeof chatInput !== 'undefined') chatInput.value = '';
+  if (typeof chatInputOverlay !== 'undefined') chatInputOverlay.value = '';
+  state.kickMode = true;
+  // подсказка только себе
+  try { showToast('KICK: кликни по ОФФЛАЙН морде, чтобы убрать её'); } catch {}
+  return;
+}
 
   // --- ВНУТРИ ОБРАБОТЧИКА ОТПРАВКИ СООБЩЕНИЯ ---
 
@@ -1876,6 +2145,15 @@ async function sendChatOverlay(){
     return;
   }
 
+
+// Команда /art — локальный арт-режим (только для этого юзера). Команда НЕ отправляется в чат.
+if (txt === '/art') {
+  if (typeof chatInput !== 'undefined') chatInput.value = '';
+  if (typeof chatInputOverlay !== 'undefined') chatInputOverlay.value = '';
+  toggleArtMode();
+  return;
+}
+
   const msg = {
     uid: auth.currentUser?.uid || state.id,
     name: getDisplayName(state) || 'Чужой',
@@ -1950,11 +2228,12 @@ window.addEventListener('pointerdown', ()=>{ _ensureToastAudio(); }, { once:true
     const toast = document.getElementById('overlayToast');
     if (!toast) return;
     const color = (m && m.color) ? m.color : (state.color || '#16c7b7');
-    const emoji = (m && (m.emoji || (state.presence?.get?.(m.uid)?.emoji))) || '💬';
+    const resolvedUid = (m && m.uid) ? m.uid : (m && (m.tgUserId || m.telegramUserId || m.tg_id || m.tgId) && state.tgIndex && state.tgIndex.get(String(m.tgUserId || m.telegramUserId || m.tg_id || m.tgId)));
+    const emoji = (m && (m.emoji || (resolvedUid && state.presence?.get?.(resolvedUid)?.emoji) || (resolvedUid && state.points?.get?.(resolvedUid)?.emoji))) || '💬';
     const text  = (m && m.text) ? m.text : '';
     toast.style.setProperty('--ot-color', color);
     toast.setAttribute('data-color','1');
-    toast.innerHTML = `<div class="ot-emoji">${escapeHtml(emoji || '⭕')}</div><div class="ot-text">${escapeHtml(text)}</div>`;
+    toast.innerHTML = `<div class="ot-emoji"><span class="ot-emoji-glyph">${escapeHtml(emoji || '⭕')}</span></div><div class="ot-text">${escapeHtml(text)}</div>`;
     toast.classList.add('show');
     playOverlayToastBeep();
     clearTimeout(overlayToastTimer);
@@ -2673,8 +2952,10 @@ window.spawnEmoji = spawnEmoji;
   }
   function computeClusters(){
     const all = [...state.points.values()];
+    if (!(state.mode === 'overlay' || state.showClustersOnSite)) return [];
     
     // Показываем всех (убрали фильтр оффлайн)
+    const currentUid = (auth.currentUser&&auth.currentUser.uid)||state.id;
     const filtered = all;
     
     const br = baseRadiusPx();
@@ -2839,14 +3120,15 @@ window.spawnEmoji = spawnEmoji;
     // If chosen color is grayscale (r=g=b), disable sepia/hue-rotate so black/white/gray stay true.
     const isGray = (rgb.r === rgb.g && rgb.g === rgb.b);
 
-    if (isGray){
+    // mono mode (offline): чистый ч/б без сепии/окраски
+    if (opts.mono){
+      _emojiCtx.filter = `grayscale(1) sepia(0) saturate(1) brightness(1) contrast(1.15)`;
+    } else if (isGray){
       const targetGray = rgb.r; // 0..255
       const grayMul = Math.max(0.05, Math.min(2.5, (targetGray / 128) * brightMul));
-      _emojiCtx.filter =
-        `grayscale(1) sepia(0) saturate(1) brightness(${grayMul}) contrast(${contrastMul})`;
+      _emojiCtx.filter = `grayscale(1) sepia(0) saturate(1) brightness(${grayMul}) contrast(${contrastMul})`;
     } else {
-      _emojiCtx.filter =
-        `grayscale(1) sepia(1) saturate(1.35) hue-rotate(${rotate}deg) brightness(${brightMul}) contrast(${contrastMul})`;
+      _emojiCtx.filter = `grayscale(1) sepia(1) saturate(1.35) hue-rotate(${rotate}deg) brightness(${brightMul}) contrast(${contrastMul})`;
     }
     _emojiCtx.fillText(glyph, box/2, box/2);
     _emojiCtx.filter = 'none';
@@ -2904,9 +3186,14 @@ window.spawnEmoji = spawnEmoji;
     targetCtx.drawImage(_emojiOff, x - box/2, y - box/2);
   }
 function drawSingleDot(px, py, radius, p){
+  // v38 guard: avoid NaN/Infinity crashing Canvas gradients
+  if (!Number.isFinite(px) || !Number.isFinite(py)) return;
+  if (!Number.isFinite(radius) || radius <= 0) radius = 18;
+
     const base = hexToRgb((p && p.color) ? p.color : DEFAULT_COLOR);
     const dark = darken(base, 0.4);
-    const rr = radius * (window.devicePixelRatio||1);
+    const dpr = (window.devicePixelRatio || 1);
+    const rr = Math.max(1, radius * dpr);
 
     ctx.save();
     
@@ -2983,7 +3270,12 @@ if (!glyph) {
   ctx.stroke();
 } else {
   // Рисуем перекрашенный эмодзи без фона/квадрата
-  _drawTintedEmoji(ctx, glyph, px, py, fontPx, ((p && p.color) ? p.color : DEFAULT_COLOR), {brightness: 0.10, contrast: 1.18, outline: true, outlineWidth: Math.max(1, Math.round(fontPx*0.03))});
+  const inactive = !!((p && p.state && p.state !== 'online') || (p && p.lastActive && (Date.now() - p.lastActive > 10*60*1000)));
+  if (inactive) {
+    _drawTintedEmoji(ctx, glyph, px, py, fontPx, '#999999', {mono:true});
+  } else {
+    _drawTintedEmoji(ctx, glyph, px, py, fontPx, ((p && p.color) ? p.color : DEFAULT_COLOR), {brightness: 0.10, contrast: 1.18, outline: true, outlineWidth: Math.max(1, Math.round(fontPx*0.03))});
+  }
 }
 
 ctx.restore();
@@ -3040,7 +3332,79 @@ ctx.restore();
       return layer;
     }
 
-    function drawStrokeTo(ctx2, s){
+    
+// Bucket fill (заливка) — выполняется при ререндере штрихов
+function _hexToRgba(hex){
+  const h = (hex||'#000000').replace('#','');
+  const r = parseInt(h.slice(0,2),16)||0, g=parseInt(h.slice(2,4),16)||0, b=parseInt(h.slice(4,6),16)||0;
+  return [r,g,b,255];
+}
+function _floodFillOnCtx(ctx2, sx, sy, hex){
+  const w = ctx2.canvas.width, h = ctx2.canvas.height;
+  sx = Math.floor(sx); sy = Math.floor(sy);
+  if (sx<0||sy<0||sx>=w||sy>=h) return;
+  const img = ctx2.getImageData(0,0,w,h);
+  const d = img.data;
+  const idx0 = (sy*w+sx)*4;
+  const target = [d[idx0],d[idx0+1],d[idx0+2],d[idx0+3]];
+  const repl = _hexToRgba(hex);
+  if (target[0]===repl[0] && target[1]===repl[1] && target[2]===repl[2] && target[3]===repl[3]) return;
+
+  const stack = [sx,sy];
+  // tolerance-based match to avoid tiny "black seams" from anti-aliasing
+const tol = 18; // color tolerance
+const aMin = 1; // include transparent pixels as target too
+const match = (i)=> {
+  const dr = d[i]-target[0], dg=d[i+1]-target[1], db=d[i+2]-target[2], da=d[i+3]-target[3];
+  return (Math.abs(dr)<=tol && Math.abs(dg)<=tol && Math.abs(db)<=tol && Math.abs(da)<=tol && d[i+3]>=aMin);
+};
+  while(stack.length){
+    const y = stack.pop(); const x = stack.pop();
+    if (x<0||y<0||x>=w||y>=h) continue;
+    const i = (y*w+x)*4;
+    if (!match(i)) continue;
+    d[i]=repl[0]; d[i+1]=repl[1]; d[i+2]=repl[2]; d[i+3]=255;
+    stack.push(x+1,y, x-1,y, x,y+1, x,y-1);
+}
+// Expand fill a bit into semi-transparent edge pixels to avoid visible seams.
+// We DO NOT overwrite solid stroke pixels (alpha >= 240).
+const grow = 4;
+const w4 = w*4;
+// Build a quick mask of filled pixels (alpha==255 && rgb==repl)
+const filled = new Uint8Array(w*h);
+for (let y=0; y<h; y++){
+  for (let x=0; x<w; x++){
+    const i = (y*w+x)*4;
+    if (d[i+3]===255 && d[i]===repl[0] && d[i+1]===repl[1] && d[i+2]===repl[2]) filled[y*w+x]=1;
+  }
+}
+// Simple dilation (square) for small grow radius
+for (let y=0; y<h; y++){
+  for (let x=0; x<w; x++){
+    if (!filled[y*w+x]) continue;
+    for (let yy=Math.max(0,y-grow); yy<=Math.min(h-1,y+grow); yy++){
+      for (let xx=Math.max(0,x-grow); xx<=Math.min(w-1,x+grow); xx++){
+        const j = (yy*w+xx)*4;
+        if (d[j+3] >= 240) continue; // keep solid strokes on top
+        // only paint pixels that are close to the original target (anti-alias fringe)
+        const dr = d[j]-target[0], dg=d[j+1]-target[1], db=d[j+2]-target[2];
+        if (Math.abs(dr)<=tol*2 && Math.abs(dg)<=tol*2 && Math.abs(db)<=tol*2){
+          d[j]=repl[0]; d[j+1]=repl[1]; d[j+2]=repl[2]; d[j+3]=255;
+        }
+      }
+    }
+  }
+}
+ctx2.putImageData(img,0,0);
+}
+
+function drawStrokeTo(ctx2, s){
+if (s && s.fill){
+  const p = pxFromNorm(s.x, s.y);
+  _floodFillOnCtx(ctx2, p.x, p.y, s.color || DEFAULT_COLOR);
+  return;
+}
+
       const pts = s.points || [];
       if (pts.length < 2) return;
 
@@ -3138,7 +3502,7 @@ ctx.restore();
     }
 
     // clusters
-    if (isOverlayMode()) {
+    if (isOverlayMode() || state.showClustersOnSite) {
     const clusters = computeClusters();
     const rot = now/1000 * 0.35;
 
@@ -3359,8 +3723,32 @@ ctx.restore();
 
 
   }
-  function loop(){ drawFrame(); requestAnimationFrame(loop); }
+  // ===== RAF LOOP (perf): throttle on non-overlay + pause on hidden tab =====
+  let __lastFrameTs = 0;
+  const __fps = isOverlayMode() ? 60 : 20; // overlay needs smooth anim; site can be lighter
+  const __frameInterval = 1000 / __fps;
+
+  document.addEventListener('visibilitychange', () => {
+    // force immediate redraw when tab becomes visible
+    if (!document.hidden) __lastFrameTs = 0;
+  });
+
+  function loop(ts){
+    // when tab is hidden, don't waste CPU
+    if (document.hidden){
+      requestAnimationFrame(loop);
+      return;
+    }
+    if (__lastFrameTs && (ts - __lastFrameTs) < __frameInterval){
+      requestAnimationFrame(loop);
+      return;
+    }
+    __lastFrameTs = ts;
+    drawFrame();
+    requestAnimationFrame(loop);
+  }
   requestAnimationFrame(loop);
+
 
   /* ======= INPUT (vote/draw/erase) - ОТКЛЮЧЕНО ДЛЯ OVERLAY РЕЖИМА ======= */
   canvas.addEventListener('pointerdown', async (e)=>{
@@ -3368,13 +3756,67 @@ ctx.restore();
     if (isOverlayMode()) return;
     
     if (!state.authed) return;
+    // /kick mode: клик по оффлайн морде удаляет её (только одна за команду)
+    if (state.kickMode){
+      e.preventDefault();
+      const pos = normFromEvent(e);
+      const now = Date.now();
+      // ищем ближайшую морду в радиусе
+      let bestUid=null, bestD=1e9, bestP=null;
+      for (const [uid,p] of state.points.entries()){
+        if (!p) continue;
+        const dx = (p.x||0) - pos.x; const dy = (p.y||0) - pos.y;
+        const d2 = dx*dx + dy*dy;
+        if (d2 < bestD){ bestD=d2; bestUid=uid; bestP=p; }
+      }
+      const hit = (bestUid && bestP && bestD <= (0.035*0.035));
+      if (!hit) { state.kickMode = false; return; }
+      const lastA = bestP.lastActive || bestP.ts || 0;
+      const isOnline = state.presence && state.presence.has(bestUid);
+      const isOffline = !isOnline && (now - lastA > 10*60*1000);
+      if (!isOffline) { state.kickMode = false; return; }
+      try{ await remove(ref(db, `${basePath}/points/${bestUid}`)); }catch{}
+      state.points.delete(bestUid);
+      state.kickMode = false;
+      return;
+    }
     if (state.tool==='vote'){
       e.preventDefault();
       const uid = auth.currentUser?.uid || state.id;
       const pos=normFromEvent(e);
-      const p={ id:uid, name: getDisplayName(state)||'Чужой', x:pos.x, y:pos.y, ts:Date.now(), color:state.color, emoji: state.emoji || '' };
+      const p={ id:uid, name: getDisplayName(state)||'Чужой', x:pos.x, y:pos.y, ts:Date.now(), lastActive: Date.now(), color:state.color, emoji: state.emoji || '' };
       state.points.set(uid, p);
       try { await set(ref(db, `${basePath}/points/${uid}`), p); } catch {}
+      return;
+    }
+    if (state.tool==='fill' && state.artEnabled){
+      e.preventDefault();
+      const uid = auth.currentUser?.uid || state.id;
+      const pos = normFromEvent(e);
+      const fillStroke = { uid, fill:true, x:pos.x, y:pos.y, color: state.color, ts:Date.now() };
+      try{
+        const key = push(strokesRoot).key;
+        await update(ref(db, `${basePath}/strokes/${key}`), fillStroke);
+      }catch{}
+      return;
+    }
+    if (state.tool==='pick' && state.artEnabled){
+      e.preventDefault();
+      try{
+        // Сэмплим цвет с результирующего холста
+        const ppx = pxFromNorm(normFromEvent(e).x, normFromEvent(e).y);
+        const img = ctx.getImageData(Math.max(0,Math.min(canvas.width-1, ppx.x)), Math.max(0,Math.min(canvas.height-1, ppx.y)), 1, 1).data;
+        const hex = '#' + [img[0],img[1],img[2]].map(v=>v.toString(16).padStart(2,'0')).join('');
+        state.color = hex;
+        const picker = document.getElementById('artColorPicker');
+        if (picker) picker.value = hex;
+        const dot = document.getElementById('artColorDot');
+        if (dot) dot.style.background = hex;
+        try{ await heartbeat(); }catch{}
+      }catch{}
+      if (window.__ccPickDisarm) window.__ccPickDisarm();
+      state.tool = 'draw';
+      setActiveToolButtons?.();
       return;
     }
     if (state.tool==='draw' || state.tool==='erase'){
@@ -3410,9 +3852,18 @@ ctx.restore();
     currStroke={ uid, name: getDisplayName(state)||'Чужой', color:state.color, erase, w: width, points:[p], ts:Date.now(), _smooth:p, _lastRaw:p };
     state.currentStroke = currStroke; // Сохраняем в state для отрисовки
   }
-  function moveStroke(e){
+  
+function moveStroke(e){
     if(!drawing||!currStroke) return;
     const raw = normFromEvent(e);
+
+    // Арт-режим: ровная линия по Shift (сохраняем только start + current)
+    if (state.artEnabled && window.__ccShiftDown && window.__ccShiftDown()){
+      const start = currStroke.points[0] || raw;
+      currStroke.points = [start, raw];
+      state.currentStroke = currStroke;
+      return;
+    }
 
     // --- Усиленная стабилизация (и для кисти, и для ластика) ---
     const prev = currStroke._smooth || currStroke.points[currStroke.points.length-1] || raw;
@@ -3528,7 +3979,89 @@ ctx.restore();
     chatDragHandle.addEventListener('pointerdown', onDown);
   })();
 
-  /* ======= STARTUP ======= */
+  
+/* ======= ART MODE (локально, по /art) ======= */
+(function(){
+  let artEnabled = false;
+  let shiftDown = false;
+  let pickArmed = false;
+
+  const toolFill = document.getElementById('toolFill');
+  const toolPick = document.getElementById('toolPick');
+  const artColorDot = document.getElementById('artColorDot');
+  const artColorPicker = document.getElementById('artColorPicker');
+
+  function lighten(hex, amt=0.35){
+    try{
+      const c = hex.replace('#','');
+      const r = parseInt(c.slice(0,2),16), g=parseInt(c.slice(2,4),16), b=parseInt(c.slice(4,6),16);
+      const lr = Math.min(255, Math.round(r + (255-r)*amt));
+      const lg = Math.min(255, Math.round(g + (255-g)*amt));
+      const lb = Math.min(255, Math.round(b + (255-b)*amt));
+      return '#' + [lr,lg,lb].map(v=>v.toString(16).padStart(2,'0')).join('');
+    }catch{ return hex; }
+  }
+
+  function applyArtUI(){
+    if (toolFill) toolFill.style.display = ''; // bucket available for everyone
+    if (toolPick) toolPick.style.display = artEnabled ? '' : 'none';
+    if (artColorDot) artColorDot.style.display = artEnabled ? '' : 'none';
+    if (artColorPicker) artColorPicker.style.display = 'none';
+
+    if (artColorDot){
+      artColorDot.style.background = state.color || '#16c7b7';
+      const glow = lighten(state.color || '#16c7b7', 0.35);
+      artColorDot.style.boxShadow = artEnabled ? `0 0 0 2px ${glow}55, 0 0 14px ${glow}55` : '';
+    }
+  }
+
+  window.toggleArtMode = function(){
+    artEnabled = !artEnabled;
+    state.artEnabled = artEnabled;
+    // В арт-режиме инструменты рисования доступны, но не принудительно включаем
+    // Просто показываем доп.кнопки и даём новые фичи
+    applyArtUI();
+  };
+
+  // Цвет в арт-режиме (кружок)
+  if (artColorDot && artColorPicker){
+    artColorDot.addEventListener('click', ()=> artColorPicker.click());
+    artColorPicker.addEventListener('input', async ()=>{
+      state.color = artColorPicker.value;
+      applyArtUI();
+      // Обновим presence, чтобы цвет разошёлся всем (если нужно)
+      try{ await heartbeat(); }catch{}
+    });
+  }
+
+  // Кнопки инструментов
+  if (toolFill){
+    toolFill.addEventListener('click', ()=>{
+      state.tool = 'fill';
+      setActiveToolButtons?.();
+    });
+  }
+  if (toolPick){
+    toolPick.addEventListener('click', ()=>{
+      if (!state.artEnabled) return;
+      state.tool = 'pick';
+      pickArmed = true;
+      setActiveToolButtons?.();
+    });
+  }
+
+  // Shift для ровных линий
+  window.addEventListener('keydown', (e)=>{ if (e.key === 'Shift') shiftDown = true; });
+  window.addEventListener('keyup', (e)=>{ if (e.key === 'Shift') shiftDown = false; });
+  window.__ccShiftDown = ()=>shiftDown;
+  window.__ccPickArmed = ()=>pickArmed;
+  window.__ccPickDisarm = ()=>{ pickArmed = false; };
+  window.__ccArtEnabled = ()=>artEnabled;
+
+  // Первый рендер UI
+  applyArtUI();
+})();
+/* ======= STARTUP ======= */
   if (state.localChat.length){ renderChat(state.localChat.slice(-100)); }
 
   const url = new URL(FIXED_VIEW);
@@ -3580,7 +4113,7 @@ ctx.restore();
       linkBtn.classList.add('linked');
       linkBtn.title = `Привязан к @${linkData.tgUsername || linkData.tgFirstName}`;
     } else {
-      linkBtn.innerHTML = '🔗 TG';
+      linkBtn.innerHTML = '📎';
       linkBtn.classList.remove('linked');
       linkBtn.title = 'Связать с Telegram';
     }
@@ -3617,6 +4150,7 @@ ctx.restore();
   // Показать модальное окно привязки
   window.showLinkModal = async function() {
     const modal = document.getElementById('linkModal');
+    modal.classList.add('show');
     const linkCodeEl = document.getElementById('linkCode');
     const linkInfo = document.getElementById('linkInfo');
     const linkNewBtn = document.getElementById('linkNewCodeBtn');
@@ -3648,7 +4182,7 @@ ctx.restore();
       
       const code = await createLinkCode();
       if (code) {
-        linkCodeEl.textContent = code;
+        linkCodeEl.textContent = '/link ' + code;
       } else {
         linkCodeEl.textContent = 'Ошибка';
       }
@@ -3658,7 +4192,16 @@ ctx.restore();
   }
   
   // Закрыть модальное окно
-  window.closeLinkModal = function() {
+  
+  // Открыть бота Telegram в новой вкладке
+  window.openTelegramBot = function(){
+    try{
+      window.open('https://t.me/DepressivePasties_bot', '_blank', 'noopener');
+    }catch(e){
+      // ignore
+    }
+  }
+window.closeLinkModal = function() {
     const modal = document.getElementById('linkModal');
     modal.classList.remove('show');
   }
@@ -3759,7 +4302,7 @@ ctx.restore();
     
     const code = await createLinkCode();
     if (code) {
-      linkCodeEl.textContent = code;
+      linkCodeEl.textContent = '/link ' + code;
     } else {
       linkCodeEl.textContent = 'Ошибка';
     }
@@ -3781,7 +4324,7 @@ ctx.restore();
         const linkCodeEl = document.getElementById('linkCode');
         
         if (modal.classList.contains('show') && 
-            linkCodeEl.textContent.startsWith('LINK-')) {
+            linkCodeEl.textContent.includes('LINK-')) {
           closeLinkModal();
           
           // Показываем уведомление
@@ -3921,7 +4464,7 @@ ctx.restore();
       </p>
       
       <div class="link-code" id="linkCode" onclick="copyLinkCode()">
-        LINK-XXXX
+        /link LINK-XXXX
       </div>
       
       <p class="link-hint">
@@ -3930,7 +4473,7 @@ ctx.restore();
       </p>
       
       <div class="link-modal-buttons">
-        <button class="btn small" onclick="copyLinkCode()">📋 Копировать</button>
+        <button class="btn small" id="toBotBtn" onclick="openTelegramBot()">🤖</button>
         <button class="btn ghost small" id="linkNewCodeBtn" onclick="generateNewCode()">🔄 Новый код</button>
         <button class="btn ghost small" onclick="closeLinkModal()">Закрыть</button>
       </div>
