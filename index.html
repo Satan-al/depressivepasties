@@ -561,13 +561,13 @@
       transform: translateX(-50%) translateY(0);
     }
     .overlay-toast .ot-emoji{
-      width: 34px;
-      height: 34px;
-      border-radius: 12px;
+      width: 54px;
+      height: 54px;
+      border-radius: 16px;
       display:flex;
       align-items:center;
       justify-content:center;
-      font-size: 22px;
+      font-size: 34px;
       line-height: 1;
       background: rgba(255,255,255,0.06);
       border: 1px solid rgba(255,255,255,0.10);
@@ -575,12 +575,12 @@
       filter: drop-shadow(0 0 8px rgba(0,0,0,0.35));
     }
     .overlay-toast .ot-text{
-      font-size: 14px;
+      font-size: 28px;
       line-height: 1.35;
       white-space: nowrap;
       overflow: hidden;
       text-overflow: ellipsis;
-      max-width: min(640px, calc(100vw - 120px));
+      max-width: min(900px, calc(100vw - 160px));
     }
     .overlay-toast[data-color="1"]{
       border-color: color-mix(in srgb, var(--ot-color) 55%, rgba(255,255,255,0.12));
@@ -1907,6 +1907,42 @@ async function sendChatOverlay(){
   }
 }
 
+
+
+// === Overlay toast sound (simple beep) ===
+let _toastAudioCtx = null;
+function _ensureToastAudio(){
+  if (_toastAudioCtx) return _toastAudioCtx;
+  try {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    if (!AC) return null;
+    _toastAudioCtx = new AC();
+    return _toastAudioCtx;
+  } catch(e){ return null; }
+}
+function playOverlayToastBeep(){
+  const ctxA = _ensureToastAudio();
+  if (!ctxA) return;
+  // audio может быть заблокирован до первого клика
+  if (ctxA.state === 'suspended') {
+    ctxA.resume().catch(()=>{});
+  }
+  try{
+    const o = ctxA.createOscillator();
+    const g = ctxA.createGain();
+    o.type = 'sine';
+    o.frequency.value = 880;
+    g.gain.setValueAtTime(0.0001, ctxA.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.12, ctxA.currentTime + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, ctxA.currentTime + 0.18);
+    o.connect(g); g.connect(ctxA.destination);
+    o.start();
+    o.stop(ctxA.currentTime + 0.2);
+  }catch(e){}
+}
+// инициализируем аудио по первому взаимодействию
+window.addEventListener('pointerdown', ()=>{ _ensureToastAudio(); }, { once:true });
+
   // Overlay chat auto show/hide
   let overlayToastTimer=null;
   function showOverlayToast(m){
@@ -1920,6 +1956,7 @@ async function sendChatOverlay(){
     toast.setAttribute('data-color','1');
     toast.innerHTML = `<div class="ot-emoji">${escapeHtml(emoji || '⭕')}</div><div class="ot-text">${escapeHtml(text)}</div>`;
     toast.classList.add('show');
+    playOverlayToastBeep();
     clearTimeout(overlayToastTimer);
     overlayToastTimer = setTimeout(()=> toast.classList.remove('show'), 3000);
   }
@@ -2482,23 +2519,13 @@ function spawnEmoji(it){
     el.style.width = '256px'; // Или 512px, если новые файлы
     el.style.height = '256px';
   } else {
-    // Обычная (Unicode) эмодзи — красим как на гейте: grayscale + overlay color
-    el.className = 'emoji-wrap';
+    // Обычная (Unicode) реакция — НЕ красим оверлеем, только нормальное свечение как раньше
+    el.className = 'emoji stroke';
     el.style.setProperty('--emoji-stroke', stroke);
-    el.style.setProperty('--emoji-color', stroke);
 
     const emo = (it.emoji ?? it.emo) || '❤️';
-
-    const char = document.createElement('div');
-    char.className = 'emoji-char stroke';
-    char.textContent = emo;
-
-    const tint = document.createElement('div');
-    tint.className = 'emoji-tint';
-
-    el.appendChild(char);
-    el.appendChild(tint);
-  }
+    el.textContent = emo;
+}
 
   const w = layer.clientWidth || window.innerWidth;
   const h = layer.clientHeight || window.innerHeight;
@@ -3111,6 +3138,7 @@ ctx.restore();
     }
 
     // clusters
+    if (isOverlayMode()) {
     const clusters = computeClusters();
     const rot = now/1000 * 0.35;
 
@@ -3286,6 +3314,8 @@ ctx.restore();
       
       ctx.restore();
     }
+    }
+
   // ===== Brush / Eraser cursor preview =====
   if (state.cursor && (state.cursor.tool === 'draw' || state.cursor.tool === 'erase')) {
     const dpr = window.devicePixelRatio || 1;
