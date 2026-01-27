@@ -1984,6 +1984,15 @@ if (txt === '/kick') {
   return;
 }
 
+// Команда /random — выбираем победителя среди самых больших кластеров. Команда НЕ отправляется в чат.
+if (txt === '/random') {
+  if (typeof chatInput !== 'undefined') chatInput.value = '';
+  if (typeof chatInputOverlay !== 'undefined') chatInputOverlay.value = '';
+  startRandomPicker();
+  return;
+}
+
+
   // --- ВНУТРИ ОБРАБОТЧИКА ОТПРАВКИ СООБЩЕНИЯ ---
 
   // 1. Команда объединения: /id_старый+id_новый
@@ -2300,6 +2309,15 @@ if (txt === '/art') {
   return;
 }
 
+// Команда /random — выбираем победителя среди самых больших кластеров. Команда НЕ отправляется в чат.
+if (txt === '/random') {
+  if (typeof chatInput !== 'undefined') chatInput.value = '';
+  if (typeof chatInputOverlay !== 'undefined') chatInputOverlay.value = '';
+  startRandomPicker();
+  return;
+}
+
+
   const msg = {
     uid: auth.currentUser?.uid || state.id,
     name: getDisplayName(state) || 'Чужой',
@@ -2519,7 +2537,21 @@ document.head.appendChild(ratAnimStyle);
     }catch(e){ console.warn('overlayHotkey error', e); }
   };
   
-  // ЗАКРЫТИЕ ОВЕРЛЕЯ: Escape в overlay режиме
+  
+  // ===== RANDOM hotkey (Alt+Shift+R) =====
+  // Работает и в overlay и в обычном режиме, но не срабатывает, если фокус в инпуте.
+  window.addEventListener('keydown', (e)=>{
+    const tag = (document.activeElement||{}).tagName;
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    if (e.repeat) return;
+    if (e.code === 'KeyR' && e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey){
+      startRandomPicker();
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+
+// ЗАКРЫТИЕ ОВЕРЛЕЯ: Escape в overlay режиме
   window.addEventListener('keydown', (e)=>{
     if (e.code === 'Escape' && isOverlayMode()){
       // Информируем Python оверлей о закрытии
@@ -2952,7 +2984,7 @@ function spawnEmoji(it){
     el.className = 'emoji stroke';
     el.style.setProperty('--emoji-stroke', stroke);
 
-    const emo = (it.emoji ?? it.emo) || '❤️';
+    const emo = (it.emoji ?? it.emo);
     el.textContent = emo;
 }
 
@@ -3172,8 +3204,122 @@ window.spawnEmoji = spawnEmoji;
       return { key, size:group.length, cx, cy, cnx, cny, r, colors, members:group };
     });
 
-
   }
+
+
+
+  
+  // ======= RANDOM MAX-CLUSTER PICKER (/random, Alt+Shift+R) =======
+  // Логика выбора:
+  // - берём максимальный размер кластера (size max).
+  // - выбираем ВСЕ кластеры этого размера.
+  // - анимация: 3с "мигание" (по очереди раздуваем/сжимаем), сначала быстро, потом медленнее.
+  // - затем 1 победитель раздувается на 2с.
+  let randomPickState = null;
+
+  function _buildRandomSteps(keys, totalMs=3000){
+    // интервалы растут от fast->slow
+    const steps = [];
+    let t = 0;
+    let k = 0;
+    if (!keys || !keys.length) return steps;
+
+    // Чтобы не было тупого циклического "1-2-3-1-2-3" — слегка мешаем порядок каждый круг
+    let bag = keys.slice();
+    const reshuffle = ()=>{
+      // Fisher–Yates
+      for (let i = bag.length - 1; i > 0; i--){
+        const j = Math.floor(Math.random() * (i + 1));
+        [bag[i], bag[j]] = [bag[j], bag[i]];
+      }
+    };
+    reshuffle();
+
+    while (t < totalMs){
+      const p = t / totalMs;            // 0..1
+      const ease = p*p;                 // медленнее к концу
+      const interval = Math.max(70, Math.min(420, lerp(90, 340, ease))); // ms
+      const key = bag[k % bag.length];
+      steps.push({ key, t0: t, t1: Math.min(totalMs, t + interval) });
+      t += interval;
+
+      k++;
+      // каждый полный проход — мешаем ещё раз
+      if (k % bag.length === 0) reshuffle();
+    }
+    return steps;
+  }
+
+  function startRandomPicker(){
+    // вычисляем кластеры "как они есть сейчас"
+    const clusters = computeClusters();
+    if (!clusters || clusters.length === 0){
+      try { showToast('RANDOM: кластеров нет'); } catch {}
+      return;
+    }
+
+    let maxSize = 1;
+    for (const c of clusters) maxSize = Math.max(maxSize, c.size || 1);
+
+    const selected = clusters.filter(c => (c.size || 1) === maxSize);
+    const keys = selected.map(c=>c.key).filter(Boolean);
+
+    if (!keys.length){
+      try { showToast('RANDOM: нечего выбирать'); } catch {}
+      return;
+    }
+
+    const winnerKey = keys[Math.floor(Math.random() * keys.length)];
+    const steps = _buildRandomSteps(keys, 3000);
+
+    randomPickState = {
+      startedAt: performance.now(),
+      blinkMs: 3000,
+      winnerMs: 2000,
+      steps,
+      keysSet: new Set(keys),
+      winnerKey
+    };
+
+    try { showToast(`RANDOM: выбрано кластеров ${keys.length} (size=${maxSize})`); } catch {}
+  }
+
+  function getRandomClusterScale(key, nowPerf){
+    if (!randomPickState) return 1;
+
+    const t = nowPerf - randomPickState.startedAt;
+    const blinkEnd = randomPickState.blinkMs;
+    const winnerEnd = randomPickState.blinkMs + randomPickState.winnerMs;
+
+    // 1) мигание 0..3s
+    if (t >= 0 && t < blinkEnd){
+      // находим текущий шаг
+      let step = null;
+      const tt = t;
+      for (let i = 0; i < randomPickState.steps.length; i++){
+        const s = randomPickState.steps[i];
+        if (tt >= s.t0 && tt < s.t1){ step = s; break; }
+      }
+      if (!step) return 1;
+
+      if (key !== step.key) return 1;
+
+      const phase = (tt - step.t0) / Math.max(1, (step.t1 - step.t0)); // 0..1
+      const pulse = Math.sin(Math.PI * phase); // 0..1..0
+      return 1 + 0.28 * pulse; // "вырастать и уменьшаться"
+    }
+
+    // 2) победитель 3..5s
+    if (t >= blinkEnd && t < winnerEnd){
+      if (key === randomPickState.winnerKey) return 1.35;
+      return 1;
+    }
+
+    // 3) конец
+    randomPickState = null;
+    return 1;
+  }
+
   function lerp(a,b,t){ return a + (b-a)*t; }
   function jelly(st){
     if (st.pulse<=0) return 1;
@@ -3664,7 +3810,7 @@ if (s && s.fill){
       const st = animStateFor(c.key, c);
       stepTowards(st, c, dt);
 
-      const rr = st.r * (window.devicePixelRatio||1);
+      const rr = st.r * (window.devicePixelRatio||1) * getRandomClusterScale(c.key, performance.now());
       const cx = st.x, cy = st.y;
 
       if (c.size === 1){
