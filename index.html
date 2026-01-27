@@ -2984,7 +2984,7 @@ function spawnEmoji(it){
     el.className = 'emoji stroke';
     el.style.setProperty('--emoji-stroke', stroke);
 
-    const emo = (it.emoji ?? it.emo);
+    const emo = (it.emoji ?? it.emo) || '❤️';
     el.textContent = emo;
 }
 
