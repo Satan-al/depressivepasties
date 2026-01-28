@@ -1028,34 +1028,35 @@ window.addEventListener('cc_emoji_changed', async (e) => {
   sizeCanvas();
   let resizeTimer; window.addEventListener('resize', ()=>{ clearTimeout(resizeTimer); resizeTimer=setTimeout(sizeCanvas, 120); });
 
-  function videoRect(){
+  let __videoRectCache = null;
+  let __videoRectCacheAt = 0;
+
+  function __computeVideoRect(){
     const dpr = window.devicePixelRatio||1;
-    
+
     // В overlay режиме возвращаем размеры всего canvas (без iframe)
     if (isOverlayMode()) {
       const cw = canvas.clientWidth, ch = canvas.clientHeight;
       return { x:0, y:0, w:cw*dpr, h:ch*dpr, cssx:0, cssy:0, cssw:cw, cssh:ch };
     }
-    
+
     // Для браузера: вычисляем актуальную область видео с учетом contain
     const videoWrap = document.getElementById('videoWrap');
-    const iframe = document.getElementById('player');
-    
     if (!videoWrap) {
       const cw = canvas.clientWidth, ch = canvas.clientHeight;
       return { x:0, y:0, w:cw*dpr, h:ch*dpr, cssx:0, cssy:0, cssw:cw, cssh:ch };
     }
-    
+
     // Размеры videoWrap
     const wrapW = videoWrap.clientWidth;
     const wrapH = videoWrap.clientHeight;
-    
+
     // Видео 16:9, вписываем в wrap с contain
     const videoAspect = 16/9;
     const wrapAspect = wrapW / wrapH;
-    
+
     let videoW, videoH, videoX, videoY;
-    
+
     if (wrapAspect > videoAspect) {
       // wrap шире чем видео - вписываем по высоте
       videoH = wrapH;
@@ -1069,25 +1070,39 @@ window.addEventListener('cc_emoji_changed', async (e) => {
       videoX = 0;
       videoY = (wrapH - videoH) / 2;
     }
-    
+
     // Координаты относительно canvas
     const wrapRect = videoWrap.getBoundingClientRect();
     const canvasRect = canvas.getBoundingClientRect();
-    
+
     const offsetX = wrapRect.left - canvasRect.left + videoX;
     const offsetY = wrapRect.top - canvasRect.top + videoY;
-    
-    return { 
-      x: offsetX*dpr, 
-      y: offsetY*dpr, 
-      w: videoW*dpr, 
-      h: videoH*dpr, 
-      cssx: offsetX, 
-      cssy: offsetY, 
-      cssw: videoW, 
-      cssh: videoH 
+
+    return {
+      x: offsetX*dpr,
+      y: offsetY*dpr,
+      w: videoW*dpr,
+      h: videoH*dpr,
+      cssx: offsetX,
+      cssy: offsetY,
+      cssw: videoW,
+      cssh: videoH
     };
   }
+
+  // Важно: videoRect() вызывается ОЧЕНЬ часто (в draw loop), поэтому:
+  // - не дёргаем getBoundingClientRect каждый кадр
+  // - обновляем кэш не чаще, чем раз в ~120мс (и при resize/scroll)
+  function videoRect(force=false){
+    const now = performance.now();
+    if (!force && __videoRectCache && (now - __videoRectCacheAt) < 120) return __videoRectCache;
+    __videoRectCacheAt = now;
+    __videoRectCache = __computeVideoRect();
+    return __videoRectCache;
+  }
+
+  window.addEventListener('scroll', ()=>{ __videoRectCacheAt = 0; }, {passive:true});
+  window.addEventListener('resize', ()=>{ __videoRectCacheAt = 0; });
   function normFromEvent(evt){
     const rect = canvas.getBoundingClientRect();
     const px = (evt.touches? evt.touches[0].clientX: evt.clientX) - rect.left;
@@ -1354,7 +1369,13 @@ state.presence.clear();
     for (const [id,p] of Object.entries(val)) state.points.set(id,p);
   });
   onValue(strokesRoot, (snap)=>{
-    const val=snap.val()||{}; state.strokes.clear(); for (const [k,s] of Object.entries(val)) state.strokes.set(k,s);
+    const val = snap.val() || {};
+    state.strokes.clear();
+    for (const [k,s] of Object.entries(val)) state.strokes.set(k,s);
+
+    // PERF: штрихи не надо пересобирать каждый кадр — пересобираем только при изменениях
+    state._strokesDirty = true;
+    state._strokesSortedCache = null;
   });
 // === CHAT — стабильная подписка по серверному времени ===
 const msgs = [];               // единый массив сообщений
@@ -3589,178 +3610,185 @@ ctx.restore();
 
     // DEBUG код удален
 
-    // strokes - ПРАВИЛЬНАЯ сортировка по timestamp и uid для стабильного порядка
-    // Сначала по времени, потом по uid для детерминированности
-    const strokes=[...state.strokes.values()].sort((a,b)=> {
-      const timeDiff = (a.ts||0) - (b.ts||0);
-      if (timeDiff !== 0) return timeDiff;
-      // Если время одинаковое, сортируем по uid для стабильности
-      return (a.uid||'').localeCompare(b.uid||'');
-    });
-    const dpr=window.devicePixelRatio||1;
-    const currentUid = (auth.currentUser&&auth.currentUser.uid)||state.id;
-    
-    // Рисуем ВСЕ штрихи так, чтобы ластик стирал ТОЛЬКО свои линии.
-// Для этого рендерим по слоям: отдельный offscreen-слой на каждого uid,
-// внутри слоя рисуем его штрихи и применяем его же ластики (destination-out),
-// а потом компонуем все слои на основной canvas.
-
+    // strokes (PERF): не перерисовываем ВСЁ каждый кадр.
+    // Собираем кэш только когда пришли новые штрихи/ластики/заливки или поменялся размер canvas.
+    const dpr = window.devicePixelRatio||1;
     const W = canvas.width;
     const H = canvas.height;
 
-    // Группируем по uid
-    const byUid = new Map();
-    for (const s of strokes){
-      const uid = s.uid || 'anon';
-      if (!byUid.has(uid)) byUid.set(uid, { draw: [], erase: [] });
-      (s.erase ? byUid.get(uid).erase : byUid.get(uid).draw).push(s);
+    if (!state._strokesCache){
+      state._strokesCache = document.createElement('canvas');
+      state._strokesCacheCtx = state._strokesCache.getContext('2d');
+      state._strokesDirty = true;
+    }
+    if (state._strokesCache.width !== W || state._strokesCache.height !== H){
+      state._strokesCache.width = W; state._strokesCache.height = H;
+      state._strokesDirty = true;
+      // при ресайзе нужно и слои подогнать
+      state._strokeLayers = state._strokeLayers || new Map();
     }
 
-    // Кэшируем offscreen canvases, чтобы не создавать каждый кадр заново
-    state._strokeLayers = state._strokeLayers || new Map();
+    if (state._strokesDirty){
+      const ctxC = state._strokesCacheCtx;
+      ctxC.setTransform(1,0,0,1,0,0);
+      ctxC.clearRect(0,0,W,H);
 
-    function getLayer(uid){
-      let layer = state._strokeLayers.get(uid);
-      if (!layer){
-        const c = document.createElement('canvas');
-        c.width = W; c.height = H;
-        layer = { c, ctx: c.getContext('2d') };
-        state._strokeLayers.set(uid, layer);
-      } else if (layer.c.width !== W || layer.c.height !== H){
-        layer.c.width = W; layer.c.height = H;
+      // Стабильная сортировка: сначала по времени, потом по uid
+      const strokesSorted = (state._strokesSortedCache || [...state.strokes.values()].sort((a,b)=> {
+        const timeDiff = (a.ts||0) - (b.ts||0);
+        if (timeDiff !== 0) return timeDiff;
+        return (a.uid||'').localeCompare(b.uid||'');
+      }));
+      state._strokesSortedCache = strokesSorted;
+
+      // Группируем по uid
+      const byUid = new Map();
+      for (const s of strokesSorted){
+        const uid = s.uid || 'anon';
+        if (!byUid.has(uid)) byUid.set(uid, { draw: [], erase: [] });
+        (s.erase ? byUid.get(uid).erase : byUid.get(uid).draw).push(s);
       }
-      return layer;
-    }
 
-    
-// Bucket fill (заливка) — выполняется при ререндере штрихов
-function _hexToRgba(hex){
-  const h = (hex||'#000000').replace('#','');
-  const r = parseInt(h.slice(0,2),16)||0, g=parseInt(h.slice(2,4),16)||0, b=parseInt(h.slice(4,6),16)||0;
-  return [r,g,b,255];
-}
-function _floodFillOnCtx(ctx2, sx, sy, hex){
-  const w = ctx2.canvas.width, h = ctx2.canvas.height;
-  sx = Math.floor(sx); sy = Math.floor(sy);
-  if (sx<0||sy<0||sx>=w||sy>=h) return;
-  const img = ctx2.getImageData(0,0,w,h);
-  const d = img.data;
-  const idx0 = (sy*w+sx)*4;
-  const target = [d[idx0],d[idx0+1],d[idx0+2],d[idx0+3]];
-  const repl = _hexToRgba(hex);
-  if (target[0]===repl[0] && target[1]===repl[1] && target[2]===repl[2] && target[3]===repl[3]) return;
-
-  const stack = [sx,sy];
-  // tolerance-based match to avoid tiny "black seams" from anti-aliasing
-const tol = 18; // color tolerance
-const aMin = 0; // include transparent pixels as target too
-const match = (i)=> {
-  const dr = d[i]-target[0], dg=d[i+1]-target[1], db=d[i+2]-target[2], da=d[i+3]-target[3];
-  return (Math.abs(dr)<=tol && Math.abs(dg)<=tol && Math.abs(db)<=tol && Math.abs(da)<=tol && d[i+3]>=aMin);
-};
-  while(stack.length){
-    const y = stack.pop(); const x = stack.pop();
-    if (x<0||y<0||x>=w||y>=h) continue;
-    const i = (y*w+x)*4;
-    if (!match(i)) continue;
-    d[i]=repl[0]; d[i+1]=repl[1]; d[i+2]=repl[2]; d[i+3]=255;
-    stack.push(x+1,y, x-1,y, x,y+1, x,y-1);
-}
-// Expand fill a bit into semi-transparent edge pixels to avoid visible seams.
-// We DO NOT overwrite solid stroke pixels (alpha >= 240).
-const grow = 4;
-const w4 = w*4;
-// Build a quick mask of filled pixels (alpha==255 && rgb==repl)
-const filled = new Uint8Array(w*h);
-for (let y=0; y<h; y++){
-  for (let x=0; x<w; x++){
-    const i = (y*w+x)*4;
-    if (d[i+3]===255 && d[i]===repl[0] && d[i+1]===repl[1] && d[i+2]===repl[2]) filled[y*w+x]=1;
-  }
-}
-// Simple dilation (square) for small grow radius
-for (let y=0; y<h; y++){
-  for (let x=0; x<w; x++){
-    if (!filled[y*w+x]) continue;
-    for (let yy=Math.max(0,y-grow); yy<=Math.min(h-1,y+grow); yy++){
-      for (let xx=Math.max(0,x-grow); xx<=Math.min(w-1,x+grow); xx++){
-        const j = (yy*w+xx)*4;
-        if (d[j+3] >= 240) continue; // keep solid strokes on top
-        // only paint pixels that are close to the original target (anti-alias fringe)
-        const dr = d[j]-target[0], dg=d[j+1]-target[1], db=d[j+2]-target[2];
-        if (Math.abs(dr)<=tol*2 && Math.abs(dg)<=tol*2 && Math.abs(db)<=tol*2){
-          d[j]=repl[0]; d[j+1]=repl[1]; d[j+2]=repl[2]; d[j+3]=255;
+      // Кэшируем offscreen canvases (по uid)
+      state._strokeLayers = state._strokeLayers || new Map();
+      function getLayer(uid){
+        let layer = state._strokeLayers.get(uid);
+        if (!layer){
+          const c = document.createElement('canvas');
+          c.width = W; c.height = H;
+          layer = { c, ctx: c.getContext('2d') };
+          state._strokeLayers.set(uid, layer);
+        } else if (layer.c.width !== W || layer.c.height !== H){
+          layer.c.width = W; layer.c.height = H;
         }
+        return layer;
       }
+
+      // Bucket fill (заливка) — выполняется при сборке кэша
+      function _hexToRgba(hex){
+        const h = (hex||'#000000').replace('#','');
+        const r = parseInt(h.slice(0,2),16)||0, g=parseInt(h.slice(2,4),16)||0, b=parseInt(h.slice(4,6),16)||0;
+        return [r,g,b,255];
+      }
+      function _floodFillOnCtx(ctx2, sx, sy, hex){
+        const w = ctx2.canvas.width, h = ctx2.canvas.height;
+        sx = Math.floor(sx); sy = Math.floor(sy);
+        if (sx<0||sy<0||sx>=w||sy>=h) return;
+        const img = ctx2.getImageData(0,0,w,h);
+        const d = img.data;
+        const idx0 = (sy*w+sx)*4;
+        const target = [d[idx0],d[idx0+1],d[idx0+2],d[idx0+3]];
+        const repl = _hexToRgba(hex);
+        if (target[0]===repl[0] && target[1]===repl[1] && target[2]===repl[2] && target[3]===repl[3]) return;
+
+        const stack = [sx,sy];
+        const tol = 18; // color tolerance
+        const aMin = 0; // include transparent pixels too
+        const match = (i)=> {
+          const dr = d[i]-target[0], dg=d[i+1]-target[1], db=d[i+2]-target[2], da=d[i+3]-target[3];
+          return (Math.abs(dr)<=tol && Math.abs(dg)<=tol && Math.abs(db)<=tol && Math.abs(da)<=tol && d[i+3]>=aMin);
+        };
+        while(stack.length){
+          const y = stack.pop(); const x = stack.pop();
+          if (x<0||y<0||x>=w||y>=h) continue;
+          const i = (y*w+x)*4;
+          if (!match(i)) continue;
+          d[i]=repl[0]; d[i+1]=repl[1]; d[i+2]=repl[2]; d[i+3]=255;
+          stack.push(x+1,y, x-1,y, x,y+1, x,y-1);
+        }
+
+        // small dilation into fringe pixels
+        const grow = 4;
+        const filled = new Uint8Array(w*h);
+        for (let yy=0; yy<h; yy++){
+          for (let xx=0; xx<w; xx++){
+            const ii = (yy*w+xx)*4;
+            if (d[ii+3]===255 && d[ii]===repl[0] && d[ii+1]===repl[1] && d[ii+2]===repl[2]) filled[yy*w+xx]=1;
+          }
+        }
+        for (let yy=0; yy<h; yy++){
+          for (let xx=0; xx<w; xx++){
+            if (!filled[yy*w+xx]) continue;
+            for (let y2=Math.max(0,yy-grow); y2<=Math.min(h-1,yy+grow); y2++){
+              for (let x2=Math.max(0,xx-grow); x2<=Math.min(w-1,xx+grow); x2++){
+                const j = (y2*w+x2)*4;
+                if (d[j+3] >= 240) continue; // keep solid strokes
+                const dr = d[j]-target[0], dg=d[j+1]-target[1], db=d[j+2]-target[2];
+                if (Math.abs(dr)<=tol*2 && Math.abs(dg)<=tol*2 && Math.abs(db)<=tol*2){
+                  d[j]=repl[0]; d[j+1]=repl[1]; d[j+2]=repl[2]; d[j+3]=255;
+                }
+              }
+            }
+          }
+        }
+        ctx2.putImageData(img,0,0);
+      }
+
+      function drawStrokeTo(ctx2, s){
+        if (s && s.fill){
+          const p = pxFromNorm(s.x, s.y);
+          _floodFillOnCtx(ctx2, p.x, p.y, s.color || DEFAULT_COLOR);
+          return;
+        }
+
+        const pts = s.points || [];
+        if (pts.length < 2) return;
+
+        ctx2.save();
+        ctx2.lineCap = 'round';
+        ctx2.lineJoin = 'round';
+        ctx2.lineWidth = (s.w || 4) * dpr;
+
+        if (s.erase){
+          ctx2.globalCompositeOperation = 'destination-out';
+          ctx2.strokeStyle = 'rgba(0,0,0,1)';
+        } else {
+          ctx2.globalCompositeOperation = 'source-over';
+          ctx2.strokeStyle = s.color || DEFAULT_COLOR;
+        }
+
+        ctx2.beginPath();
+        let p0 = pxFromNorm(pts[0].x, pts[0].y);
+        ctx2.moveTo(p0.x, p0.y);
+
+        for (let i = 1; i < pts.length - 1; i++){
+          const p1 = pxFromNorm(pts[i].x, pts[i].y);
+          const p2 = pxFromNorm(pts[i+1].x, pts[i+1].y);
+          const midX = (p1.x + p2.x) / 2;
+          const midY = (p1.y + p2.y) / 2;
+          ctx2.quadraticCurveTo(p1.x, p1.y, midX, midY);
+        }
+
+        if (pts.length > 1){
+          const last = pxFromNorm(pts[pts.length - 1].x, pts[pts.length - 1].y);
+          ctx2.lineTo(last.x, last.y);
+        }
+
+        ctx2.stroke();
+        ctx2.restore();
+      }
+
+      // Рендер слоёв 1 раз в кэш
+      for (const [uid, grp] of byUid.entries()){
+        const layer = getLayer(uid);
+        const ctx2 = layer.ctx;
+
+        ctx2.setTransform(1,0,0,1,0,0);
+        ctx2.clearRect(0, 0, W, H);
+
+        for (const s of grp.draw) drawStrokeTo(ctx2, s);
+        for (const s of grp.erase) drawStrokeTo(ctx2, s);
+
+        ctxC.drawImage(layer.c, 0, 0);
+      }
+
+      state._strokesDirty = false;
     }
-  }
-}
-ctx2.putImageData(img,0,0);
-}
 
-function drawStrokeTo(ctx2, s){
-if (s && s.fill){
-  const p = pxFromNorm(s.x, s.y);
-  _floodFillOnCtx(ctx2, p.x, p.y, s.color || DEFAULT_COLOR);
-  return;
-}
+    // Рисуем кэш штрихов
+    if (state._strokesCache) ctx.drawImage(state._strokesCache, 0, 0);
 
-      const pts = s.points || [];
-      if (pts.length < 2) return;
-
-      ctx2.save();
-      ctx2.lineCap = 'round';
-      ctx2.lineJoin = 'round';
-      ctx2.lineWidth = (s.w || 4) * dpr;
-
-      if (s.erase){
-        ctx2.globalCompositeOperation = 'destination-out';
-        ctx2.strokeStyle = 'rgba(0,0,0,1)';
-      } else {
-        ctx2.globalCompositeOperation = 'source-over';
-        ctx2.strokeStyle = s.color || DEFAULT_COLOR;
-      }
-
-      ctx2.beginPath();
-      let p0 = pxFromNorm(pts[0].x, pts[0].y);
-      ctx2.moveTo(p0.x, p0.y);
-
-      for (let i = 1; i < pts.length - 1; i++){
-        const p1 = pxFromNorm(pts[i].x, pts[i].y);
-        const p2 = pxFromNorm(pts[i+1].x, pts[i+1].y);
-        const midX = (p1.x + p2.x) / 2;
-        const midY = (p1.y + p2.y) / 2;
-        ctx2.quadraticCurveTo(p1.x, p1.y, midX, midY);
-      }
-
-      if (pts.length > 1){
-        const last = pxFromNorm(pts[pts.length - 1].x, pts[pts.length - 1].y);
-        ctx2.lineTo(last.x, last.y);
-      }
-
-      ctx2.stroke();
-      ctx2.restore();
-    }
-
-    // Рендер слоёв
-    for (const [uid, grp] of byUid.entries()){
-      const layer = getLayer(uid);
-      const ctx2 = layer.ctx;
-
-      // очистка слоя
-      ctx2.setTransform(1,0,0,1,0,0);
-      ctx2.clearRect(0, 0, W, H);
-
-      // 1) рисуем линии пользователя
-      for (const s of grp.draw) drawStrokeTo(ctx2, s);
-
-      // 2) применяем ТОЛЬКО его же ластики
-      for (const s of grp.erase) drawStrokeTo(ctx2, s);
-
-      // композитим слой
-      ctx.drawImage(layer.c, 0, 0);
-    }
-// Рисуем текущий штрих (живая отрисовка)
+    // Рисуем текущий штрих (живая отрисовка)
     if (state.currentStroke) {
       const s = state.currentStroke;
       const pts = s.points || [];
@@ -3769,8 +3797,7 @@ if (s && s.fill){
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.lineWidth = (s.w || 4) * dpr;
-        
-        // Текущий штрих всегда рисуем (это наш собственный)
+
         if (s.erase) {
           ctx.globalCompositeOperation = 'destination-out';
           ctx.strokeStyle = 'rgba(0,0,0,1)';
@@ -3778,11 +3805,11 @@ if (s && s.fill){
           ctx.globalCompositeOperation = 'source-over';
           ctx.strokeStyle = s.color || DEFAULT_COLOR;
         }
-        
+
         ctx.beginPath();
         let p0 = pxFromNorm(pts[0].x, pts[0].y);
         ctx.moveTo(p0.x, p0.y);
-        
+
         for (let i = 1; i < pts.length - 1; i++) {
           const p1 = pxFromNorm(pts[i].x, pts[i].y);
           const p2 = pxFromNorm(pts[i + 1].x, pts[i + 1].y);
@@ -3790,12 +3817,12 @@ if (s && s.fill){
           const midY = (p1.y + p2.y) / 2;
           ctx.quadraticCurveTo(p1.x, p1.y, midX, midY);
         }
-        
+
         if (pts.length > 1) {
           const last = pxFromNorm(pts[pts.length - 1].x, pts[pts.length - 1].y);
           ctx.lineTo(last.x, last.y);
         }
-        
+
         ctx.stroke();
         ctx.restore();
       }
