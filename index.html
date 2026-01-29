@@ -2565,7 +2565,7 @@ document.head.appendChild(ratAnimStyle);
     const tag = (document.activeElement||{}).tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (e.repeat) return;
-    if (e.code === 'KeyR' && e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey){
+    if (e.code === 'KeyN' && e.altKey && !e.ctrlKey && !e.metaKey){
       startRandomPicker();
       e.preventDefault();
       e.stopPropagation();
