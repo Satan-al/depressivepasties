@@ -2009,11 +2009,9 @@ if (txt === '/kick') {
 if (txt === '/random') {
   if (typeof chatInput !== 'undefined') chatInput.value = '';
   if (typeof chatInputOverlay !== 'undefined') chatInputOverlay.value = '';
-  startRandomPicker();
+  triggerRandomBroadcast();
   return;
 }
-
-
   // --- ВНУТРИ ОБРАБОТЧИКА ОТПРАВКИ СООБЩЕНИЯ ---
 
   // 1. Команда объединения: /id_старый+id_новый
@@ -2559,14 +2557,70 @@ document.head.appendChild(ratAnimStyle);
   };
   
   
+
+  // ===== RANDOM sync (broadcast to all clients via Firebase) =====
+  // Идея: команда /random и Alt+Shift+R должны запускать рандом ОДНОВРЕМЕННО у всех.
+  // Поэтому мы не запускаем startRandomPicker() локально "втихаря", а пишем событие в базу.
+  // Все клиенты подписаны на /commands/random и проигрывают анимацию при новом событии.
+  const randomCmdRoot = ref(db, `${basePath}/commands/random`);
+  let __randomBindAt = Date.now();
+  let __randomLastKey = null;
+  let __randomLocalTs = 0;
+
+  function triggerRandomBroadcast(){
+    const t = Date.now();
+    __randomLocalTs = t;
+    // Локально стартуем сразу, чтобы не ждать round-trip
+    try { startRandomPicker(); } catch {}
+    // Пишем событие в базу — остальные (и хост) подхватят
+    try { push(randomCmdRoot, { t, by: (typeof siteUserId !== 'undefined' ? siteUserId : null) }); } catch(e){}
+  }
+
+  function bindRandomBroadcast(){
+    if (window.__randomBroadcastBound) return;
+    window.__randomBroadcastBound = true;
+
+    __randomBindAt = Date.now();
+    // Берём только "хвост", но onChildAdded всё равно выдаст 1 старый элемент — отсекаем по времени.
+    const q = query(randomCmdRoot, orderByChild('t'), limitToLast(1));
+
+    onChildAdded(q, (snap)=>{
+      try{
+        if (!snap.exists()) return;
+        if (snap.key && snap.key === __randomLastKey) return;
+        __randomLastKey = snap.key || __randomLastKey;
+
+        const v = snap.val() || {};
+        const t = Number(v.t || 0);
+        const by = v.by;
+
+        // Не проигрываем "исторический" последний элемент при первом подключении
+        if (t && t < (__randomBindAt - 500)) return;
+
+        // Не дублируем собственный запуск (мы уже стартанули локально)
+        if (by && typeof siteUserId !== 'undefined' && by === siteUserId){
+          if (__randomLocalTs && Math.abs(t - __randomLocalTs) < 2000) return;
+        }
+
+        triggerRandomBroadcast();
+      }catch(e){
+        console.warn('[random] broadcast handler error', e);
+      }
+    });
+  }
+
+  // Стартуем подписку сразу
+  try { bindRandomBroadcast(); } catch(e) { console.warn('[random] bind failed', e); }
+
+
   // ===== RANDOM hotkey (Alt+Shift+R) =====
   // Работает и в overlay и в обычном режиме, но не срабатывает, если фокус в инпуте.
   window.addEventListener('keydown', (e)=>{
     const tag = (document.activeElement||{}).tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (e.repeat) return;
-    if (e.code === 'KeyN' && e.altKey && !e.ctrlKey && !e.metaKey){
-      startRandomPicker();
+    if (e.code === 'KeyR' && e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey){
+      triggerRandomBroadcast();
       e.preventDefault();
       e.stopPropagation();
     }
