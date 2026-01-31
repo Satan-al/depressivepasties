@@ -17,7 +17,81 @@
       --input-bg: #0b1420; --input-border: #223044;
       --blur: 14px;
     }
-    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    
+    
+    /* Global scrollbars (bottom scrollers, lists, etc.) */
+    *{ scrollbar-width: thin; scrollbar-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.45) rgba(30,38,51,0.22); }
+    *::-webkit-scrollbar{ width:10px; height:10px; }
+    *::-webkit-scrollbar-track{ background:rgba(30,38,51,0.22); border-radius:10px; }
+    *::-webkit-scrollbar-thumb{
+      background:linear-gradient(180deg, rgba(0,0,0,0.45), rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.50));
+      border-radius:10px;
+      border:2px solid rgba(10,14,20,0.55);
+    }
+    *::-webkit-scrollbar-thumb:hover{
+      background:linear-gradient(180deg, rgba(0,0,0,0.40), rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.65));
+    }
+
+    /* ===== Neon / 3D UI (visual only) ===== */
+    :root{
+      /* mouse "magnet" position */
+      --mx: 50vw;
+      --my: 30vh;
+
+      /* accent as rgb (JS syncs) */
+      --acc-r: 22;
+      --acc-g: 199;
+      --acc-b: 183;
+
+      /* tuned intensities */
+      --neo-glow: 0.55;
+      --neo-glow-strong: 0.80;
+      --neo-shadow: rgba(0,0,0,0.55);
+    }
+
+    /* One global glow ball that follows the cursor */
+    body::before{
+      content:"";
+      position:fixed;
+      inset:-20vmax;
+      pointer-events:none;
+      z-index:0;
+      background:
+        radial-gradient(22vmax 22vmax at var(--mx) var(--my),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b), calc(var(--neo-glow) * 0.70)) 0%,
+          rgba(120,80,255, calc(var(--neo-glow) * 0.35)) 22%,
+          rgba(255,80,190, calc(var(--neo-glow) * 0.25)) 40%,
+          rgba(0,255,240, calc(var(--neo-glow) * 0.18)) 58%,
+          rgba(0,0,0,0) 72%);
+      filter: blur(20px) saturate(1.35);
+      mix-blend-mode: screen;
+      opacity: 0.9;
+      transform: translate3d(0,0,0);
+    }
+    /* keep app above the glow */
+    body > .app{position:relative; z-index:1;}
+
+    /* Oil-slick gradient that always ends in the user's accent */
+    .neo-oil{
+      background:
+        linear-gradient(135deg,
+          rgba(120,80,255,0.35),
+          rgba(255,80,190,0.25),
+          rgba(0,255,240,0.20),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.35)),
+        linear-gradient(180deg,
+          rgba(255,255,255,0.10),
+          rgba(0,0,0,0.20));
+    }
+
+    /* subtle animated sheen */
+    @keyframes neo-sheen{
+      0%{ transform: translateX(-25%) rotate(8deg); opacity:0.0;}
+      25%{opacity:0.35;}
+      60%{opacity:0.18;}
+      100%{ transform: translateX(125%) rotate(8deg); opacity:0.0;}
+    }
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
     html,body{height:100%;background:var(--bg);color:var(--fg);font-family:'Open Sans',system-ui,sans-serif;font-size:15px;line-height:1.6}
     
     /* Кастомный скроллбар */
@@ -45,33 +119,209 @@
     }
     
     .app{display:grid;grid-template-rows:auto 1fr auto;min-height:100%}
+
     header{
       display:flex;gap:12px;flex-wrap:wrap;align-items:center;padding:14px 24px;
-      background:linear-gradient(180deg,rgba(15,23,34,0.95),rgba(11,20,32,0.98));
-      border-bottom:1px solid rgba(22,199,183,0.15);
       position:sticky;top:0;z-index:100;
-      box-shadow:0 4px 20px rgba(0,0,0,0.4), 0 0 40px rgba(22,199,183,0.05);
-      backdrop-filter:blur(12px);
+
+      border-bottom:1px solid rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22);
+      box-shadow:
+        0 10px 30px rgba(0,0,0,0.55),
+        0 0 40px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.10);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+
+      /* base + oil slick */
+      background:
+        linear-gradient(180deg,rgba(15,23,34,0.92),rgba(11,20,32,0.95));
     }
+    header::before{
+      content:"";
+      position:absolute; inset:-1px;
+      pointer-events:none;
+      border-radius: 0 0 18px 18px;
+      opacity:0.95;
+      background:
+        radial-gradient(1200px 220px at var(--mx) var(--my),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.20) 0%,
+          rgba(120,80,255,0.12) 35%,
+          rgba(255,80,190,0.10) 55%,
+          rgba(0,0,0,0) 72%),
+        linear-gradient(135deg,
+          rgba(120,80,255,0.10),
+          rgba(255,80,190,0.08),
+          rgba(0,255,240,0.06),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.10));
+      filter: blur(0px) saturate(1.25);
+      mix-blend-mode: screen;
+    }
+    header::after{
+      content:"";
+      position:absolute; inset:0;
+      pointer-events:none;
+      background: linear-gradient(180deg, rgba(255,255,255,0.10), rgba(255,255,255,0.00) 40%, rgba(0,0,0,0.25));
+      opacity:0.65;
+    }
+    header > *{position:relative; z-index:1;}
+
     .brand{
-      font-family:'Montserrat',sans-serif;font-weight:800;font-size:1.7em;
-      background:linear-gradient(135deg,#16c7b7,#14e3d0,#16c7b7);
+      font-family:'Montserrat',sans-serif;font-weight:900;font-size:1.7em;
+      background:
+        linear-gradient(135deg,
+          rgba(120,80,255,0.85),
+          rgba(255,80,190,0.80),
+          rgba(0,255,240,0.75),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.95));
       -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
-      filter:drop-shadow(0 0 12px rgba(22,199,183,0.4));
-      letter-spacing:.05em;
+      filter:drop-shadow(0 0 18px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.35));
+      letter-spacing:.06em;
     }
+
 
     .btn{
-      background:linear-gradient(180deg,var(--accent),var(--accent-2));color:#041f1e;border:0;padding:10px 16px;border-radius:12px;font-weight:800;font-size:.95em;cursor:pointer;
-      transition:transform .1s ease,filter .2s ease;box-shadow:0 6px 18px rgba(22,199,183,.18); white-space:nowrap;
-    }
-    .btn:hover{filter:brightness(1.02);transform:translateY(-1px)}
-    .btn.ghost{
-      background:rgba(10,20,30,.78); color:var(--fg); border:1px solid var(--border); box-shadow:none; backdrop-filter:blur(8px)
-    }
-    .btn.small{padding:8px 12px;border-radius:10px;font-weight:700}
-    .btn.danger{background:linear-gradient(180deg,#ef4444,#b91c1c); color:#fff; box-shadow:0 6px 18px rgba(239,68,68,.18)}
+      position:relative;
+      display:inline-flex;
+      align-items:center;
+      justify-content:center;
+      gap:8px;
 
+      padding:10px 14px;
+      border-radius:14px;
+      border:1px solid rgba(255,255,255,0.14);
+
+      color: var(--fg);
+      background:
+        linear-gradient(180deg,
+          rgba(255,255,255,0.10),
+          rgba(0,0,0,0.16)),
+        linear-gradient(135deg,
+          rgba(120,80,255,0.10),
+          rgba(255,80,190,0.08),
+          rgba(0,255,240,0.06),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.16));
+
+      /* stronger 3D depth */
+      box-shadow:
+        0 14px 26px rgba(0,0,0,0.62),
+        0 3px 0 rgba(255,255,255,0.10) inset,
+        0 -10px 18px rgba(0,0,0,0.40) inset,
+        0 0 0 1px rgba(255,255,255,0.06) inset,
+        0 0 28px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.20);
+
+      transform: translateZ(0);
+      transition: transform .12s ease, box-shadow .12s ease, filter .12s ease;
+    }
+
+    /* top sheen — tinted toward account accent */
+    .btn::before{
+      content:"";
+      position:absolute;
+      inset:1px 1px auto 1px;
+      height:52%;
+      border-radius:13px;
+      background:
+        radial-gradient(120px 60px at 20% 20%,
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.40),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.00) 70%),
+        linear-gradient(180deg,
+          rgba(255,255,255,0.16),
+          rgba(255,255,255,0.00));
+      opacity:0.95;
+      pointer-events:none;
+      mix-blend-mode: screen;
+      filter: saturate(1.2);
+    }
+
+    /* subtle rim glow */
+    .btn::after{
+      content:"";
+      position:absolute;
+      inset:-1px;
+      border-radius:15px;
+      background:
+        radial-gradient(220px 120px at var(--mx) var(--my),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.30),
+          rgba(0,0,0,0) 70%);
+      opacity:0.55;
+      pointer-events:none;
+      filter: blur(10px);
+    }
+
+    .btn:hover{
+      transform: translateY(-1px);
+      box-shadow:
+        0 18px 34px rgba(0,0,0,0.66),
+        0 3px 0 rgba(255,255,255,0.12) inset,
+        0 -12px 20px rgba(0,0,0,0.44) inset,
+        0 0 0 1px rgba(255,255,255,0.08) inset,
+        0 0 34px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.26);
+    }
+
+    .btn:active{
+      transform: translateY(1px);
+      box-shadow:
+        0 10px 18px rgba(0,0,0,0.58),
+        0 2px 0 rgba(255,255,255,0.08) inset,
+        0 -14px 22px rgba(0,0,0,0.46) inset,
+        0 0 0 1px rgba(255,255,255,0.06) inset,
+        0 0 22px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.18);
+    }
+.btn:hover{
+      filter:brightness(1.04) saturate(1.05);
+      transform:translateY(-2px);
+      box-shadow:
+        0 18px 34px rgba(0,0,0,0.62),
+        0 0 0 1px rgba(255,255,255,0.09) inset,
+        0 0 28px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.42);
+    }
+    .btn:active{
+      transform: translateY(1px) scale(0.99);
+      filter:brightness(0.98) saturate(1.02);
+      box-shadow:
+        0 10px 20px rgba(0,0,0,0.60),
+        0 0 0 1px rgba(255,255,255,0.05) inset,
+        0 6px 0 rgba(0,0,0,0.26) inset,
+        0 -8px 12px rgba(255,255,255,0.05) inset,
+        0 0 18px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.20);
+    }
+
+    /* Range sliders (brush size etc.) — darker accent */
+    .btn:active{
+      transform:translateY(0px) scale(0.99);
+      filter:brightness(0.98);
+      box-shadow:
+        0 10px 22px rgba(0,0,0,0.58),
+        0 0 0 1px rgba(255,255,255,0.06) inset,
+        0 0 18px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.28);
+    }
+
+    .btn.ghost{
+      position:relative;
+      background:
+        linear-gradient(145deg, rgba(15,23,34,0.78), rgba(11,20,32,0.88)),
+        linear-gradient(135deg,
+          rgba(120,80,255,0.10),
+          rgba(255,80,190,0.08),
+          rgba(0,255,240,0.06),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.10));
+      color:var(--fg);
+      border:1px solid rgba(255,255,255,0.10);
+      box-shadow:
+        0 10px 22px rgba(0,0,0,0.55),
+        0 0 0 1px rgba(255,255,255,0.05) inset,
+        0 0 18px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.18);
+      backdrop-filter:blur(10px);
+      -webkit-backdrop-filter:blur(10px);
+    }
+    .btn.ghost:hover{
+      border-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.45);
+      box-shadow:
+        0 14px 28px rgba(0,0,0,0.60),
+        0 0 0 1px rgba(255,255,255,0.07) inset,
+        0 0 26px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.30);
+    }
+
+    .btn.small{padding:8px 12px;border-radius:10px;font-weight:700}
     #status{margin-left:auto;display:flex;align-items:center;gap:10px;color:var(--muted);font-size:.9em}
     .dot{width:12px;height:12px;border-radius:999px;background:#666;box-shadow:0 0 0 2px rgba(255,255,255,.06) inset}
     .dot.ok{background:#36D399}.dot.warn{background:#F87171}
@@ -83,30 +333,85 @@
     iframe{width:100%;height:100%;border:0;display:block;object-fit:contain}
     #overlay{position:absolute;inset:0;width:100%;height:100%;touch-action:none;pointer-events:auto}
     #fx-layer{position:absolute;inset:0;pointer-events:none;overflow:visible}
-
     /* CHAT: сайт (левая панель) */
+
     .chat-panel{
       position:fixed; left:16px; top:96px; width:340px; max-height:65vh; z-index:120;
-      background:linear-gradient(145deg,rgba(15,23,34,0.85),rgba(11,20,32,0.9));
-      border:1px solid rgba(22,199,183,0.2);
-      border-radius:16px;
-      backdrop-filter:blur(16px);
-      display:flex; flex-direction:column; overflow:hidden; resize: both; min-width:260px; min-height:160px; height:min(50vh, 420px);
-      box-shadow:0 8px 32px rgba(0,0,0,0.5), 0 0 0 1px rgba(22,199,183,0.1) inset;
+      border-radius:18px;
+      display:flex; flex-direction:column;
       user-select:none;
-      resize:both; /* возможность изменения размера */
-      min-width:280px;
-      min-height:200px;
+      --chat-font: 14px;
+      font-size: var(--chat-font);
+      resize:both; min-width:280px; min-height:200px; height:min(50vh, 420px);
+
+      /* container frame */
+      border:1px solid rgba(255,255,255,0.10);
+      box-shadow:
+        0 20px 48px rgba(0,0,0,0.62),
+        0 0 0 1px rgba(255,255,255,0.05) inset,
+        0 0 30px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.18);
+
+      /* IMPORTANT: avoid text/layout glitches from backdrop-filter on the same node that scrolls */
+      background: transparent;
+      overflow:hidden;
     }
-    .chat-header{
+
+    /* Decorative background layer (all blur/glow lives here) */
+    .chat-panel .chat-bg{
+      position:absolute; inset:0;
+      pointer-events:none;
+      background:
+        radial-gradient(460px 320px at var(--mx) var(--my),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.16),
+          rgba(120,80,255,0.10) 35%,
+          rgba(255,80,190,0.08) 55%,
+          rgba(0,0,0,0) 74%),
+        linear-gradient(145deg, rgba(15,23,34,0.80), rgba(11,20,32,0.92)),
+        linear-gradient(135deg,
+          rgba(120,80,255,0.14),
+          rgba(255,80,190,0.10),
+          rgba(0,255,240,0.08),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.14));
+      filter: blur(12px) saturate(1.35);
+      opacity:0.92;
+      mix-blend-mode: screen;
+
+      /* blur glass */
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+    }
+
+    /* Content shell (normal layout flow, no filters) */
+    .chat-panel .chat-shell{
+      position:relative;
+      z-index:1;
+      height:100%;
+      display:flex;
+      flex-direction:column;
+    }
+.chat-panel.collapsed{ /* свёрнутый чат = только шапка */
+      height:auto;
+    }
+    .chat-panel.collapsed .chat-shell{height:auto;}
+.chat-header{
       display:flex; align-items:center; justify-content:space-between;
       padding:10px 14px;
-      color:var(--accent); font-weight:700; font-size:0.9em; letter-spacing:0.05em;
-      border-bottom:1px solid rgba(22,199,183,0.15);
-      background:rgba(22,199,183,0.05);
+      color:rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.98);
+      font-weight:900; font-size:0.92em; letter-spacing:0.06em;
+      border-bottom:1px solid rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22);
+
+      background:
+        linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.02)),
+        linear-gradient(135deg,
+          rgba(120,80,255,0.12),
+          rgba(255,80,190,0.10),
+          rgba(0,255,240,0.08),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.12));
+      box-shadow: 0 10px 18px rgba(0,0,0,0.45);
       cursor:move;
       touch-action: none;
     }
+
     .chat-header-left{display:flex;align-items:center;gap:8px}
     .chat-badge{background:linear-gradient(135deg,var(--accent),var(--accent-2));color:#041f1e;font-size:0.75em;font-weight:900;padding:2px 8px;border-radius:10px;min-width:20px;text-align:center}
     .chat-body{
@@ -114,33 +419,85 @@
       overflow-y:auto; overflow-x:hidden;
       min-height:120px; max-height:50vh;
       scrollbar-width:thin;
-      scrollbar-color:rgba(22,199,183,0.4) rgba(30,38,51,0.3);
+      scrollbar-color:rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.55) rgba(30,38,51,0.28);
     }
     .chat-body::-webkit-scrollbar{width:8px}
     .chat-body::-webkit-scrollbar-track{background:rgba(30,38,51,0.3);border-radius:4px}
-    .chat-body::-webkit-scrollbar-thumb{background:linear-gradient(180deg,rgba(22,199,183,0.4),rgba(14,165,160,0.4));border-radius:4px}
-    .chat-body::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg,rgba(22,199,183,0.6),rgba(14,165,160,0.6))}
+    .chat-body::-webkit-scrollbar-thumb{background:linear-gradient(180deg, rgba(0,0,0,0.40), rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.55)); border-radius:4px}
+    .chat-body::-webkit-scrollbar-thumb:hover{background:linear-gradient(180deg, rgba(0,0,0,0.35), rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.70))}
+
     .chat-msg{
-      background:linear-gradient(135deg,rgba(22,199,183,0.08),rgba(14,165,160,0.05));
-      border:1px solid rgba(22,199,183,0.15);
-      border-radius:12px;
-      padding:10px 12px;
-      word-break:break-word;
-      box-shadow:0 2px 8px rgba(0,0,0,0.2);
-      transition:transform 0.15s ease, box-shadow 0.15s ease;
-      cursor:pointer;
       position:relative;
+      isolation:isolate; /* keep blend effects from eating text */
+      display:block;
+      min-height:44px;
+      color: var(--fg);
+      line-height: 1.4;
+      font-size: 1em;
+background:
+        linear-gradient(145deg, rgba(15,23,34,0.62), rgba(11,20,32,0.90)),
+        linear-gradient(135deg,
+          rgba(120,80,255,0.14),
+          rgba(255,80,190,0.10),
+          rgba(0,255,240,0.08),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.14));
+      border:1px solid rgba(255,255,255,0.10);
+      border-radius:14px;
+      padding:12px 12px;
+      word-break:break-word;
+      box-shadow:
+        0 14px 26px rgba(0,0,0,0.58),
+        0 0 0 1px rgba(255,255,255,0.05) inset,
+        0 0 18px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.16);
+      transition:transform 0.15s ease, box-shadow 0.15s ease, border-color .15s ease, filter .15s ease;
+      cursor:pointer;
+      overflow:hidden;
     }
+    /* Shine UNDER text */
+    .chat-msg::before{
+      content:"";
+      position:absolute; inset:0;
+      pointer-events:none;
+      z-index:0;
+      background:
+        radial-gradient(300px 220px at var(--mx) var(--my),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.18) 0%,
+          rgba(255,255,255,0.08) 22%,
+          rgba(0,0,0,0) 70%);
+      opacity:0.9;
+      mix-blend-mode: screen;
+    }
+    /* Ensure content is ABOVE effects */
+    .chat-msg > *{ position:relative; z-index:1; }
+
     .chat-msg:hover{
-      transform:translateX(2px);
-      box-shadow:0 4px 12px rgba(22,199,183,0.15);
+      transform:translateX(2px) translateY(-1px);
+      filter:brightness(1.04) saturate(1.05);
+      border-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.35);
+      box-shadow:
+        0 18px 30px rgba(0,0,0,0.64),
+        0 0 0 1px rgba(255,255,255,0.06) inset,
+        0 0 26px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.24);
     }
-    /* Свои сообщения */
+/* Свои сообщения */
     .chat-msg.own-message{
-      background:linear-gradient(135deg,rgba(22,199,183,0.18),rgba(14,165,160,0.12));
-      border:1px solid rgba(22,199,183,0.3);
+      background:
+        linear-gradient(180deg,
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.24),
+          rgba(11,20,32,0.88)),
+        linear-gradient(135deg,
+          rgba(120,80,255,0.14),
+          rgba(255,80,190,0.10),
+          rgba(0,255,240,0.08),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.18));
+      border:1px solid rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.34);
+      box-shadow:
+        0 14px 26px rgba(0,0,0,0.62),
+        0 0 0 1px rgba(255,255,255,0.05) inset,
+        0 0 26px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.24);
     }
-    .chat-msg.own-message .chat-msg-header{
+    .chat-msg.own-message .chat-msg-text{ margin-top:6px; white-space:pre-wrap; }
+.chat-msg-header{
       flex-direction:row-reverse;
     }
     .chat-msg.replying{
@@ -430,7 +787,38 @@
     .gate-card.error { animation: shake .35s ease; }
     .in.error { border-color:#ef4444 !important; box-shadow:0 0 0 3px rgba(239,68,68,.2); }
 
-    footer{padding:14px 20px;color:var(--muted);font-size:.9em;background:var(--panel2);border-top:1px solid var(--border);text-align:center;box-shadow:0 -4px 12px rgba(0,0,0,.32)}
+    footer{
+      padding:14px 20px;
+      color:rgba(230,237,243,0.82);
+      font-size:.9em;
+      text-align:center;
+
+      position:relative;
+      background:
+        linear-gradient(180deg, rgba(11,20,32,0.92), rgba(10,16,26,0.96));
+      border-top:1px solid rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22);
+      box-shadow:
+        0 -10px 26px rgba(0,0,0,0.55),
+        0 0 30px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.08);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      overflow:hidden;
+    }
+    footer::before{
+      content:"";
+      position:absolute; inset:-1px;
+      pointer-events:none;
+      background:
+        radial-gradient(900px 220px at var(--mx) var(--my),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.14),
+          rgba(120,80,255,0.10) 40%,
+          rgba(255,80,190,0.08) 60%,
+          rgba(0,0,0,0) 75%);
+      mix-blend-mode: screen;
+      opacity:0.85;
+    }
+    footer > *{position:relative; z-index:1;}
+
     .hidden{display:none!important}
 
     @media (max-width:768px){
@@ -530,17 +918,66 @@
     .emoji-setup-container.open .emoji-grid{display:grid;}
     .emoji-setup-container .preview-container{cursor:pointer;}
     .emoji-setup-container:not(.open) .emoji-grid{display:none;}
+
     .emoji-btn {
-      background: var(--input-bg);
-      border: 1px solid var(--border);
-      border-radius: 8px;
+      position:relative;
+      background:
+        linear-gradient(145deg, rgba(15,23,34,0.78), rgba(11,20,32,0.88)),
+        linear-gradient(135deg,
+          rgba(120,80,255,0.12),
+          rgba(255,80,190,0.10),
+          rgba(0,255,240,0.08),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.14));
+      border: 1px solid rgba(255,255,255,0.10);
+      border-radius: 12px;
       font-size: 20px;
       cursor: pointer;
-      padding: 5px;
-      transition: 0.2s;
+      padding: 7px 6px;
+      transition: transform .12s ease, box-shadow .18s ease, border-color .18s ease, filter .18s ease;
+      box-shadow:
+        0 10px 18px rgba(0,0,0,0.55),
+        0 0 0 1px rgba(255,255,255,0.05) inset,
+        0 0 16px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.14);
+      overflow:hidden;
     }
-    .emoji-btn:hover { background: var(--accent); border-color: var(--accent); }
-    .emoji-btn.active { background: var(--accent); border-color: var(--accent-2); transform: scale(1.1); }
+    .emoji-btn::after{
+      content:"";
+      position:absolute; inset:0;
+      pointer-events:none;
+      background: radial-gradient(160px 120px at var(--mx) var(--my),
+        rgba(255,255,255,0.08),
+        rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.12) 35%,
+        rgba(0,0,0,0) 75%);
+      mix-blend-mode: screen;
+      opacity:0.9;
+    }
+    .emoji-btn:hover {
+      filter: brightness(1.06) saturate(1.08);
+      transform: translateY(-2px);
+      border-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.55);
+      box-shadow:
+        0 14px 22px rgba(0,0,0,0.60),
+        0 0 0 1px rgba(255,255,255,0.06) inset,
+        0 0 22px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.28);
+    }
+    .emoji-btn.active {
+      background:
+        linear-gradient(180deg,
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.92),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.60)),
+        linear-gradient(135deg,
+          rgba(120,80,255,0.16),
+          rgba(255,80,190,0.14),
+          rgba(0,255,240,0.10),
+          rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22));
+      border-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.65);
+      transform: translateY(-1px) scale(1.08);
+      box-shadow:
+        0 14px 24px rgba(0,0,0,0.62),
+        0 0 0 1px rgba(255,255,255,0.07) inset,
+        0 0 28px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.38);
+    }
+
     
     /* Скрываем старый input цвета, но оставляем функционал */
     #colorPickerInput { margin-top: 10px; width: 100%; height: 40px; cursor: pointer; }
@@ -645,15 +1082,377 @@
 .link-modal-buttons{ display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
 #toggleSelfClusters{ display:inline-flex !important; }
 
+
+
+/* === CHAT HARD OVERRIDE v2 (fix tiny rows / hidden text) ===
+   Purpose: telegram_link_styles.css (or older rules) sometimes force fixed heights / center alignment.
+   We override very specifically for the site chat list container.
+*/
+#chatListSite{
+  display:flex !important;
+  flex-direction:column !important;
+  gap:10px !important;
+  padding:10px !important;
+}
+
+/* direct message nodes created by renderChat are direct children of #chatListSite */
+#chatListSite > div{
+  height:auto !important;
+  min-height:56px !important;
+  overflow:visible !important;
+  display:flex !important;
+  flex-direction:column !important;
+  align-items:flex-start !important;
+  justify-content:flex-start !important;
+
+  padding:12px 14px !important;
+  border-radius:14px !important;
+
+  /* keep your neon/glass look */
+  background:linear-gradient(145deg, rgba(255,255,255,0.06), rgba(0,0,0,0.24)) !important;
+  border:1px solid rgba(255,255,255,0.10) !important;
+  box-shadow:
+    0 10px 26px rgba(0,0,0,0.55),
+    0 0 0 1px rgba(255,255,255,0.05) inset,
+    0 0 22px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.18) !important;
+}
+
+/* author line (often first child) */
+#chatListSite > div > b,
+#chatListSite > div .chat-author,
+#chatListSite > div .author{
+  display:block !important;
+  font-weight:800 !important;
+  letter-spacing:0.2px !important;
+  margin:0 0 6px 0 !important;
+  line-height:1.1 !important;
+}
+
+/* message text */
+#chatListSite{
+  font-size: var(--chat-font, 14px) !important;
+}
+
+#chatListSite > div,
+#chatListSite > div *{
+  line-height:1.35 !important;
+  font-size: inherit !important;
+}
+
+#chatListSite > div .chat-msg-text,
+#chatListSite > div .text,
+#chatListSite > div p,
+#chatListSite > div span{
+  white-space:pre-wrap !important;
+  word-break:break-word !important;
+  overflow-wrap:anywhere !important;
+}
+
+/* === BUTTONS: more 3D + accent-tinted highlight === */
+button, .btn{
+  transform: translateZ(0);
+}
+
+.btn{
+  box-shadow:
+    0 14px 36px rgba(0,0,0,0.62),
+    0 0 0 1px rgba(255,255,255,0.07) inset,
+    0 2px 0 rgba(255,255,255,0.08) inset,
+    0 -10px 18px rgba(0,0,0,0.42) inset,
+    0 0 28px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22);
+}
+
+.btn::before{
+  /* highlight sheen tinted toward account accent */
+  background:
+    radial-gradient(140% 120% at 20% 10%,
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.28),
+      rgba(255,255,255,0.10) 38%,
+      rgba(255,255,255,0.00) 70%);
+  opacity:0.85;
+}
+
+.btn:active{
+  transform: translateY(2px);
+  box-shadow:
+    0 8px 20px rgba(0,0,0,0.55),
+    0 0 0 1px rgba(255,255,255,0.06) inset,
+    0 -6px 12px rgba(0,0,0,0.46) inset;
+}
+
+/* danger buttons: keep standard red, do NOT get tinted */
+.btn.danger,
+button.danger{
+  background: linear-gradient(180deg, rgba(255,70,70,0.95), rgba(170,20,20,0.95)) !important;
+  border-color: rgba(255,90,90,0.55) !important;
+  box-shadow:
+    0 14px 34px rgba(0,0,0,0.62),
+    0 0 0 1px rgba(255,255,255,0.06) inset,
+    0 0 28px rgba(255,70,70,0.22) !important;
+}
+/* === RANGES: darker-than-accent track === */
+/* chat scrollbar darker */
+#chatListSite::-webkit-scrollbar-thumb,
+.chat-body::-webkit-scrollbar-thumb{
+  background: linear-gradient(180deg, rgba(0,0,0,0.55), rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.45)) !important;
+  border:2px solid rgba(10,14,20,0.65) !important;
+}
+
+input[type="range"]{
+      -webkit-appearance:none;
+      appearance:none;
+      height:10px;
+      border-radius:999px;
+      background: linear-gradient(90deg,
+        rgba(0,0,0,0.55),
+        rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.35));
+      border:1px solid rgba(255,255,255,0.10);
+      box-shadow:
+        0 10px 18px rgba(0,0,0,0.55),
+        0 0 0 1px rgba(255,255,255,0.05) inset;
+    }
+    input[type="range"]::-webkit-slider-thumb{
+      -webkit-appearance:none;
+      appearance:none;
+      width:18px;height:18px;border-radius:999px;
+      background: radial-gradient(circle at 30% 25%,
+        rgba(255,255,255,0.28),
+        rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.95) 55%,
+        rgba(0,0,0,0.35) 100%);
+      border:1px solid rgba(255,255,255,0.16);
+      box-shadow:
+        0 12px 22px rgba(0,0,0,0.62),
+        0 0 18px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22);
+      cursor:pointer;
+    }
+    input[type="range"]::-moz-range-thumb{
+      width:18px;height:18px;border-radius:999px;
+      background: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.95);
+      border:1px solid rgba(255,255,255,0.16);
+      box-shadow:
+        0 12px 22px rgba(0,0,0,0.62),
+        0 0 18px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22);
+      cursor:pointer;
+    }
+
+
+/* danger buttons: visually same as other buttons (no special red) */
+.btn.danger{ }
+
+
+/* === ACCENT ACTION BUTTONS === */
+#sendBtn, #logoutBtn, #clearBtn, #deleteVotesBtn,
+.btn.send, .btn.logout, .btn.clear, .btn.delete-votes {
+  background:
+    linear-gradient(180deg,
+      rgba(255,255,255,0.14),
+      rgba(0,0,0,0.18)),
+    linear-gradient(135deg,
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.45),
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.18));
+  box-shadow:
+    0 18px 34px rgba(0,0,0,0.68),
+    0 4px 0 rgba(255,255,255,0.14) inset,
+    0 -12px 22px rgba(0,0,0,0.46) inset,
+    0 0 36px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.35);
+}
+
+#sendBtn::before, #logoutBtn::before, #clearBtn::before, #deleteVotesBtn::before,
+.btn.send::before, .btn.logout::before, .btn.clear::before, .btn.delete-votes::before {
+  background:
+    radial-gradient(140px 70px at 20% 20%,
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.55),
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.0) 70%),
+    linear-gradient(180deg,
+      rgba(255,255,255,0.22),
+      rgba(255,255,255,0.0));
+}
+
+
+/* === REMOVE ONLINE INDICATOR === */
+.online-indicator,
+.online-status,
+#onlineIndicator,
+#onlineStatus {
+  display:none !important;
+}
+
+
+/* === ACCENT ACTION BUTTONS (FIX IDS) ===
+   targets: send/logout/clear/delete-votes/toggle-tool (vote/draw)
+   overrides any .danger / telegram_link_styles.css */
+#chatSend.btn,
+#logout.btn,
+#toolClear.btn,
+#btnDeleteVotes.btn,
+#toolToggle.btn{
+  border-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.45) !important;
+  background:
+    linear-gradient(180deg,
+      rgba(255,255,255,0.16),
+      rgba(0,0,0,0.20)) !important,
+    linear-gradient(135deg,
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.62),
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22)) !important;
+
+  box-shadow:
+    0 18px 34px rgba(0,0,0,0.70),
+    0 4px 0 rgba(255,255,255,0.14) inset,
+    0 -12px 22px rgba(0,0,0,0.46) inset,
+    0 0 36px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.40) !important;
+  filter: saturate(1.08);
+}
+
+#chatSend.btn::before,
+#logout.btn::before,
+#toolClear.btn::before,
+#btnDeleteVotes.btn::before,
+#toolToggle.btn::before{
+  background:
+    radial-gradient(150px 75px at 22% 18%,
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.62),
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.00) 70%) !important,
+    linear-gradient(180deg,
+      rgba(255,255,255,0.22),
+      rgba(255,255,255,0.00)) !important;
+  opacity:0.98 !important;
+}
+
+#chatSend.btn::after,
+#logout.btn::after,
+#toolClear.btn::after,
+#btnDeleteVotes.btn::after,
+#toolToggle.btn::after{
+  background:
+    radial-gradient(260px 140px at var(--mx) var(--my),
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.38),
+      rgba(0,0,0,0) 72%) !important;
+  opacity:0.62 !important;
+}
+
+/* make sure "danger" utility never forces red for these */
+#toolClear.danger,
+#btnDeleteVotes.danger{
+  color: var(--fg) !important;
+}
+
+
+/* === FORCE ACCENT FOR CLEAR/DELETE (beats .danger red fill) === */
+#toolClear,
+#btnDeleteVotes,
+#toolClear.danger,
+#btnDeleteVotes.danger{
+  background-color: transparent !important;
+  background-image:
+    linear-gradient(180deg, rgba(255,255,255,0.16), rgba(0,0,0,0.20)),
+    linear-gradient(135deg,
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.64),
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22)) !important;
+  background: 
+    linear-gradient(180deg, rgba(255,255,255,0.16), rgba(0,0,0,0.20)),
+    linear-gradient(135deg,
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.64),
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22)) !important;
+  border-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.45) !important;
+  color: var(--fg) !important;
+}
+
+/* if red comes from pseudo elements, kill them too */
+#toolClear::before, #btnDeleteVotes::before,
+#toolClear::after,  #btnDeleteVotes::after{
+  background: none !important;
+}
+
+/* re-add accent sheen/glow on top of the forced base */
+#toolClear::before, #btnDeleteVotes::before{
+  content:"" !important;
+  position:absolute !important;
+  inset:1px 1px auto 1px !important;
+  height:52% !important;
+  border-radius:13px !important;
+  pointer-events:none !important;
+  mix-blend-mode: screen !important;
+  background:
+    radial-gradient(150px 75px at 22% 18%,
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.62),
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.00) 70%),
+    linear-gradient(180deg, rgba(255,255,255,0.22), rgba(255,255,255,0.00)) !important;
+  opacity:0.98 !important;
+}
+
+#toolClear::after, #btnDeleteVotes::after{
+  content:"" !important;
+  position:absolute !important;
+  inset:-1px !important;
+  border-radius:15px !important;
+  pointer-events:none !important;
+  filter: blur(10px) !important;
+  background:
+    radial-gradient(260px 140px at var(--mx) var(--my),
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.38),
+      rgba(0,0,0,0) 72%) !important;
+  opacity:0.62 !important;
+}
+
+
+    /* === CINEMA / FULLSCREEN UI TOGGLE + 2-row header === */
+    #mainHeader{
+      display:flex;
+      flex-direction:column;
+      gap:10px;
+      align-items:stretch;
+    }
+    .header-row{
+      display:flex;
+      align-items:center;
+      gap:8px;
+      flex-wrap:wrap;
+    }
+
+    #headerTop{
+      transition: transform .28s ease, opacity .28s ease, max-height .28s ease, padding .28s ease, margin .28s ease;
+      transform: translateY(0);
+      opacity: 1;
+      max-height: 260px;
+      overflow: hidden;
+    }
+    #mainFooter{
+      transition: transform .28s ease, opacity .28s ease, max-height .28s ease, padding .28s ease, margin .28s ease;
+      transform: translateY(0);
+      opacity: 1;
+      max-height: 260px;
+      overflow: hidden;
+    }
+
+    body.cinema #headerTop{
+      transform: translateY(-110%);
+      opacity: 0;
+      max-height: 0;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      margin: 0 !important;
+      pointer-events: none;
+    }
+    body.cinema #mainFooter{
+      transform: translateY(110%);
+      opacity: 0;
+      max-height: 0;
+      padding-top: 0 !important;
+      padding-bottom: 0 !important;
+      margin: 0 !important;
+      pointer-events: none;
+    }
+
 </style>
 </head>
 <body>
 <div class="app">
   <header id="mainHeader">
-    <div class="brand">DepressivePasties</div>
+    <div class="header-row" id="headerTop">
+      <div class="brand">DepressivePasties</div>
 
-    <!-- инструменты -->
-    <div style="display:flex;gap:8px;align-items:center;margin-left:8px" id="toolsBar">
+      <!-- инструменты -->
+      <div style="display:flex;gap:8px;align-items:center;margin-left:8px" id="toolsBar">
       <button class="btn small" id="toolToggle" title="Переключить голос/рисование">Рисовать</button>
       <button class="btn ghost small" id="toolErase" title="Ластик">Ластик</button>
       <button class="btn ghost small art-only" id="toolFill" title="Заливка" >🪣</button>
@@ -667,8 +1466,22 @@
       </div>
     </div>
 
-    <!-- реакции -->
-    <div id="reactionsBar" style="display:flex;gap:8px;align-items:center;margin-left:8px">
+      <!-- кино-режим: скрыть верх/низ, эмодзи оставить -->
+      <button class="btn ghost small" id="btnCinema" title="Скрыть/показать верх и низ (Alt+F)">Fullscreen</button>
+
+      <button class="btn ghost small" id="toggleSelfClusters" title="Показывать голоса (кластеры) у себя на экране">Голоса: скрыты</button>
+
+      <button class="btn ghost small" id="logout" style="margin-left:auto">Выйти</button>
+
+      <div id="status" style="margin-left:6px">
+      <span class="dot" id="dot-auth" title="Статус подключения"></span>
+      <span id="status-text">Оффлайн</span>
+    </div>
+    </div>
+
+    <div class="header-row" id="headerEmojis">
+      <!-- реакции -->
+      <div id="reactionsBar" style="display:flex;gap:8px;align-items:center;margin-left:8px">
       <button id="emoBtn_0" class="btn ghost small" data-emo="👍" style="font-size:1.4em;padding:8px 14px">👍</button>
       <button id="emoBtn_1" class="btn ghost small" data-emo="👎" style="font-size:1.4em;padding:8px 14px">👎</button>
       <button id="emoBtn_2"  class="btn ghost small" data-emo="❤️" style="font-size:1.4em;padding:8px 14px">❤️</button>
@@ -695,19 +1508,13 @@
       </button>
 
 </div>
-
-    <button class="btn ghost small" id="toggleSelfClusters" title="Показывать голоса (кластеры) у себя на экране">Голоса: скрыты</button>
-
-    <button class="btn ghost small" id="logout" style="margin-left:auto">Выйти</button>
-
-    <div id="status" style="margin-left:6px">
-      <span class="dot" id="dot-auth" title="Статус подключения"></span>
-      <span id="status-text">Оффлайн</span>
     </div>
   </header>
 
   <!-- CHAT: сайт -->
   <aside class="chat-panel" id="chatPanel">
+    <div class="chat-bg"></div>
+    <div class="chat-shell">
     <div class="chat-header" id="chatDragHandle">
       <div class="chat-header-left">
         <span>Чат</span>
@@ -726,6 +1533,7 @@
     <div class="chat-input">
       <input id="chatInput" placeholder="Сообщение…" />
       <button class="btn small" id="chatSend">Отправить</button>
+    </div>
     </div>
   </aside>
 
@@ -746,7 +1554,7 @@
     </div>
   </main>
 
-  <footer>
+  <footer id="mainFooter">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
       <div>Тап по видео ставит/переставляет маркер. Alt+F7 — показать/скрыть чат в оверлее. ПИН входа: 1111.</div>
       <div style="display:flex;gap:8px">
@@ -900,6 +1708,36 @@
   // footer admin controls
   const btnDeleteVotes=$('#btnDeleteVotes');
 
+  // cinema controls (browser only; overlay keeps its own Alt+F for reactions)
+  const btnCinema = $('#btnCinema');
+
+  function setCinemaUI(on){
+    document.body.classList.toggle('cinema', !!on);
+    if (btnCinema){
+      btnCinema.textContent = on ? 'Exit Fullscreen' : 'Fullscreen';
+    }
+  }
+  function toggleCinemaUI(){ setCinemaUI(!document.body.classList.contains('cinema')); }
+
+  if (btnCinema){
+    btnCinema.addEventListener('click', ()=>{
+      if (window.isOverlayHotkeys) return;
+      toggleCinemaUI();
+    });
+  }
+
+  // Hotkey: Alt+F (NOT for overlay)
+  window.addEventListener('keydown', (e)=>{
+    if (window.isOverlayHotkeys) return;
+    if (['INPUT','TEXTAREA'].includes((document.activeElement||{}).tagName)) return;
+    if (e.repeat) return;
+    if (e.altKey && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.code === 'KeyF'){
+      toggleCinemaUI();
+      e.preventDefault();
+    }
+  });
+
+
   // canvases / layers
   const canvas=$('#overlay'), ctx=canvas.getContext('2d');
   const fxLayer = $('#fx-layer');
@@ -936,6 +1774,36 @@
   const contextReply = $('#contextReply');
   const contextEdit = $('#contextEdit');
   const contextDelete = $('#contextDelete');
+
+  // === CHAT: dynamic font-size by WIDTH (resize:both, width-only scaling) ===
+  // Требование: при растягивании чата по ширине текст внутри растёт/уменьшается; высота влияет только на видимость.
+  const CHAT_FONT_BASE_W = 340;   // дизайн-ширина .chat-panel (см. CSS width:340px)
+  const CHAT_FONT_BASE_PX = 14;   // базовый размер текста
+  const CHAT_FONT_MIN_PX  = 12;
+  const CHAT_FONT_MAX_PX  = 36;
+
+  function __applyChatFontByWidth(){
+    if (!chatPanel) return;
+    // clientWidth = реальная ширина контента (без resize-угла/скролла)
+    const w = Math.max(240, chatPanel.clientWidth || chatPanel.offsetWidth || CHAT_FONT_BASE_W);
+    const scaled = CHAT_FONT_BASE_PX * (w / CHAT_FONT_BASE_W);
+    const px = Math.max(CHAT_FONT_MIN_PX, Math.min(CHAT_FONT_MAX_PX, scaled));
+    chatPanel.style.setProperty('--chat-font', (Math.round(px * 10) / 10) + 'px');
+  }
+
+  // 1) сразу при старте
+  __applyChatFontByWidth();
+
+  // 2) реакция на resize панели (drag-resize)
+  if (window.ResizeObserver){
+    const __chatRO = new ResizeObserver(() => __applyChatFontByWidth());
+    __chatRO.observe(chatPanel);
+  } else {
+    // fallback (очень старые браузеры)
+    window.addEventListener('resize', __applyChatFontByWidth);
+    setInterval(__applyChatFontByWidth, 500);
+  }
+
 
   // Reply state
   let replyToMessage = null;
@@ -1563,6 +2431,7 @@ if (!window.__reactionsBound) {
     
     state.name = savedName;
     state.color = localStorage.getItem('cc_color') || '#16c7b7';
+    if (window.__neoApplyAccent) window.__neoApplyAccent(state.color);
     
     setTimeout(() => {
       // Подставляем ПИН только для системного входа
@@ -1643,9 +2512,11 @@ if (!window.__reactionsBound) {
         state.createdAt = userData.createdAt;
         state.activity = userData.activity || {};
         state.color = userData.color || inputColor;
+        if (window.__neoApplyAccent) window.__neoApplyAccent(state.color);
       } else {
         state.name = inputName;
         state.color = inputColor;
+        if (window.__neoApplyAccent) window.__neoApplyAccent(state.color);
         state.createdAt = Date.now();
         state.activity = {};
       }
@@ -1933,27 +2804,46 @@ if (!window.__reactionsBound) {
   chatNotifications.style.opacity = state.notifications ? '1' : '0.5';
   
   chatToggle.addEventListener('click', ()=>{
-    chatCollapsed=!chatCollapsed;
-    chatToggle.textContent = chatCollapsed? 'Развернуть' : 'Свернуть';
+    // запоминаем размер до сворачивания, чтобы вернуть 1-в-1
+    if (!chatCollapsed){
+      const r = chatPanel.getBoundingClientRect();
+      window.__chatPrevSize = { w: r.width, h: r.height, left: chatPanel.style.left, top: chatPanel.style.top };
+    }
+
+    chatCollapsed = !chatCollapsed;
+    chatToggle.textContent = chatCollapsed ? 'Развернуть' : 'Свернуть';
+
+    chatPanel.classList.toggle('collapsed', chatCollapsed);
     chatPanel.querySelector('.chat-body').classList.toggle('chat-hidden', chatCollapsed);
     chatPanel.querySelector('.chat-input').classList.toggle('chat-hidden', chatCollapsed);
-    
-    // При свёртывании уменьшаем высоту до ТОЛЬКО шапки
+
+    // При свёртывании: панель должна стать высотой своей шапки (chat-header)
     if (chatCollapsed) {
-      chatPanel.style.maxHeight = 'fit-content';
-      chatPanel.style.height = 'auto';
+      const hdr = chatPanel.querySelector('.chat-header');
+      const targetH = hdr ? hdr.getBoundingClientRect().height : 54;
+
       chatPanel.style.overflow = 'hidden';
-      chatPanel.style.minHeight = 'auto'; // Убираем min-height
-      chatPanel.style.resize = 'none'; // Отключаем resize в свёрнутом виде
+      chatPanel.style.minHeight = '0px';
+      chatPanel.style.maxHeight = Math.ceil(targetH) + 'px';
+      chatPanel.style.height = Math.ceil(targetH) + 'px';
+      chatPanel.style.resize = 'none';
     } else {
+      // При разворачивании: возвращаем прошлую высоту, если была
       chatPanel.style.maxHeight = '65vh';
-      chatPanel.style.height = '';
       chatPanel.style.overflow = '';
-      chatPanel.style.minHeight = '200px'; // Возвращаем min-height
-      chatPanel.style.resize = 'both'; // Включаем resize обратно
+      chatPanel.style.minHeight = '200px';
+      chatPanel.style.resize = 'both';
+
+      const prev = window.__chatPrevSize;
+      if (prev && prev.h) {
+        chatPanel.style.height = Math.round(prev.h) + 'px';
+        chatPanel.style.width  = Math.round(prev.w) + 'px';
+      } else {
+        chatPanel.style.height = '';
+      }
     }
-    
-    // При разворачивании сбрасываем счетчик// При разворачивании сбрасываем счетчик
+
+    // При разворачивании сбрасываем счетчик
     if (!chatCollapsed){
       state.unreadCount = 0;
       state.lastReadTs = Date.now();
@@ -3724,7 +4614,9 @@ ctx.restore();
         const r = parseInt(h.slice(0,2),16)||0, g=parseInt(h.slice(2,4),16)||0, b=parseInt(h.slice(4,6),16)||0;
         return [r,g,b,255];
       }
-      function _floodFillOnCtx(ctx2, sx, sy, hex){
+      function _floodFillOnCtx(ctx2, sx, sy, hex, opts){
+        opts = opts || {};
+        const overwriteStrokes = !!opts.overwriteStrokes;
         const w = ctx2.canvas.width, h = ctx2.canvas.height;
         sx = Math.floor(sx); sy = Math.floor(sy);
         if (sx<0||sy<0||sx>=w||sy>=h) return;
@@ -3736,7 +4628,7 @@ ctx.restore();
         if (target[0]===repl[0] && target[1]===repl[1] && target[2]===repl[2] && target[3]===repl[3]) return;
 
         const stack = [sx,sy];
-        const tol = 18; // color tolerance
+        const tol = 26; // color tolerance (boosted to reduce fringe gaps)
         const aMin = 0; // include transparent pixels too
         const match = (i)=> {
           const dr = d[i]-target[0], dg=d[i+1]-target[1], db=d[i+2]-target[2], da=d[i+3]-target[3];
@@ -3752,7 +4644,7 @@ ctx.restore();
         }
 
         // small dilation into fringe pixels
-        const grow = 4;
+        const grow = 6;
         const filled = new Uint8Array(w*h);
         for (let yy=0; yy<h; yy++){
           for (let xx=0; xx<w; xx++){
@@ -3766,7 +4658,14 @@ ctx.restore();
             for (let y2=Math.max(0,yy-grow); y2<=Math.min(h-1,yy+grow); y2++){
               for (let x2=Math.max(0,xx-grow); x2<=Math.min(w-1,xx+grow); x2++){
                 const j = (y2*w+x2)*4;
-                if (d[j+3] >= 240) continue; // keep solid strokes
+                if (d[j+3] >= 252 && !overwriteStrokes) continue; // keep solid strokes unless asked to overwrite
+                if (overwriteStrokes){
+                  // paint over any non-transparent pixels near the filled region to kill "outline"
+                  if (d[j+3] > 0){
+                    d[j]=repl[0]; d[j+1]=repl[1]; d[j+2]=repl[2]; d[j+3]=255;
+                  }
+                  continue;
+                }
                 const dr = d[j]-target[0], dg=d[j+1]-target[1], db=d[j+2]-target[2];
                 if (Math.abs(dr)<=tol*2 && Math.abs(dg)<=tol*2 && Math.abs(db)<=tol*2){
                   d[j]=repl[0]; d[j+1]=repl[1]; d[j+2]=repl[2]; d[j+3]=255;
@@ -3781,7 +4680,7 @@ ctx.restore();
       function drawStrokeTo(ctx2, s){
         if (s && s.fill){
           const p = pxFromNorm(s.x, s.y);
-          _floodFillOnCtx(ctx2, p.x, p.y, s.color || DEFAULT_COLOR);
+          _floodFillOnCtx(ctx2, p.x, p.y, s.color || DEFAULT_COLOR, { overwriteStrokes: true });
           return;
         }
 
@@ -4406,6 +5305,7 @@ function moveStroke(e){
     artColorDot.addEventListener('click', ()=> artColorPicker.click());
     artColorPicker.addEventListener('input', async ()=>{
       state.color = artColorPicker.value;
+      if (window.__neoApplyAccent) window.__neoApplyAccent(state.color);
       applyArtUI();
       // Обновим presence, чтобы цвет разошёлся всем (если нужно)
       try{ await heartbeat(); }catch{}
@@ -5143,6 +6043,7 @@ function boot(){
     // color picker: keep in sync with preview
     function syncColor(){
       updatePreview();
+      if (window.__neoApplyAccent) window.__neoApplyAccent(gateColor.value);
     }
 
 gateColor.addEventListener('input', syncColor);
@@ -5157,6 +6058,74 @@ gateColor.addEventListener('input', syncColor);
       gateHint.classList.add('show');
     }
   }
+
+
+  /* ===== Neon / 3D UI helpers (visual only) ===== */
+  (function(){
+    const root = document.documentElement;
+
+    function hexToRgb(hex){
+      if (!hex) return {r:22,g:199,b:183};
+      let h = String(hex).trim();
+      if (!h) return {r:22,g:199,b:183};
+      if (h[0] === '#') h = h.slice(1);
+      if (h.length === 3) h = h.split('').map(ch => ch+ch).join('');
+      const n = parseInt(h, 16);
+      if (!Number.isFinite(n)) return {r:22,g:199,b:183};
+      return { r:(n>>16)&255, g:(n>>8)&255, b:n&255 };
+    }
+
+    // global: update CSS vars so ALL accents follow account color
+    window.__neoApplyAccent = function(colorHex){
+      const rgb = hexToRgb(colorHex);
+      root.style.setProperty('--acc-r', String(rgb.r));
+      root.style.setProperty('--acc-g', String(rgb.g));
+      root.style.setProperty('--acc-b', String(rgb.b));
+
+      // keep legacy vars in sync (some old CSS still uses them)
+      if (colorHex) root.style.setProperty('--accent', String(colorHex));
+
+      // accent-2 = slightly darker & more saturated
+      const dr = Math.max(0, Math.round(rgb.r * 0.78));
+      const dg = Math.max(0, Math.round(rgb.g * 0.78));
+      const db = Math.max(0, Math.round(rgb.b * 0.78));
+      const acc2 = `rgb(${dr}, ${dg}, ${db})`;
+      root.style.setProperty('--accent-2', acc2);
+    };
+
+    // init accent from saved account color
+    try{
+      const saved = localStorage.getItem('cc_color') || localStorage.getItem('color') || '#16c7b7';
+      window.__neoApplyAccent(saved);
+    }catch(e){}
+
+    // magnetic glow ball follows cursor (throttled)
+    let raf = 0;
+    let lastX = 0, lastY = 0;
+    function apply(){
+      raf = 0;
+      root.style.setProperty('--mx', `${lastX}px`);
+      root.style.setProperty('--my', `${lastY}px`);
+    }
+    function onMove(ev){
+      const p = (ev.touches && ev.touches[0]) ? ev.touches[0] : ev;
+      lastX = p.clientX;
+      lastY = p.clientY;
+      if (!raf) raf = requestAnimationFrame(apply);
+    }
+    window.addEventListener('pointermove', onMove, {passive:true});
+    window.addEventListener('mousemove', onMove, {passive:true});
+    window.addEventListener('touchmove', onMove, {passive:true});
+
+    // nice default if no movement yet
+    requestAnimationFrame(()=>{ 
+      const r = root.getBoundingClientRect();
+      lastX = Math.round(r.width * 0.6);
+      lastY = Math.round(r.height * 0.25);
+      apply();
+    });
+  })();
+
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
