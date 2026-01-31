@@ -1277,7 +1277,6 @@ input[type="range"]{
   display:none !important;
 }
 
-
 /* === ACCENT ACTION BUTTONS (FIX IDS) ===
    targets: send/logout/clear/delete-votes/toggle-tool (vote/draw)
    overrides any .danger / telegram_link_styles.css */
@@ -1287,19 +1286,25 @@ input[type="range"]{
 #btnDeleteVotes.btn,
 #toolToggle.btn{
   border-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.45) !important;
+
   background:
-    linear-gradient(180deg,
+    linear-gradient(
+      180deg,
       rgba(255,255,255,0.16),
-      rgba(0,0,0,0.20)) !important,
-    linear-gradient(135deg,
+      rgba(0,0,0,0.20)
+    ),
+    linear-gradient(
+      135deg,
       rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.62),
-      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22)) !important;
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.22)
+    ) !important;
 
   box-shadow:
     0 18px 34px rgba(0,0,0,0.70),
     0 4px 0 rgba(255,255,255,0.14) inset,
     0 -12px 22px rgba(0,0,0,0.46) inset,
     0 0 36px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.40) !important;
+
   filter: saturate(1.08);
 }
 
@@ -1309,13 +1314,18 @@ input[type="range"]{
 #btnDeleteVotes.btn::before,
 #toolToggle.btn::before{
   background:
-    radial-gradient(150px 75px at 22% 18%,
+    radial-gradient(
+      150px 75px at 22% 18%,
       rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.62),
-      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.00) 70%) !important,
-    linear-gradient(180deg,
+      rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.00) 70%
+    ),
+    linear-gradient(
+      180deg,
       rgba(255,255,255,0.22),
-      rgba(255,255,255,0.00)) !important;
-  opacity:0.98 !important;
+      rgba(255,255,255,0.00)
+    ) !important;
+
+  opacity: 0.98 !important;
 }
 
 #chatSend.btn::after,
@@ -1327,7 +1337,7 @@ input[type="range"]{
     radial-gradient(260px 140px at var(--mx) var(--my),
       rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.38),
       rgba(0,0,0,0) 72%) !important;
-  opacity:0.62 !important;
+  opacity: 0.62 !important;
 }
 
 /* make sure "danger" utility never forces red for these */
@@ -1556,7 +1566,7 @@ input[type="range"]{
 
   <footer id="mainFooter">
     <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
-      <div>Тап по видео ставит/переставляет маркер. Alt+F7 — показать/скрыть чат в оверлее. ПИН входа: 1111.</div>
+      <div>Alt+F — полноэкранный режим.</div>
       <div style="display:flex;gap:8px">
         <button class="btn ghost small" id="artColorDot" title="Цвет (арт-режим)" style="display:none;width:32px;height:32px;border-radius:999px;padding:0;border:1px solid var(--border)"></button>
         <input type="color" id="artColorPicker" value="#16c7b7" style="position:absolute;left:-9999px;opacity:0;width:1px;height:1px"/>
@@ -3949,7 +3959,7 @@ function spawnEmoji(it){
     el.className = 'emoji stroke';
     el.style.setProperty('--emoji-stroke', stroke);
 
-    const emo = (it.emoji ?? it.emo) || '❤️';
+    const emo = (it.emoji ?? it.emo);
     el.textContent = emo;
 }
 
