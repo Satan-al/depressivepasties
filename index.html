@@ -7,7 +7,6 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@700;800&family=Open+Sans:wght@400;600;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="telegram_link_styles.css">
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='0.9em' font-size='90'%3E%F0%9F%A5%9F%3C/text%3E%3C/svg%3E">
   <style>
     :root {
@@ -1266,8 +1265,6 @@ input[type="range"]{
     }
 
 
-/* danger buttons: visually same as other buttons (no special red) */
-.btn.danger{ }
 
 
 /* === ACCENT ACTION BUTTONS === */
@@ -1651,7 +1648,7 @@ input[type="range"]{
   };
 
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-  import { getDatabase, ref, onValue, set, remove, push, update, child, query, orderByChild, limitToLast,serverTimestamp, onChildAdded, onChildRemoved, get } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+  import { getDatabase, ref, onValue, set, remove, push, update, child, query, orderByChild, limitToLast, serverTimestamp, onChildAdded, onChildRemoved, get, goOffline, goOnline } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
   import { getAuth, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
   const FIXED_VIEW = "https://vdo.ninja/?view=DepressivePasties&codec=h264&quality=2&height=1080&framerate=30&buffer=0&noaudio=0&autohide&cleanoutput&noheader&stats=0";
@@ -1855,6 +1852,17 @@ input[type="range"]{
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
   const auth = getAuth();
+
+
+  // ── Чебурнет-фикс: переподключение через long-polling ──
+  // Если WebSocket заблокирован провайдером, 
+  // Firebase автоматически переключится на HTTP long-polling
+  goOffline(db);
+  setTimeout(() => {
+      goOnline(db);
+      console.log('[Firebase] Переподключение через long-polling');
+  }, 300);
+
 
   const DEFAULT_COLOR = '#16c7b7';
   
