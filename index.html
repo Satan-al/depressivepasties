@@ -1510,6 +1510,7 @@ input[type="range"]{
 
       <button class="btn ghost small" id="logout" style="margin-left:auto">Выйти</button>
       <button class="btn ghost small" id="reloadVideo" title="Перезагрузить видео">📺</button>
+      <button class="btn ghost small" id="pauseVideo" title="Пауза / Воспроизведение">⏸</button>
       <div id="status" style="margin-left:6px">
       <span class="dot" id="dot-auth" title="Статус подключения"></span>
       <span id="status-text">Оффлайн</span>
@@ -1639,7 +1640,7 @@ input[type="range"]{
   const firebaseConfig = {
     apiKey: "AIzaSyAcrLDWHWA_diaVHQwtFUeWqq3WAzMYBnc",
     authDomain: "dpgames-66d73.firebaseapp.com",
-    databaseURL: "https://firebase-proxy.up.railway.app?ns=dpgames-66d73-default-rtdb",
+    databaseURL: "https://firebase-proxy.up.railway.app",
     projectId: "dpgames-66d73",
     storageBucket: "dpgames-66d73.firebasestorage.app",
     messagingSenderId: "734650657253",
@@ -3594,6 +3595,81 @@ document.head.appendChild(ratAnimStyle);
       }
     });
   }
+
+  // ===== PAUSE — пауза видео у хоста через оверлей =====
+const pauseCmdRoot = ref(db, `${basePath}/commands/pause`);
+let __pauseBindAt = Date.now();
+let __pauseLastKey = null;
+let __pauseLocalTs = 0;
+let __lastPauseSendAt = 0;
+
+const btnPause = document.getElementById('pauseVideo');
+if (btnPause) {
+  btnPause.addEventListener('click', () => sendPauseCommand());
+}
+
+async function sendPauseCommand() {
+  if (!auth.currentUser) return;
+  const now = Date.now();
+  // Антиспам: 3 секунды
+  if (now - __lastPauseSendAt < 3000) {
+    console.log('[pause] throttled');
+    return;
+  }
+  __lastPauseSendAt = now;
+  __pauseLocalTs = now;
+
+  // Визуальный отклик
+  if (btnPause) {
+    btnPause.classList.add('reaction-clicked');
+    setTimeout(() => btnPause.classList.remove('reaction-clicked'), 400);
+  }
+
+  try {
+    await push(pauseCmdRoot, {
+      t: serverTimestamp(),
+      by: auth.currentUser.uid,
+      name: getDisplayName(state) || 'Кто-то'
+    });
+    console.log('[pause] command sent');
+  } catch (e) {
+    console.error('[pause] failed', e);
+  }
+}
+
+// Слушатель паузы — ТОЛЬКО в overlay режиме
+(function bindPauseListener() {
+  if (!isOverlayMode()) return;
+
+  __pauseBindAt = Date.now();
+  const qPause = query(pauseCmdRoot, orderByChild('t'), limitToLast(1));
+
+  onChildAdded(qPause, (snap) => {
+    if (!snap.exists()) return;
+    if (snap.key === __pauseLastKey) return;
+    __pauseLastKey = snap.key;
+
+    const v = snap.val() || {};
+    const t = Number(v.t || 0);
+
+    // Пропускаем старые команды (до подключения)
+    if (t && t < (__pauseBindAt - 1000)) return;
+
+    // Не дублируем свой собственный запуск
+    const by = v.by;
+    const me = auth.currentUser?.uid;
+    if (by && me && by === me) {
+      if (__pauseLocalTs && Math.abs(t - __pauseLocalTs) < 3000) return;
+    }
+
+    // Сигнал для Python оверлея
+    console.log('[OVERLAY_PAUSE]');
+
+    // Toast уведомление
+    const who = v.name || 'Кто-то';
+    showOverlayToast({ text: `⏸ ${who} нажал паузу`, color: '#fbbf24', emoji: '⏸' });
+  });
+})();
 
   // Стартуем подписку сразу
   try { bindRandomBroadcast(); } catch(e) { console.warn('[random] bind failed', e); }
