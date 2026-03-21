@@ -1636,11 +1636,11 @@ input[type="range"]{
 
 <script type="module">
   window.isOverlayHotkeys = new URLSearchParams(location.search).get('overlay')==='1';
-  /* ==== FIREBASE ==== БЛЯТЬ СКАЖИТЕ НАСТЕ НА НАЖИМАТЬ КНОПКУ СТОЛЬКО РАЗ И ВООБ*/
+  /* ==== FIREBASE ==== */
   const firebaseConfig = {
     apiKey: "AIzaSyAcrLDWHWA_diaVHQwtFUeWqq3WAzMYBnc",
     authDomain: "dpgames-66d73.firebaseapp.com",
-    databaseURL: "https://firebase-proxy.up.railway.app",
+    databaseURL: "https://firebase-proxy.up.railway.app?ns=dpgames-66d73-default-rtdb",
     projectId: "dpgames-66d73",
     storageBucket: "dpgames-66d73.firebasestorage.app",
     messagingSenderId: "734650657253",
@@ -3666,6 +3666,7 @@ document.head.appendChild(ratAnimStyle);
       showOverlayToast({ text: `⏸ ${who} нажал паузу`, color: '#fbbf24', emoji: '⏸' });
     });
   })();
+
   
   // ===== RANDOM hotkey (Alt+Shift+R) =====
   // Работает и в overlay и в обычном режиме, но не срабатывает, если фокус в инпуте.
