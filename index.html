@@ -1636,7 +1636,7 @@ input[type="range"]{
 
 <script type="module">
   window.isOverlayHotkeys = new URLSearchParams(location.search).get('overlay')==='1';
-  /* ==== FIREBASE ==== */
+  /* ==== FIREBASE ==== БЛЯТЬ СКАЖИТЕ НАСТЕ НА НАЖИМАТЬ КНОПКУ СТОЛЬКО РАЗ И ВООБ*/
   const firebaseConfig = {
     apiKey: "AIzaSyAcrLDWHWA_diaVHQwtFUeWqq3WAzMYBnc",
     authDomain: "dpgames-66d73.firebaseapp.com",
@@ -3596,85 +3596,77 @@ document.head.appendChild(ratAnimStyle);
     });
   }
 
-  // ===== PAUSE — пауза видео у хоста через оверлей =====
-const pauseCmdRoot = ref(db, `${basePath}/commands/pause`);
-let __pauseBindAt = Date.now();
-let __pauseLastKey = null;
-let __pauseLocalTs = 0;
-let __lastPauseSendAt = 0;
-
-const btnPause = document.getElementById('pauseVideo');
-if (btnPause) {
-  btnPause.addEventListener('click', () => sendPauseCommand());
-}
-
-async function sendPauseCommand() {
-  if (!auth.currentUser) return;
-  const now = Date.now();
-  // Антиспам: 3 секунды
-  if (now - __lastPauseSendAt < 3000) {
-    console.log('[pause] throttled');
-    return;
-  }
-  __lastPauseSendAt = now;
-  __pauseLocalTs = now;
-
-  // Визуальный отклик
-  if (btnPause) {
-    btnPause.classList.add('reaction-clicked');
-    setTimeout(() => btnPause.classList.remove('reaction-clicked'), 400);
-  }
-
-  try {
-    await push(pauseCmdRoot, {
-      t: serverTimestamp(),
-      by: auth.currentUser.uid,
-      name: getDisplayName(state) || 'Кто-то'
-    });
-    console.log('[pause] command sent');
-  } catch (e) {
-    console.error('[pause] failed', e);
-  }
-}
-
-// Слушатель паузы — ТОЛЬКО в overlay режиме
-(function bindPauseListener() {
-  if (!isOverlayMode()) return;
-
-  __pauseBindAt = Date.now();
-  const qPause = query(pauseCmdRoot, orderByChild('t'), limitToLast(1));
-
-  onChildAdded(qPause, (snap) => {
-    if (!snap.exists()) return;
-    if (snap.key === __pauseLastKey) return;
-    __pauseLastKey = snap.key;
-
-    const v = snap.val() || {};
-    const t = Number(v.t || 0);
-
-    // Пропускаем старые команды (до подключения)
-    if (t && t < (__pauseBindAt - 1000)) return;
-
-    // Не дублируем свой собственный запуск
-    const by = v.by;
-    const me = auth.currentUser?.uid;
-    if (by && me && by === me) {
-      if (__pauseLocalTs && Math.abs(t - __pauseLocalTs) < 3000) return;
-    }
-
-    // Сигнал для Python оверлея
-    console.log('[OVERLAY_PAUSE]');
-
-    // Toast уведомление
-    const who = v.name || 'Кто-то';
-    showOverlayToast({ text: `⏸ ${who} нажал паузу`, color: '#fbbf24', emoji: '⏸' });
-  });
-})();
-
   // Стартуем подписку сразу
   try { bindRandomBroadcast(); } catch(e) { console.warn('[random] bind failed', e); }
 
+  // ===== PAUSE — пауза видео у хоста через оверлей =====
+  const pauseCmdRoot = ref(db, `${basePath}/commands/pause`);
+  let __pauseBindAt = Date.now();
+  let __pauseLastKey = null;
+  let __pauseLocalTs = 0;
+  let __lastPauseSendAt = 0;
 
+  const btnPause = document.getElementById('pauseVideo');
+  if (btnPause) {
+    btnPause.addEventListener('click', () => sendPauseCommand());
+  }
+
+  async function sendPauseCommand() {
+    if (!auth.currentUser) return;
+    const now = Date.now();
+    if (now - __lastPauseSendAt < 3000) {
+      console.log('[pause] throttled');
+      return;
+    }
+    __lastPauseSendAt = now;
+    __pauseLocalTs = now;
+
+    if (btnPause) {
+      btnPause.classList.add('reaction-clicked');
+      setTimeout(() => btnPause.classList.remove('reaction-clicked'), 400);
+    }
+
+    try {
+      await push(pauseCmdRoot, {
+        t: serverTimestamp(),
+        by: auth.currentUser.uid,
+        name: getDisplayName(state) || 'Кто-то'
+      });
+      console.log('[pause] command sent');
+    } catch (e) {
+      console.error('[pause] failed', e);
+    }
+  }
+
+  (function bindPauseListener() {
+    if (!isOverlayMode()) return;
+
+    __pauseBindAt = Date.now();
+    const qPause = query(pauseCmdRoot, orderByChild('t'), limitToLast(1));
+
+    onChildAdded(qPause, (snap) => {
+      if (!snap.exists()) return;
+      if (snap.key === __pauseLastKey) return;
+      __pauseLastKey = snap.key;
+
+      const v = snap.val() || {};
+      const t = Number(v.t || 0);
+
+      if (t && t < (__pauseBindAt - 1000)) return;
+
+      const by = v.by;
+      const me = auth.currentUser?.uid;
+      if (by && me && by === me) {
+        if (__pauseLocalTs && Math.abs(t - __pauseLocalTs) < 3000) return;
+      }
+
+      console.log('[OVERLAY_PAUSE]');
+
+      const who = v.name || 'Кто-то';
+      showOverlayToast({ text: `⏸ ${who} нажал паузу`, color: '#fbbf24', emoji: '⏸' });
+    });
+  })();
+  
   // ===== RANDOM hotkey (Alt+Shift+R) =====
   // Работает и в overlay и в обычном режиме, но не срабатывает, если фокус в инпуте.
   window.addEventListener('keydown', (e)=>{
