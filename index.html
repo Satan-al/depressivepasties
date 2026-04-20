@@ -70,6 +70,12 @@
     /* keep app above the glow */
     body > .app{position:relative; z-index:1;}
 
+    /* В режиме оверлея (ghost_overlay.py добавляет html.overlay-live,
+       или открыто с ?overlay=1) глобальное свечение за курсором не нужно —
+       оно отсвечивает поверх игры и мешает. */
+    html.overlay-live body::before,
+    html.overlay-mode body::before{ display: none !important; }
+
     /* Oil-slick gradient that always ends in the user's accent */
     .neo-oil{
       background:
@@ -1177,6 +1183,56 @@ background:
   overflow-wrap:anywhere !important;
 }
 
+/* === FIX: сообщения должны растягиваться под длинный текст === */
+/* Проблема была: .chat-msg имел overflow:hidden, и flex-дети по дефолту
+   имеют min-width:auto — из-за этого длинные строки вылезали за границы
+   и накладывались на соседние сообщения. Переопределяем для ОБОИХ списков. */
+#chatListSite .chat-msg,
+#chatListOverlay .chat-msg,
+.chat-msg{
+  height: auto !important;
+  overflow: visible !important;
+  min-width: 0 !important;
+}
+.chat-msg-header{
+  flex-wrap: wrap !important;
+  min-width: 0 !important;
+}
+.chat-msg-header > b{
+  min-width: 0 !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+}
+.chat-msg-text{
+  display: block !important;
+  width: 100% !important;
+  min-width: 0 !important;
+  white-space: pre-wrap !important;
+  word-break: break-word !important;
+  overflow-wrap: anywhere !important;
+}
+.chat-msg-reply-preview{
+  min-width: 0 !important;
+  overflow-wrap: anywhere !important;
+  word-break: break-word !important;
+  white-space: normal !important;
+}
+
+/* === PNG-реакции: легче обводка, чтобы картинка читалась, а не рамка === */
+.btn[data-reaction-type="png"]{
+  box-shadow:
+    0 4px 10px rgba(0,0,0,0.35),
+    0 0 0 1px rgba(255,255,255,0.04) inset,
+    0 0 8px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.10) !important;
+  border: 1px solid rgba(255,255,255,0.06) !important;
+}
+.btn[data-reaction-type="png"]::before{
+  opacity: 0.35 !important;
+}
+.btn[data-reaction-type="png"] img{
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35));
+}
+
 /* === BUTTONS: more 3D + accent-tinted highlight === */
 button, .btn{
   transform: translateZ(0);
@@ -1538,11 +1594,11 @@ input[type="range"]{
       <button id="emoBtn_15"  class="btn ghost small" data-emo="💔" style="font-size:1.4em;padding:8px 14px">💔</button>
       <button id="emoBtn_16"  class="btn ghost small" data-emo="🤯" style="font-size:1.4em;padding:8px 14px">🤯</button>
       <button id="emoBtn_17"  class="btn ghost small" data-emo="🔔" style="font-size:1.4em;padding:8px 14px">🔔</button>
-      <button class="btn ghost small" data-reaction-type="png" data-reaction-src="images/crying.png" data-reaction-key="плачу" style="font-size:1.4em;padding:8px 14px">
-        <img src="images/crying.png" alt="Плачу" style="width: 24px; height: 24px; vertical-align: middle;">
+      <button class="btn ghost small" data-reaction-type="png" data-reaction-src="images/crying.png" data-reaction-key="плачу" style="font-size:1.4em;padding:4px 10px">
+        <img src="images/crying.png" alt="Плачу" style="width: 32px; height: 32px; vertical-align: middle;">
       </button>
-      <button class="btn ghost small" data-reaction-type="png" data-reaction-src="images/dancing.png" data-reaction-key="танцую" style="font-size:1.4em;padding:8px 14px">
-        <img src="images/dancing.png" alt="Танцую" style="width: 24px; height: 24px; vertical-align: middle;">
+      <button class="btn ghost small" data-reaction-type="png" data-reaction-src="images/dancing.png" data-reaction-key="танцую" style="font-size:1.4em;padding:4px 10px">
+        <img src="images/dancing.png" alt="Танцую" style="width: 32px; height: 32px; vertical-align: middle;">
       </button>
 
 </div>
@@ -1636,6 +1692,9 @@ input[type="range"]{
 
 <script type="module">
   window.isOverlayHotkeys = new URLSearchParams(location.search).get('overlay')==='1';
+  // Для CSS-правил, которые должны срабатывать в обычном браузере при ?overlay=1
+  // (ghost_overlay.py отдельно ставит html.overlay-live — это другой кейс)
+  if (window.isOverlayHotkeys) document.documentElement.classList.add('overlay-mode');
   /* ==== FIREBASE ==== */
   const firebaseConfig = {
     apiKey: "AIzaSyAcrLDWHWA_diaVHQwtFUeWqq3WAzMYBnc",
@@ -1649,7 +1708,7 @@ input[type="range"]{
   };
 
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-  import { getDatabase, ref, onValue, set, remove, push, update, child, query, orderByChild, limitToLast, serverTimestamp, onChildAdded, onChildRemoved, get, goOffline, goOnline } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+  import { getDatabase, ref, onValue, set, remove, push, update, child, query, orderByChild, limitToLast, serverTimestamp, onChildAdded, onChildChanged, onChildRemoved, get, goOffline, goOnline } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
   import { getAuth, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
   const FIXED_VIEW = "https://vdo.ninja/?view=DepressivePasties&codec=h264&quality=2&height=1080&framerate=30&buffer=0&noaudio=0&autohide&cleanoutput&noheader&stats=0";
@@ -2043,20 +2102,7 @@ window.addEventListener('cc_emoji_changed', async (e) => {
   const reactsRoot = ref(db, `${basePath}/reactions`);
   const ratModeRef = ref(db, `${basePath}/rat_mode`);  // Флаг RAT режима
   const tgLinksRoot = ref(db, `${basePath}/telegram_links`);
-  // Telegram links index: tgUserId -> siteUserId (нужно для toast-ов от Telegram)
-  onValue(tgLinksRoot, (snap)=>{
-    try{
-      const v = snap.val() || {};
-      const m = new Map();
-      for (const [siteUid, rec] of Object.entries(v)){
-        const tgId = rec && (rec.tgUserId ?? rec.telegramUserId);
-        if (tgId != null) m.set(String(tgId), siteUid);
-      }
-      state.tgIndex = m;
-    }catch(e){ console.warn('tgLinks index failed', e); }
-  });
-
-
+  // Подписка на telegram_links единая — ниже в блоке TELEGRAM LINKS INDEX
 
   /* ======= PRESENCE ======= */
 // lastActive должен отражать РЕАЛЬНУЮ активность (клики/клавиши), а не heartbeat.
@@ -2253,44 +2299,74 @@ state.presence.clear();
 
   /* ======= DATA LISTENERS ======= */
 
+  // Дефолтный набор эмодзи (должен совпадать с разметкой emoBtn_0..17).
+  // Используется, если пользовательский слот пустой — так правка N-го слота
+  // не стирает первые N-1 кнопок в DOM.
+  const DEFAULT_EMOJIS = [
+    '👍','👎','❤️','😂','😮','😢',
+    '🔥','🤡','🤬','🍷','🧐','💃',
+    '🚩','🤷‍♂️','🙄','💔','🤯','🔔'
+  ];
+
   let userEmojis = []; // Сюда загрузим твои кастомные штуки
 
   function setupEmojiListener(uid) {
     const emojiRef = ref(db, `${basePath}/users/${uid}/settings/emojis`);
     onValue(emojiRef, (snap) => {
       const val = snap.val();
-      if (val && Array.isArray(val)) {
+      // RTDB может прислать массив или объект (если были "дырки") — нормализуем
+      if (Array.isArray(val)) {
         userEmojis = val;
-        applyUserEmojis(); // Красим кнопки
+      } else if (val && typeof val === 'object') {
+        const arr = [];
+        for (const [k, v] of Object.entries(val)) arr[Number(k)] = v;
+        userEmojis = arr;
+      } else {
+        userEmojis = [];
       }
+      applyUserEmojis();
     });
   }
 
-  // Функция, которая берет массив и "засовывает" эмодзи в твои кнопки
+  // Функция, которая берет массив и "засовывает" эмодзи в твои кнопки.
+  // Для слотов, где у пользователя ничего нет, показываем дефолтный эмодзи.
   function applyUserEmojis() {
-    userEmojis.forEach((emo, i) => {
+    for (let i = 0; i < DEFAULT_EMOJIS.length; i++) {
       const btn = document.getElementById(`emoBtn_${i}`);
-      if (btn) {
-        btn.innerHTML = emo;
-        btn.setAttribute('data-emo', emo);
-      }
-    });
+      if (!btn) continue;
+      const saved = userEmojis[i];
+      const emo = (saved && String(saved).trim()) ? saved : DEFAULT_EMOJIS[i];
+      btn.innerHTML = emo;
+      btn.setAttribute('data-emo', emo);
+    }
     // Если есть панель оверлея, её тоже обновим
     if (typeof renderOverlayEmojis === 'function') renderOverlayEmojis();
   }
 
 
-  onValue(pointsRoot, (snap)=>{
-    const val=snap.val()||{}; 
-    state.points.clear(); 
-    for (const [id,p] of Object.entries(val)) state.points.set(id,p);
+  // === POINTS — инкрементальная подписка ===
+  // Раньше onValue присылал ВСЮ таблицу при любом изменении, и мы каждый раз
+  // делали state.points.clear() + пересборку. Теперь — точечно по событиям.
+  onChildAdded(pointsRoot, (snap)=>{
+    state.points.set(snap.key, snap.val() || {});
   });
-  onValue(strokesRoot, (snap)=>{
-    const val = snap.val() || {};
-    state.strokes.clear();
-    for (const [k,s] of Object.entries(val)) state.strokes.set(k,s);
+  onChildChanged(pointsRoot, (snap)=>{
+    state.points.set(snap.key, snap.val() || {});
+  });
+  onChildRemoved(pointsRoot, (snap)=>{
+    state.points.delete(snap.key);
+  });
 
-    // PERF: штрихи не надо пересобирать каждый кадр — пересобираем только при изменениях
+  // === STROKES — инкрементальная подписка ===
+  // Штрихи только добавляются и удаляются; их не редактируют после создания.
+  // При каждом изменении помечаем кэш грязным — drawFrame пересоберёт offscreen-слои.
+  onChildAdded(strokesRoot, (snap)=>{
+    state.strokes.set(snap.key, snap.val() || {});
+    state._strokesDirty = true;
+    state._strokesSortedCache = null;
+  });
+  onChildRemoved(strokesRoot, (snap)=>{
+    state.strokes.delete(snap.key);
     state._strokesDirty = true;
     state._strokesSortedCache = null;
   });
@@ -2326,10 +2402,10 @@ const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со ста
       if (isOverlayMode()) showOverlayToast(m);
     }
 
-    // рендер
+    // рендер (инкрементально — только это новое сообщение)
     const stickSite = nearBottom(chatListSite);
     const stickOv   = nearBottom(chatListOverlay);
-    renderChat(msgs);
+    addOrUpdateChatMessage(m, msgs);
     if (stickSite) chatListSite.scrollTop = chatListSite.scrollHeight;
     if (stickOv)   chatListOverlay.scrollTop = chatListOverlay.scrollHeight;
 
@@ -2344,7 +2420,7 @@ const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со ста
     const index = msgs.findIndex(m => m.key === removedKey);
     if (index >= 0) {
       msgs.splice(index, 1);
-      renderChat(msgs);
+      removeChatMessageFromDOM(removedKey);
       state.localChat = msgs.slice(-100);
       localStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
     }
@@ -2734,8 +2810,6 @@ if (!window.__reactionsBound) {
       initVideo();
     }, 200);
   }
-
-  setInterval(keepIframeAlive, 30000);
 
   // Проверяем каждые 30 секунд
   setInterval(keepIframeAlive, 30000);
@@ -3548,10 +3622,14 @@ document.head.appendChild(ratAnimStyle);
   // ===== RANDOM sync (broadcast to all clients via Firebase) =====
   // Идея: команда /random и Alt+Shift+R должны запускать рандом ОДНОВРЕМЕННО у всех.
   // Поэтому мы не запускаем startRandomPicker() локально "втихаря", а пишем событие в базу.
-  // Все клиенты подписаны на /commands/random и проигрывают анимацию при новом событии.
-  const randomCmdRoot = ref(db, `${basePath}/commands/random`);
+  // Все клиенты подписаны на /commands/random/current и проигрывают анимацию при новом событии.
+  //
+  // ВАЖНО: используем set() на ФИКСИРОВАННОМ пути /current (не push!).
+  // push создавал новую запись каждый раз, и подписка onChildAdded повторно
+  // вызывала triggerRandomBroadcast() → опять push → эхо-луп между клиентами,
+  // база росла до миллионов записей за секунды. Теперь узел всегда один.
+  const randomCurrentRef = ref(db, `${basePath}/commands/random/current`);
   let __randomBindAt = Date.now();
-  let __randomLastKey = null;
   let __randomLocalTs = 0;
 
   function triggerRandomBroadcast(){
@@ -3559,8 +3637,8 @@ document.head.appendChild(ratAnimStyle);
     __randomLocalTs = t;
     // Локально стартуем сразу, чтобы не ждать round-trip
     try { startRandomPicker(); } catch {}
-    // Пишем событие в базу — остальные (и хост) подхватят
-    try { push(randomCmdRoot, { t, by: (typeof siteUserId !== 'undefined' ? siteUserId : null) }); } catch(e){}
+    // Пишем событие в базу (перезаписываем единственный узел — роста не будет)
+    try { set(randomCurrentRef, { t, by: (typeof siteUserId !== 'undefined' ? siteUserId : null) }); } catch(e){}
   }
 
   function bindRandomBroadcast(){
@@ -3568,28 +3646,25 @@ document.head.appendChild(ratAnimStyle);
     window.__randomBroadcastBound = true;
 
     __randomBindAt = Date.now();
-    // Берём только "хвост", но onChildAdded всё равно выдаст 1 старый элемент — отсекаем по времени.
-    const q = query(randomCmdRoot, orderByChild('t'), limitToLast(1));
 
-    onChildAdded(q, (snap)=>{
+    onValue(randomCurrentRef, (snap)=>{
       try{
         if (!snap.exists()) return;
-        if (snap.key && snap.key === __randomLastKey) return;
-        __randomLastKey = snap.key || __randomLastKey;
 
         const v = snap.val() || {};
         const t = Number(v.t || 0);
         const by = v.by;
 
-        // Не проигрываем "исторический" последний элемент при первом подключении
+        // Не проигрываем "исторический" элемент при первом подключении
         if (t && t < (__randomBindAt - 500)) return;
 
-        // Не дублируем собственный запуск (мы уже стартанули локально)
+        // Свой же broadcast — мы уже запустили локально в triggerRandomBroadcast
         if (by && typeof siteUserId !== 'undefined' && by === siteUserId){
           if (__randomLocalTs && Math.abs(t - __randomLocalTs) < 2000) return;
         }
 
-        triggerRandomBroadcast();
+        // ЧУЖОЙ broadcast — только локально запускаем, в БД НИЧЕГО НЕ ПИШЕМ
+        try { startRandomPicker(); } catch {}
       }catch(e){
         console.warn('[random] broadcast handler error', e);
       }
@@ -3692,63 +3767,104 @@ document.head.appendChild(ratAnimStyle);
     }
   });
 
-  function renderChat(msgs){
+  // === CHAT: инкрементальный рендер ===
+  // Вместо полной перестройки списка при каждом новом сообщении — точечные операции:
+  // - buildMsgElement: создаёт один DOM-элемент для сообщения
+  // - upsertMsgInList: вставляет новое или обновляет существующее сообщение в одном списке
+  // - addOrUpdateChatMessage: то же самое для обоих списков (site + overlay)
+  // - removeChatMessageFromDOM: удаляет сообщение из обоих списков
+  // - renderChatFull: полная перестройка (используется только при старте из localStorage кеша)
+
+  function _buildMsgHTML(m, msgs){
+    let html = '';
+    // Если есть reply - показываем превью
+    if (m.replyTo) {
+      const replyMsg = msgs.find(msg => msg.key === m.replyTo);
+      if (replyMsg) {
+        const replyName = escapeHtml(replyMsg.name || 'Чужой');
+        const replyText = escapeHtml((replyMsg.text || '').substring(0, 50));
+        html += `<div class="chat-msg-reply-preview" data-reply-to="${m.replyTo}">
+          <b style="color:${replyMsg.color||'#ccc'}">${replyName}</b>: ${replyText}${(replyMsg.text||'').length > 50 ? '...' : ''}
+        </div>`;
+      }
+    }
+    const name = escapeHtml(m.name||'Чужой');
+    const text = escapeHtml(m.text||'');
+    const edited = m.edited ? '<span style="color:var(--muted);font-size:0.8em;margin-left:4px">(изменено)</span>' : '';
+    html += `<div class="chat-msg-header">
+      <b style="color:${m.color||'#ccc'}">${name}</b>
+    </div>
+    <div class="chat-msg-text">${text}${edited}</div>`;
+    return html;
+  }
+
+  function buildMsgElement(m, msgs){
+    const currentUserId = auth.currentUser?.uid || state.id;
+    const isOwnMessage = m.uid === currentUserId;
+    const el = document.createElement('div');
+    el.className = 'chat-msg' + (isOwnMessage ? ' own-message' : '');
+    el.dataset.msgKey = m.key;
+    el.dataset.msgUid = m.uid;
+    el.dataset.msgTimestamp = m.t || m.ts || 0;
+    el.innerHTML = _buildMsgHTML(m, msgs);
+    setupMessageHandlers(el, m);
+    return el;
+  }
+
+  // Ищем позицию для вставки по (t, key) — совпадает с sort-ом массива msgs
+  function _findInsertBefore(listEl, m){
+    const mt = Number(m.t || m.ts || 0);
+    const mk = m.key || '';
+    const children = listEl.children;
+    for (let i = 0; i < children.length; i++){
+      const ch = children[i];
+      const cht = Number(ch.dataset.msgTimestamp || 0);
+      const chk = ch.dataset.msgKey || '';
+      if (cht > mt || (cht === mt && chk > mk)) return ch;
+    }
+    return null;
+  }
+
+  function _upsertMsgInList(listEl, m, msgs){
+    const existing = listEl.querySelector(`[data-msg-key="${CSS.escape(m.key)}"]`);
+    if (existing){
+      // обновляем только контент (чтобы не терять обработчики и не дёргать DOM лишний раз)
+      existing.innerHTML = _buildMsgHTML(m, msgs);
+      // перенавешиваем обработчики, т.к. innerHTML пересоздал содержимое
+      setupMessageHandlers(existing, m);
+      existing.dataset.msgTimestamp = m.t || m.ts || 0;
+      return;
+    }
+    const el = buildMsgElement(m, msgs);
+    const before = _findInsertBefore(listEl, m);
+    if (before) listEl.insertBefore(el, before);
+    else listEl.appendChild(el);
+  }
+
+  function addOrUpdateChatMessage(m, msgs){
+    _upsertMsgInList(chatListSite, m, msgs);
+    _upsertMsgInList(chatListOverlay, m, msgs);
+  }
+
+  function removeChatMessageFromDOM(key){
+    const sel = `[data-msg-key="${CSS.escape(key)}"]`;
+    const a = chatListSite.querySelector(sel); if (a) a.remove();
+    const b = chatListOverlay.querySelector(sel); if (b) b.remove();
+  }
+
+  // Полная перерисовка — только для стартовой загрузки из кеша или ручного ресета
+  function renderChatFull(msgs){
     chatListSite.innerHTML=''; chatListOverlay.innerHTML='';
     for (const m of msgs){
-      const currentUserId = auth.currentUser?.uid || state.id;
-      const isOwnMessage = m.uid === currentUserId;
-      
-      // Создаём элемент для сайта
-      const elSite = document.createElement('div'); 
-      elSite.className='chat-msg' + (isOwnMessage ? ' own-message' : '');
-      elSite.dataset.msgKey = m.key;
-      elSite.dataset.msgUid = m.uid;
-      elSite.dataset.msgTimestamp = m.t || m.ts || 0;
-      
-      // Создаём элемент для оверлея
-      const elOverlay = document.createElement('div'); 
-      elOverlay.className='chat-msg' + (isOwnMessage ? ' own-message' : '');
-      elOverlay.dataset.msgKey = m.key;
-      elOverlay.dataset.msgUid = m.uid;
-      elOverlay.dataset.msgTimestamp = m.t || m.ts || 0;
-      
-      let html = '';
-      
-      // Если есть reply - показываем превью
-      if (m.replyTo) {
-        const replyMsg = msgs.find(msg => msg.key === m.replyTo);
-        if (replyMsg) {
-          const replyName = escapeHtml(replyMsg.name || 'Чужой');
-          const replyText = escapeHtml((replyMsg.text || '').substring(0, 50));
-          html += `<div class="chat-msg-reply-preview" data-reply-to="${m.replyTo}">
-            <b style="color:${replyMsg.color||'#ccc'}">${replyName}</b>: ${replyText}${(replyMsg.text||'').length > 50 ? '...' : ''}
-          </div>`;
-        }
-      }
-      
-      // Заголовок сообщения с именем
-      const name = escapeHtml(m.name||'Чужой');
-      const text = escapeHtml(m.text||'');
-      const edited = m.edited ? '<span style="color:var(--muted);font-size:0.8em;margin-left:4px">(изменено)</span>' : '';
-      
-      html += `<div class="chat-msg-header">
-        <b style="color:${m.color||'#ccc'}">${name}</b>
-      </div>
-      <div class="chat-msg-text">${text}${edited}</div>`;
-      
-      elSite.innerHTML = html;
-      elOverlay.innerHTML = html;
-      
-      // Назначаем обработчики
-      setupMessageHandlers(elSite, m);
-      setupMessageHandlers(elOverlay, m);
-      
-      chatListSite.appendChild(elSite);
-      chatListOverlay.appendChild(elOverlay);
+      chatListSite.appendChild(buildMsgElement(m, msgs));
+      chatListOverlay.appendChild(buildMsgElement(m, msgs));
     }
     chatListSite.scrollTop = chatListSite.scrollHeight;
     chatListOverlay.scrollTop = chatListOverlay.scrollHeight;
   }
+
+  // Оставляем старое имя как алиас на случай, если где-то ещё зовётся
+  const renderChat = renderChatFull;
   
   function setupMessageHandlers(el, m) {
     let touchTimer = null;
@@ -3988,7 +4104,7 @@ document.head.appendChild(ratAnimStyle);
         msgs[index].text = text;
         msgs[index].edited = true;
         msgs[index].editedAt = Date.now();
-        renderChat(msgs);
+        addOrUpdateChatMessage(msgs[index], msgs);
       }
       
       cancelEdit();
@@ -4028,7 +4144,7 @@ document.head.appendChild(ratAnimStyle);
       const index = msgs.findIndex(m => m.key === msg.key);
       if (index >= 0) {
         msgs.splice(index, 1);
-        renderChat(msgs);
+        removeChatMessageFromDOM(msg.key);
         state.localChat = msgs.slice(-100);
         localStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
       }
@@ -4809,7 +4925,10 @@ ctx.restore();
         }
 
         // small dilation into fringe pixels
-        const grow = 6;
+        // PERF: grow=2 вместо 6 — вложенный цикл сокращается в ~7 раз.
+        // Фризы при заливке на большом холсте пропадают, а визуально бахрома
+        // почти такая же (для FullHD 2px это примерно та же "толщина кромки").
+        const grow = 2;
         const filled = new Uint8Array(w*h);
         for (let yy=0; yy<h; yy++){
           for (let xx=0; xx<w; xx++){
@@ -4822,6 +4941,8 @@ ctx.restore();
             if (!filled[yy*w+xx]) continue;
             for (let y2=Math.max(0,yy-grow); y2<=Math.min(h-1,yy+grow); y2++){
               for (let x2=Math.max(0,xx-grow); x2<=Math.min(w-1,xx+grow); x2++){
+                // PERF: пропускаем соседей, которые и так уже этого цвета
+                if (filled[y2*w+x2]) continue;
                 const j = (y2*w+x2)*4;
                 if (d[j+3] >= 252 && !overwriteStrokes) continue; // keep solid strokes unless asked to overwrite
                 if (overwriteStrokes){
@@ -5505,7 +5626,7 @@ function moveStroke(e){
   applyArtUI();
 })();
 /* ======= STARTUP ======= */
-  if (state.localChat.length){ renderChat(state.localChat.slice(-100)); }
+  if (state.localChat.length){ renderChatFull(state.localChat.slice(-100)); }
 
   // STARTUP: запускаем видео если ещё не запущено
   if (!isOverlayMode() && !$player.src) {
@@ -5844,9 +5965,13 @@ window.closeLinkModal = function() {
     // Сохранение
   function saveEmojiToDb(index, newValue) {
     if (!auth.currentUser) return;
-    // нормализуем массив до нужной длины
+    // нормализуем массив до нужной длины, дыры заполняем дефолтами
+    // (если лить пустые строки, то потом applyUserEmojis сотрёт кнопки 0..index-1)
     if (!Array.isArray(userEmojis)) userEmojis = [];
-    while (userEmojis.length <= index) userEmojis.push('');
+    while (userEmojis.length <= index) {
+      const i = userEmojis.length;
+      userEmojis.push(DEFAULT_EMOJIS[i] || '');
+    }
     userEmojis[index] = newValue;
 
     // RTDB лучше хранить как массив через set на child-путь, а читать уметь и объектом тоже
