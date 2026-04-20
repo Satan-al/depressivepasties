@@ -1227,21 +1227,6 @@ background:
   white-space: normal !important;
 }
 
-/* === PNG-реакции: легче обводка, чтобы картинка читалась, а не рамка === */
-.btn[data-reaction-type="png"]{
-  box-shadow:
-    0 4px 10px rgba(0,0,0,0.35),
-    0 0 0 1px rgba(255,255,255,0.04) inset,
-    0 0 8px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.10) !important;
-  border: 1px solid rgba(255,255,255,0.06) !important;
-}
-.btn[data-reaction-type="png"]::before{
-  opacity: 0.35 !important;
-}
-.btn[data-reaction-type="png"] img{
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35));
-}
-
 /* === BUTTONS: more 3D + accent-tinted highlight === */
 button, .btn{
   transform: translateZ(0);
@@ -1272,6 +1257,27 @@ button, .btn{
     0 8px 20px rgba(0,0,0,0.55),
     0 0 0 1px rgba(255,255,255,0.06) inset,
     0 -6px 12px rgba(0,0,0,0.46) inset;
+}
+
+/* === PNG-реакции: лёгкая обводка, чтобы картинка читалась, а не рамка === */
+/* ВАЖНО: этот блок ДОЛЖЕН идти после .btn{} и всех его вариантов,
+   иначе каскад перебьёт наши стили. !important тоже оставляю для надёжности. */
+.btn[data-reaction-type="png"],
+.btn.ghost[data-reaction-type="png"]{
+  box-shadow: 0 4px 10px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.04) inset, 0 0 8px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.10) !important;
+  border: 1px solid rgba(255,255,255,0.06) !important;
+}
+.btn[data-reaction-type="png"]::before{
+  opacity: 0.25 !important;
+  background: none !important;
+}
+.btn[data-reaction-type="png"] img{
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35));
+  display: inline-block;
+}
+.btn[data-reaction-type="png"]:hover{
+  box-shadow: 0 6px 14px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.08) inset, 0 0 14px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.18) !important;
+  border-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.25) !important;
 }
 
 /* danger buttons: keep standard red, do NOT get tinted */
@@ -3774,6 +3780,474 @@ document.head.appendChild(ratAnimStyle);
     }
   }, true);
 
+  /* ============================================================
+     ====================  ДУЭЛЬ — этап 1  ====================
+     ============================================================
+     Механика без визуалов. Задача этапа: проверить что
+     состояние дуэли синхронизируется между клиентами через
+     Firebase, клики считаются корректно, победитель определяется
+     и дуэль аккуратно завершается.
+
+     Firebase-схема: duels/active (один узел, всегда):
+       {
+         challenger, challengerName, challengerColor,
+         victim, victimName, victimColor,
+         state: 'starting' | 'fighting' | 'ended',
+         startedAt, endsAt,
+         clicks: { uid1: N, uid2: N },
+         winner: uid | null
+       }
+
+     Визуалы (ЧБ-экран, увеличение морд, осколки, звуки,
+     хост-кнопка, медведь хоста) — этапы 2-4, после подтверждения
+     что этап 1 работает.
+  */
+
+  const DUEL = {
+    ROOT: `${basePath}/duels/active`,
+    // Порог инициации: 5 кликов подряд по одной и той же морде
+    INIT_CLICKS: 5,
+    // между кликами не больше 5 сек иначе счётчик сбрасывается
+    INIT_TIMEOUT_MS: 5000,
+    // подготовка (показываем "стартует через...") перед fighting
+    STARTING_MS: 1500,
+    // длительность боя
+    FIGHT_MS: 15000,
+    // задержка перед удалением узла (чтобы все успели увидеть экран победы)
+    CLEANUP_DELAY_MS: 4000,
+    // страховка на случай зависших клиентов
+    STALE_AFTER_MS: 60000,
+  };
+
+  const duelActiveRef = ref(db, DUEL.ROOT);
+
+  // Состояние дуэли, которое мы видим локально (синхронизируется Firebase-ом)
+  let currentDuel = null;
+  // Счётчики кликов на чужие морды (map target_uid → {count, lastAt})
+  const myAttackCounts = new Map();
+  // Флаг: я уже отправила cleanup? (чтобы не делать это 5 раз подряд)
+  let duelCleanupScheduled = false;
+  // Сохранённое исходное значение tool — чтобы вернуть после дуэли
+  let toolBeforeDuel = null;
+
+  // === Попытка инициировать дуэль после клика по морде соперника ===
+  // Вызывается из обычного обработчика pointerdown в режиме vote.
+  async function tryRegisterDuelClick(targetUid, targetPoint){
+    if (!auth.currentUser) return;
+    const myUid = auth.currentUser.uid;
+    // Сам на себя — нет
+    if (targetUid === myUid) return;
+    // Уже идёт дуэль — новые не инициируем
+    if (currentDuel && currentDuel.state && currentDuel.state !== 'ended') return;
+
+    const now = Date.now();
+    const rec = myAttackCounts.get(targetUid);
+
+    if (!rec || (now - rec.lastAt) > DUEL.INIT_TIMEOUT_MS){
+      myAttackCounts.set(targetUid, { count: 1, lastAt: now });
+      return;
+    }
+
+    rec.count += 1;
+    rec.lastAt = now;
+
+    if (rec.count < DUEL.INIT_CLICKS) return;
+
+    // Порог достигнут. Пытаемся занять слот дуэли.
+    myAttackCounts.delete(targetUid);
+
+    try {
+      const snap = await get(duelActiveRef);
+      if (snap.exists()){
+        const v = snap.val() || {};
+        // Если есть активная не-протухшая дуэль — не начинаем новую
+        if (v.state && v.state !== 'ended' && (now - (v.startedAt || 0) < DUEL.STALE_AFTER_MS)){
+          console.log('[duel] уже идёт другая дуэль, пропускаем');
+          return;
+        }
+      }
+
+      // Собираем данные инициатора и жертвы
+      const myName = getDisplayName(state) || 'Вызыватель';
+      const myColor = state.color || '#16c7b7';
+      const victimName = (state.points.get(targetUid)?.name) || 'Соперник';
+      const victimColor = (state.points.get(targetUid)?.color) || '#888';
+
+      const startedAt = Date.now();
+      await set(duelActiveRef, {
+        challenger: myUid,
+        challengerName: myName,
+        challengerColor: myColor,
+        victim: targetUid,
+        victimName, victimColor,
+        state: 'starting',
+        startedAt,
+        endsAt: startedAt + DUEL.STARTING_MS + DUEL.FIGHT_MS,
+        clicks: { [myUid]: 0, [targetUid]: 0 },
+        winner: null
+      });
+      console.log(`[duel] вызов: ${myName} → ${victimName}`);
+    } catch(e){
+      console.warn('[duel] не удалось инициировать', e);
+    }
+  }
+
+  // === Подписка на активную дуэль ===
+  onValue(duelActiveRef, (snap)=>{
+    if (!snap.exists()){
+      // Дуэль закончилась и была очищена
+      if (currentDuel) {
+        console.log('[duel] очищено, возвращаемся к обычной жизни');
+        _onDuelEnd();
+      }
+      currentDuel = null;
+      _stopDuelSound('loop'); // на всякий случай
+      _updateDuelBanner();
+      return;
+    }
+    const v = snap.val();
+    const prevState = currentDuel ? currentDuel.state : null;
+    const wasActive = !!currentDuel;
+    currentDuel = v;
+
+    if (!wasActive){
+      _onDuelStart();
+    }
+
+    // Переход в fighting: запускаем фоновый трек
+    if (v.state === 'fighting' && prevState !== 'fighting'){
+      _playDuelSound('loop', { loop: true, volume: 0.55 });
+    }
+    // Переход в ended: глушим фон
+    if (v.state === 'ended' && prevState !== 'ended'){
+      _stopDuelSound('loop');
+    }
+
+    _updateDuelBanner();
+
+    // Если пришёл state:'fighting' и ещё не скидывали cleanup,
+    // запустим локальный таймер на завершение (каждый клиент делает свой)
+    if (v.state === 'fighting' && !duelCleanupScheduled){
+      const msUntilEnd = Math.max(0, (v.endsAt || 0) - Date.now());
+      setTimeout(_maybeFinishDuel, msUntilEnd + 200);
+    }
+
+    // Страховка от зависших дуэлей
+    if (v.state !== 'ended' && (Date.now() - (v.startedAt || 0)) > DUEL.STALE_AFTER_MS){
+      console.warn('[duel] дуэль протухла, принудительно снимаем');
+      try { remove(duelActiveRef); } catch{}
+    }
+  });
+
+  // Переходы "starting → fighting" и "fighting → ended" делает
+  // только инициатор (challenger). Остальные просто наблюдают.
+  let duelFightStarted = false;
+  setInterval(()=>{
+    if (!currentDuel || !auth.currentUser) return;
+    if (currentDuel.challenger !== auth.currentUser.uid) return;
+
+    const now = Date.now();
+
+    if (currentDuel.state === 'starting' && !duelFightStarted){
+      const fightAt = (currentDuel.startedAt || 0) + DUEL.STARTING_MS;
+      if (now >= fightAt){
+        duelFightStarted = true;
+        update(ref(db, DUEL.ROOT), { state: 'fighting' }).catch(()=>{});
+      }
+    }
+  }, 200);
+
+  async function _maybeFinishDuel(){
+    if (!currentDuel || !auth.currentUser) return;
+    if (currentDuel.challenger !== auth.currentUser.uid) return;
+    if (currentDuel.state !== 'fighting') return;
+    if (duelCleanupScheduled) return;
+
+    const clicks = currentDuel.clicks || {};
+    const a = currentDuel.challenger;
+    const b = currentDuel.victim;
+    const ca = Number(clicks[a] || 0);
+    const cb = Number(clicks[b] || 0);
+    const winner = ca === cb ? null : (ca > cb ? a : b);
+
+    duelCleanupScheduled = true;
+    try {
+      await update(ref(db, DUEL.ROOT), { state: 'ended', winner });
+      setTimeout(()=>{
+        remove(duelActiveRef).catch(()=>{});
+        duelCleanupScheduled = false;
+      }, DUEL.CLEANUP_DELAY_MS);
+    } catch(e){
+      console.warn('[duel] failed to end', e);
+      duelCleanupScheduled = false;
+    }
+  }
+
+  function _onDuelStart(){
+    duelFightStarted = false;
+    toolBeforeDuel = state.tool;
+    console.log('[duel] началась');
+    _playDuelSound('start');
+    _applyDuelVisuals(true);
+    if (_duelBanner) _duelBanner.__endSoundPlayed = false;
+  }
+
+  function _onDuelEnd(){
+    if (toolBeforeDuel){ state.tool = toolBeforeDuel; }
+    toolBeforeDuel = null;
+    duelFightStarted = false;
+    _stopDuelSound('loop');
+    _applyDuelVisuals(false);
+  }
+
+  // === Регистрация клика во время боя ===
+  // Клик во время fighting идёт именно в счётчик; обычное голосование не срабатывает.
+  let _duelClickBuffer = 0;
+  let _duelClickFlushTimer = null;
+  async function registerDuelClick(){
+    if (!currentDuel || currentDuel.state !== 'fighting') return false;
+    if (!auth.currentUser) return false;
+    const myUid = auth.currentUser.uid;
+    if (myUid !== currentDuel.challenger && myUid !== currentDuel.victim) return false;
+
+    // Буферизуем, чтобы не слать 100 update/сек
+    _duelClickBuffer += 1;
+    if (_duelClickFlushTimer) return true;
+    _duelClickFlushTimer = setTimeout(async ()=>{
+      const add = _duelClickBuffer;
+      _duelClickBuffer = 0;
+      _duelClickFlushTimer = null;
+      try {
+        // Локально оптимистично поднимем счётчик чтобы в UI было живо
+        if (currentDuel && currentDuel.clicks){
+          currentDuel.clicks[myUid] = Number(currentDuel.clicks[myUid] || 0) + add;
+          _updateDuelUI();
+        }
+        const cur = (await get(ref(db, `${DUEL.ROOT}/clicks/${myUid}`))).val() || 0;
+        await set(ref(db, `${DUEL.ROOT}/clicks/${myUid}`), Number(cur) + add);
+      } catch(e){
+        console.warn('[duel] click write failed', e);
+      }
+    }, 150);
+    return true;
+  }
+
+  // === ЗВУКИ ДУЭЛИ ===
+  // Файлы лежат в sounds/: duel_start.mp3, duel_win.mp3, duel_lose.mp3, duel.mp3 (фон)
+  // Если у тебя другие имена — поменяй DUEL_SOUNDS.
+  const DUEL_SOUNDS = {
+    start: 'sounds/duel_start.mp3',
+    win:   'sounds/duel_win.mp3',
+    lose:  'sounds/duel_lose.mp3',
+    loop:  'sounds/duel.mp3',   // фон на время fighting
+  };
+  const _duelAudioCache = {};
+  function _playDuelSound(kind, opts){
+    const src = DUEL_SOUNDS[kind];
+    if (!src) return null;
+    try {
+      let a = _duelAudioCache[kind];
+      if (!a){
+        a = new Audio(src);
+        a.preload = 'auto';
+        _duelAudioCache[kind] = a;
+      }
+      a.currentTime = 0;
+      a.volume = (opts && typeof opts.volume === 'number') ? opts.volume : 0.75;
+      a.loop = !!(opts && opts.loop);
+      a.play().catch(err => console.warn('[duel] sound play blocked:', err));
+      return a;
+    } catch(e){ console.warn('[duel] sound err', e); return null; }
+  }
+  function _stopDuelSound(kind){
+    const a = _duelAudioCache[kind];
+    if (!a) return;
+    try { a.pause(); a.currentTime = 0; } catch {}
+  }
+  // Прелоад в фоне
+  setTimeout(()=>{
+    for (const k of Object.keys(DUEL_SOUNDS)){
+      try {
+        const a = new Audio(DUEL_SOUNDS[k]);
+        a.preload = 'auto';
+        _duelAudioCache[k] = a;
+      } catch {}
+    }
+  }, 500);
+
+  // === ЧБ-ФИЛЬТР НА ФОН + CSS эффекты ===
+  // Применяем класс к body во время дуэли. Сам CSS добавляем один раз.
+  (function _injectDuelStyles(){
+    if (document.getElementById('duelStyles')) return;
+    const st = document.createElement('style');
+    st.id = 'duelStyles';
+    st.textContent = `
+      /* ЧБ-фильтр на видео + FX-слой во время дуэли
+         (canvas с голосами не затрагиваем — морды участников
+          увеличиваются отдельно и видны поверх). */
+      body.duel-active #player,
+      body.duel-active #fx-layer {
+        filter: grayscale(1) brightness(0.7) !important;
+        transition: filter 0.5s ease;
+      }
+      /* Глобальный лёгкий виньетинг чтобы арена чувствовалась */
+      body.duel-active::after {
+        content: "";
+        position: fixed; inset: 0;
+        pointer-events: none; z-index: 9998;
+        background: radial-gradient(ellipse at center,
+          rgba(0,0,0,0) 40%,
+          rgba(0,0,0,0.45) 100%);
+        animation: duelVignette 0.5s ease forwards;
+      }
+      @keyframes duelVignette { from { opacity: 0; } to { opacity: 1; } }
+
+      /* Большой оверлей дуэли */
+      #duelOverlay {
+        position: fixed; left: 0; right: 0; top: 0;
+        z-index: 100000; pointer-events: none;
+        display: flex; justify-content: center;
+        font-family: 'Montserrat', 'Open Sans', sans-serif;
+      }
+      #duelOverlay .duel-card {
+        margin-top: 24px;
+        background: linear-gradient(180deg, rgba(15,23,42,0.94), rgba(8,14,27,0.94));
+        border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 18px;
+        padding: 14px 28px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(239,68,68,0.2);
+        text-align: center;
+        min-width: 360px;
+        animation: duelCardIn 0.35s ease-out;
+      }
+      @keyframes duelCardIn {
+        from { transform: translateY(-30px) scale(0.9); opacity: 0; }
+        to   { transform: none; opacity: 1; }
+      }
+      #duelOverlay .duel-title {
+        font-size: 22px; font-weight: 800; letter-spacing: 1px;
+        color: #fff; margin-bottom: 6px;
+        text-shadow: 0 2px 8px rgba(0,0,0,0.6);
+      }
+      #duelOverlay .duel-vs {
+        display: flex; align-items: center; justify-content: center;
+        gap: 14px; font-weight: 800;
+      }
+      #duelOverlay .duel-name {
+        font-size: 18px;
+        text-shadow: 0 1px 4px rgba(0,0,0,0.5);
+      }
+      #duelOverlay .duel-score {
+        font-size: 36px; color: #fbbf24; font-weight: 900;
+        min-width: 44px; text-align: center;
+        text-shadow: 0 0 12px rgba(251,191,36,0.6);
+      }
+      #duelOverlay .duel-sep { color:#666; font-size: 28px; }
+      #duelOverlay .duel-timer {
+        margin-top: 8px; color: #fbbf24;
+        font-size: 14px; font-weight: 700; letter-spacing: 1px;
+      }
+      #duelOverlay .duel-ended {
+        font-size: 26px; font-weight: 900;
+        animation: duelWinPulse 0.8s ease-in-out infinite;
+      }
+      @keyframes duelWinPulse {
+        0%, 100% { transform: scale(1); }
+        50% { transform: scale(1.05); }
+      }
+    `;
+    document.head.appendChild(st);
+  })();
+
+  function _applyDuelVisuals(on){
+    document.body.classList.toggle('duel-active', !!on);
+  }
+
+  // === Большой оверлей ===
+  let _duelBanner = null;
+  function _ensureDuelBanner(){
+    if (_duelBanner) return _duelBanner;
+    const wrap = document.createElement('div');
+    wrap.id = 'duelOverlay';
+    wrap.innerHTML = `<div class="duel-card"></div>`;
+    document.body.appendChild(wrap);
+    _duelBanner = wrap;
+    return wrap;
+  }
+
+  function _updateDuelUI(){
+    const wrap = _ensureDuelBanner();
+    if (!currentDuel){ wrap.style.display = 'none'; return; }
+    wrap.style.display = 'flex';
+
+    const card = wrap.querySelector('.duel-card');
+    const d = currentDuel;
+    const now = Date.now();
+
+    if (d.state === 'starting'){
+      const until = Math.max(0, Math.ceil(((d.startedAt||0) + DUEL.STARTING_MS - now)/1000));
+      card.innerHTML = `
+        <div class="duel-title">🗡️ ДУЭЛЬ</div>
+        <div class="duel-vs">
+          <span class="duel-name" style="color:${d.challengerColor}">${escapeHtml(d.challengerName||'?')}</span>
+          <span class="duel-sep">vs</span>
+          <span class="duel-name" style="color:${d.victimColor}">${escapeHtml(d.victimName||'?')}</span>
+        </div>
+        <div class="duel-timer">СТАРТ ЧЕРЕЗ ${until}С</div>
+      `;
+    } else if (d.state === 'fighting'){
+      const leftMs = Math.max(0, (d.endsAt||0) - now);
+      const leftSec = Math.ceil(leftMs/1000);
+      const cA = Number((d.clicks||{})[d.challenger] || 0);
+      const cB = Number((d.clicks||{})[d.victim] || 0);
+      card.innerHTML = `
+        <div class="duel-vs">
+          <span class="duel-name" style="color:${d.challengerColor}">${escapeHtml(d.challengerName||'?')}</span>
+          <span class="duel-score">${cA}</span>
+          <span class="duel-sep">:</span>
+          <span class="duel-score">${cB}</span>
+          <span class="duel-name" style="color:${d.victimColor}">${escapeHtml(d.victimName||'?')}</span>
+        </div>
+        <div class="duel-timer">⏱ ${leftSec}С</div>
+      `;
+    } else if (d.state === 'ended'){
+      let text, color;
+      if (!d.winner){
+        text = '🤝 НИЧЬЯ';
+        color = '#fbbf24';
+      } else {
+        const wName = d.winner === d.challenger ? d.challengerName : d.victimName;
+        color = d.winner === d.challenger ? d.challengerColor : d.victimColor;
+        text = `🏆 ПОБЕДИЛ ${escapeHtml(wName||'?')}`;
+      }
+      card.innerHTML = `<div class="duel-ended" style="color:${color}">${text}</div>`;
+      // Звуковая последовательность: все слышат один сценарий —
+      // сперва lose (разрушение проигравшего), через 1.5 сек — win (фанфары победителя).
+      // Ничьи без lose, только лёгкие фанфары.
+      if (!wrap.__endSoundPlayed){
+        wrap.__endSoundPlayed = true;
+        if (d.winner){
+          _playDuelSound('lose');
+          setTimeout(()=>{ _playDuelSound('win'); }, 1500);
+        } else {
+          _playDuelSound('win', { volume: 0.55 }); // ничья — тихо
+        }
+      }
+    }
+  }
+
+  // Обновляем UI каждые пол-секунды пока активна (для таймера)
+  setInterval(()=>{ if (currentDuel) _updateDuelUI(); }, 500);
+  // Алиас на случай если где-то остался вызов старого имени
+  function _updateDuelBanner(){ _updateDuelUI(); }
+
+  // Экспорт в window для отладки из DevTools
+  window.__duel = {
+    state: ()=>currentDuel,
+    force: ()=>{ try { remove(duelActiveRef); } catch{} },
+    testSound: (k)=>_playDuelSound(k||'start'),
+  };
+
 // ЗАКРЫТИЕ ОВЕРЛЕЯ: Escape в overlay режиме
   window.addEventListener('keydown', (e)=>{
     if (e.code === 'Escape' && isOverlayMode()){
@@ -4402,8 +4876,20 @@ window.spawnEmoji = spawnEmoji;
     
     // Показываем всех (убрали фильтр оффлайн)
     const currentUid = (auth.currentUser&&auth.currentUser.uid)||state.id;
-    const filtered = all;
-    
+    let filtered = all;
+
+    // === ДУЭЛЬ: исключаем участников из обычной кластеризации ===
+    // Их морды рисуются отдельно в фиксированных позициях арены
+    // (см. drawDuelArena в drawFrame).
+    if (currentDuel && (currentDuel.state === 'starting' || currentDuel.state === 'fighting' || currentDuel.state === 'ended')){
+      const a = currentDuel.challenger;
+      const b = currentDuel.victim;
+      filtered = all.filter(p => {
+        const id = p.id || p.uid;
+        return id !== a && id !== b;
+      });
+    }
+
     const br = baseRadiusPx();
     const CLUSTER_DIST = br * CLUSTER_DIST_FACTOR;
 
@@ -5090,11 +5576,27 @@ ctx.restore();
     const clusters = computeClusters();
     const rot = now/1000 * 0.35;
 
+    // === ДУЭЛЬ: бонусный масштаб для кластеров с участниками боя ===
+    // Возвращает множитель размера: 1.6 если участник в fighting/ended,
+    // плавное нарастание за 400мс при переходе fighting, быстрое возвращение к 1 когда дуэль кончилась.
+    const duelScaleFor = (cluster) => {
+      if (!currentDuel) return 1;
+      if (currentDuel.state !== 'fighting' && currentDuel.state !== 'ended') return 1;
+      const hasParticipant = cluster.members && cluster.members.some(m =>
+        m.id === currentDuel.challenger || m.id === currentDuel.victim
+      );
+      if (!hasParticipant) return 1;
+      // плавный in-out по времени от startedAt+STARTING_MS
+      const t0 = (currentDuel.startedAt || 0) + 1500; // примерно DUEL.STARTING_MS
+      const phase = Math.max(0, Math.min(1, (Date.now() - t0) / 400));
+      return 1 + 0.6 * phase; // до 1.6
+    };
+
     for (const c of clusters){
       const st = animStateFor(c.key, c);
       stepTowards(st, c, dt);
 
-      const rr = st.r * (window.devicePixelRatio||1) * getRandomClusterScale(c.key, performance.now());
+      const rr = st.r * (window.devicePixelRatio||1) * getRandomClusterScale(c.key, performance.now()) * duelScaleFor(c);
       const cx = st.x, cy = st.y;
 
       if (c.size === 1){
@@ -5264,6 +5766,106 @@ ctx.restore();
     }
     }
 
+  // ===== ДУЭЛЬ: отрисовка арены =====
+  // Участники УЖЕ исключены из обычной кластеризации в computeClusters —
+  // здесь мы просто рисуем их "дубликаты" в фиксированных точках слева/справа.
+  // Настоящие points в Firebase не двигаются.
+  if (currentDuel && (currentDuel.state === 'starting' || currentDuel.state === 'fighting' || currentDuel.state === 'ended')){
+    const dpr = window.devicePixelRatio || 1;
+    const W = canvas.width, H = canvas.height;
+    const cy = H * 0.5;
+    const leftX = W * 0.3;
+    const rightX = W * 0.7;
+    const arenaR = baseRadiusPx() * dpr * 1.8;
+
+    // Собираем "поддельный" point из данных дуэли + актуального state.points (для emoji)
+    const makeFighter = (uid, fallbackName, fallbackColor) => {
+      const real = state.points.get(uid) || {};
+      return {
+        id: uid,
+        name: fallbackName || real.name || '?',
+        color: fallbackColor || real.color || DEFAULT_COLOR,
+        emoji: real.emoji || ''
+      };
+    };
+
+    const drawFighter = (uid, name, color, x, y, role) => {
+      const fighter = makeFighter(uid, name, color);
+
+      // Эффекты по состоянию
+      let drawX = x, drawY = y, scale = 1;
+      const d = currentDuel;
+      const now = Date.now();
+      const fightStart = (d.startedAt || 0) + 1500; // после starting
+
+      if (d.state === 'ended'){
+        const endTime = (d.endsAt || (d.startedAt + 16500));
+        const sinceEnd = Math.max(0, now - endTime);
+
+        if (d.winner && uid === d.winner){
+          // Победитель: пульсирует (начинается через 1.5с после ended, пока идёт win-звук)
+          if (sinceEnd > 1500){
+            const t = (sinceEnd - 1500) / 1000;
+            scale = 1 + 0.15 * Math.abs(Math.sin(t * 4));
+          }
+        } else if (d.winner && uid !== d.winner){
+          // Проигравший: лёгкая тряска + уменьшение
+          const shakeX = Math.sin(now / 40) * 4 * dpr;
+          drawX = x + shakeX;
+          scale = Math.max(0.5, 1 - sinceEnd / 2000); // сдувается за 2 сек
+        }
+      } else if (d.state === 'fighting'){
+        // Живые удары: лёгкий bounce при кликах — смотрим на количество кликов
+        const myClicks = Number((d.clicks||{})[uid] || 0);
+        // Сохраняем последний известный счёт и анимируем всплеск при приросте
+        const key = `_duelBounce_${uid}`;
+        const last = window[key] || { c: 0, t: 0 };
+        if (myClicks > last.c){
+          window[key] = { c: myClicks, t: now };
+        }
+        const sinceClick = now - (window[key]?.t || 0);
+        if (sinceClick < 180){
+          scale = 1 + 0.15 * (1 - sinceClick / 180);
+        }
+      }
+
+      const r = arenaR * scale;
+      drawSingleDot(drawX, drawY, r, fighter);
+
+      // Имя под мордой
+      ctx.save();
+      ctx.font = `900 ${Math.round(16 * dpr)}px 'Montserrat','Open Sans',sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'top';
+      ctx.fillStyle = fighter.color;
+      ctx.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx.shadowBlur = 8 * dpr;
+      ctx.fillText(fighter.name, drawX, drawY + r * 1.2);
+      ctx.restore();
+    };
+
+    // Challenger слева, victim справа
+    drawFighter(currentDuel.challenger, currentDuel.challengerName, currentDuel.challengerColor, leftX, cy, 'challenger');
+    drawFighter(currentDuel.victim,     currentDuel.victimName,     currentDuel.victimColor,     rightX, cy, 'victim');
+
+    // Между ними — скрещенные мечи (symbol) во время starting и fighting
+    if (currentDuel.state === 'starting' || currentDuel.state === 'fighting'){
+      ctx.save();
+      const emoji = '⚔️';
+      const size = Math.round(arenaR * 0.9);
+      ctx.font = `${size}px 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      // Лёгкое покачивание
+      const wob = Math.sin(Date.now()/150) * 0.05;
+      ctx.translate(W/2, cy);
+      ctx.rotate(wob);
+      ctx.globalAlpha = currentDuel.state === 'fighting' ? 0.9 : 0.6;
+      ctx.fillText(emoji, 0, 0);
+      ctx.restore();
+    }
+  }
+
   // ===== Brush / Eraser cursor preview =====
   if (state.cursor && (state.cursor.tool === 'draw' || state.cursor.tool === 'erase')) {
     const dpr = window.devicePixelRatio || 1;
@@ -5340,6 +5942,19 @@ ctx.restore();
     if (isOverlayMode()) return;
     
     if (!state.authed) return;
+
+    // === ДУЭЛЬ: перехват клика во время боя ===
+    // Если мы участник и идёт fighting — любой клик считается ударом,
+    // и другие действия (голос/рисунок/заливка) на этом клике не выполняются.
+    if (currentDuel && currentDuel.state === 'fighting' && auth.currentUser){
+      const myUid = auth.currentUser.uid;
+      if (myUid === currentDuel.challenger || myUid === currentDuel.victim){
+        e.preventDefault();
+        registerDuelClick();
+        return;
+      }
+    }
+
     // /kick mode: клик по оффлайн морде удаляет её (только одна за команду)
     if (state.kickMode){
       e.preventDefault();
@@ -5365,6 +5980,23 @@ ctx.restore();
       e.preventDefault();
       const uid = auth.currentUser?.uid || state.id;
       const pos=normFromEvent(e);
+
+      // === ДУЭЛЬ: проверяем клик по чужой морде (копим триггер инициации) ===
+      // Это ДО записи своего голоса — чтобы даже если юзер "клацает
+      // поверх" соперника, счётчик накапливался.
+      try {
+        let bestUid=null, bestD=1e9, bestP=null;
+        for (const [puid,p] of state.points.entries()){
+          if (!p) continue;
+          if (puid === uid) continue; // свою морду не считаем
+          const dx = (p.x||0) - pos.x; const dy = (p.y||0) - pos.y;
+          const d2 = dx*dx + dy*dy;
+          if (d2 < bestD){ bestD=d2; bestUid=puid; bestP=p; }
+        }
+        const hit = (bestUid && bestP && bestD <= (0.05*0.05));
+        if (hit) tryRegisterDuelClick(bestUid, bestP);
+      } catch(err){ console.warn('[duel] click detect err', err); }
+
       const p={ id:uid, name: getDisplayName(state)||'Чужой', x:pos.x, y:pos.y, ts:Date.now(), lastActive: Date.now(), color:state.color, emoji: state.emoji || '' };
       state.points.set(uid, p);
       try { await set(ref(db, `${basePath}/points/${uid}`), p); } catch {}
