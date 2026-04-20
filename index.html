@@ -1132,24 +1132,39 @@ background:
 
 /* direct message nodes created by renderChat are direct children of #chatListSite */
 #chatListSite > div{
-  height:auto !important;
-  min-height:56px !important;
-  overflow:visible !important;
-  display:flex !important;
-  flex-direction:column !important;
-  align-items:flex-start !important;
-  justify-content:flex-start !important;
+  /* Высота ПО КОНТЕНТУ (убираем min-height:56px - из-за него длинные
+     сообщения вылазили за свою "заявленную" высоту и налезали на соседей). */
+  height: auto !important;
+  overflow: visible !important;
+  display: flex !important;
+  flex-direction: column !important;
+  align-items: flex-start !important;
+  justify-content: flex-start !important;
+  /* flex-shrink:0 - запрещаем контейнеру сжимать сообщения */
+  flex-shrink: 0 !important;
 
-  padding:12px 14px !important;
-  border-radius:14px !important;
+  padding: 12px 14px !important;
+  border-radius: 14px !important;
 
   /* keep your neon/glass look */
-  background:linear-gradient(145deg, rgba(255,255,255,0.06), rgba(0,0,0,0.24)) !important;
-  border:1px solid rgba(255,255,255,0.10) !important;
+  background: linear-gradient(145deg, rgba(255,255,255,0.06), rgba(0,0,0,0.24)) !important;
+  border: 1px solid rgba(255,255,255,0.10) !important;
   box-shadow:
     0 10px 26px rgba(0,0,0,0.55),
     0 0 0 1px rgba(255,255,255,0.05) inset,
     0 0 22px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.18) !important;
+}
+
+/* То же самое для overlay-списка */
+#chatListOverlay{
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 10px !important;
+}
+#chatListOverlay > div{
+  height: auto !important;
+  overflow: visible !important;
+  flex-shrink: 0 !important;
 }
 
 /* author line (often first child) */
@@ -1183,13 +1198,10 @@ background:
   overflow-wrap:anywhere !important;
 }
 
-/* === FIX: сообщения должны растягиваться под длинный текст === */
-/* Проблема была: .chat-msg имел overflow:hidden, и flex-дети по дефолту
-   имеют min-width:auto — из-за этого длинные строки вылезали за границы
-   и накладывались на соседние сообщения. Переопределяем для ОБОИХ списков.
-   v2: агрессивнее — break-all ломает даже длинные слова без пробелов. */
-#chatListSite .chat-msg,
-#chatListOverlay .chat-msg,
+/* === СООБЩЕНИЯ: чистая структура, без наползания === */
+/* v3: возврат к мягкому break-word (не ломает слова посреди зря),
+   явное margin между header и text, нормальный padding.
+   Весь этот блок ПЕРЕОПРЕДЕЛЯЕТ всё что было выше с !important. */
 .chat-msg{
   height: auto !important;
   overflow: visible !important;
@@ -1197,17 +1209,32 @@ background:
   max-width: 100% !important;
   width: 100% !important;
   box-sizing: border-box !important;
+  padding: 10px 14px !important;
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
 }
 .chat-msg-header{
+  display: flex !important;
+  flex-direction: row !important;
   flex-wrap: wrap !important;
+  justify-content: flex-start !important;
+  align-items: baseline !important;
+  gap: 8px !important;
   min-width: 0 !important;
   max-width: 100% !important;
+  /* Визуально отделяем шапку от текста */
+  margin-bottom: 2px !important;
 }
 .chat-msg-header > b{
   min-width: 0 !important;
   max-width: 100% !important;
-  overflow-wrap: anywhere !important;
-  word-break: break-all !important;
+  overflow-wrap: break-word !important;
+  word-break: break-word !important;
+  display: inline-block !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.2px !important;
+  line-height: 1.2 !important;
 }
 .chat-msg-text{
   display: block !important;
@@ -1215,17 +1242,31 @@ background:
   min-width: 0 !important;
   max-width: 100% !important;
   white-space: pre-wrap !important;
-  word-break: break-all !important;
+  /* break-word, НЕ break-all — чтобы нормальные слова не рвались */
+  word-break: break-word !important;
   overflow-wrap: anywhere !important;
-  hyphens: auto;
+  line-height: 1.45 !important;
 }
 .chat-msg-reply-preview{
   min-width: 0 !important;
   max-width: 100% !important;
-  overflow-wrap: anywhere !important;
-  word-break: break-all !important;
+  overflow-wrap: break-word !important;
+  word-break: break-word !important;
   white-space: normal !important;
+  padding: 4px 8px !important;
+  margin-bottom: 4px !important;
+  font-size: 0.85em !important;
+  border-left: 3px solid rgba(22,199,183,0.5) !important;
+  background: rgba(255,255,255,0.04) !important;
+  border-radius: 4px !important;
+  line-height: 1.3 !important;
 }
+/* Отключаем старое правило, которое двигало имя в row-reverse и ломало лейаут */
+.chat-msg.own-message .chat-msg-header{
+  flex-direction: row !important;
+}
+/* Выключаем старое "author line" правило — оно уже не нужно, структура другая */
+#chatListSite > div > b{ margin: 0 !important; }
 
 /* === BUTTONS: more 3D + accent-tinted highlight === */
 button, .btn{
@@ -3917,10 +3958,19 @@ document.head.appendChild(ratAnimStyle);
     // Переход в fighting: запускаем фоновый трек
     if (v.state === 'fighting' && prevState !== 'fighting'){
       _playDuelSound('loop', { loop: true, volume: 0.55 });
+      // Хост-дуэль: если я хост — прошу Python включить интерактив,
+      // чтобы клики регистрировались (без click-through).
+      if (v.hostDuel && isOverlayMode() && auth.currentUser && v.challenger === auth.currentUser.uid){
+        console.log('[DUEL_INTERACTIVE_ON]');
+      }
     }
     // Переход в ended: глушим фон
     if (v.state === 'ended' && prevState !== 'ended'){
       _stopDuelSound('loop');
+      // Хост-дуэль: возвращаем click-through обратно
+      if (v.hostDuel && isOverlayMode() && auth.currentUser && v.challenger === auth.currentUser.uid){
+        console.log('[DUEL_INTERACTIVE_OFF]');
+      }
     }
 
     _updateDuelBanner();
@@ -6596,7 +6646,13 @@ window.closeLinkModal = function() {
   window.toggleEmojiPanel = function() {
     const panel = document.getElementById('overlayEmojiPanel');
     if (!panel) return false;
-    
+
+    // Если панель в режиме выбора соперника — возвращаем её в обычный вид
+    if (panel.dataset.mode === 'duel-pick') {
+      panel.dataset.mode = '';
+      panel.innerHTML = '';
+    }
+
     if (panel.innerHTML.trim() === "") {
       const bar = document.getElementById('reactionsBar');
       if (bar) {
@@ -6625,10 +6681,121 @@ window.closeLinkModal = function() {
             }
           };
         });
+
+        // === ДОБАВЛЯЕМ КНОПКУ ДУЭЛИ (только для overlay/хоста) ===
+        if (isOverlayMode()){
+          const duelBtn = document.createElement('button');
+          duelBtn.className = 'btn ghost small';
+          duelBtn.textContent = '🗡️';
+          duelBtn.title = 'Дуэль! Выбрать соперника';
+          duelBtn.style.cssText = 'font-size:1.6em;padding:4px 10px;border:1px solid rgba(239,68,68,0.4);';
+          duelBtn.onclick = () => _enterDuelPickMode(panel);
+          panel.appendChild(duelBtn);
+        }
       }
     }
     return panel.classList.toggle('show');
   };
+
+  // === ХОСТ-ДУЭЛЬ: режим выбора соперника ===
+  // Панель очищается и заполняется аватарками всех присутствующих (кроме хоста).
+  // После клика на аватарку — дуэль стартует.
+  function _enterDuelPickMode(panel){
+    panel.dataset.mode = 'duel-pick';
+    panel.innerHTML = '';
+
+    // Хедер с подсказкой + кнопка "назад"
+    const header = document.createElement('div');
+    header.style.cssText = 'width:100%; color:#fff; font-weight:700; padding:4px 10px 8px; font-size:13px; letter-spacing:0.5px;';
+    header.textContent = '🗡️ Выбери соперника:';
+    panel.appendChild(header);
+
+    const hostUid = auth.currentUser?.uid;
+    // Берём всех кто сейчас в points, кроме хоста
+    const candidates = [...state.points.entries()].filter(([uid,_]) => uid !== hostUid);
+
+    if (candidates.length === 0){
+      const empty = document.createElement('div');
+      empty.style.cssText = 'width:100%; color:#aaa; padding:6px 10px; font-size:12px;';
+      empty.textContent = 'Нет доступных соперников';
+      panel.appendChild(empty);
+      // Авто-закрытие через 2 сек
+      setTimeout(()=>{ if (panel.dataset.mode === 'duel-pick'){ panel.dataset.mode=''; panel.innerHTML=''; panel.classList.remove('show'); }}, 2000);
+      return;
+    }
+
+    for (const [uid, p] of candidates){
+      const btn = document.createElement('button');
+      btn.className = 'btn ghost small';
+      const name = (p.name || '?').substring(0, 14);
+      const color = p.color || '#888';
+      const emoji = p.emoji || '';
+      btn.style.cssText = `
+        font-size: 1em; padding: 6px 10px; min-width: 84px;
+        display: flex; flex-direction: column; align-items: center; gap: 2px;
+        border: 2px solid ${color}; color: #fff;
+        box-shadow: 0 0 12px ${color}55;
+      `;
+      btn.innerHTML = `
+        <span style="font-size:1.6em;line-height:1;">${emoji || '●'}</span>
+        <span style="font-size:0.75em;font-weight:700;color:${color};">${escapeHtml(name)}</span>
+      `;
+      btn.title = `Вызвать ${name} на дуэль`;
+      btn.onclick = () => _triggerHostDuel(uid, p);
+      panel.appendChild(btn);
+    }
+  }
+
+  // === Запуск дуэли от хоста ===
+  // Отличие от обычной: challenger подменяется на "🐻 Медведь" с синим цветом.
+  async function _triggerHostDuel(targetUid, targetPoint){
+    if (!auth.currentUser) return;
+    const hostUid = auth.currentUser.uid;
+    if (targetUid === hostUid) return;
+
+    // Проверяем что нет активной
+    try {
+      const snap = await get(duelActiveRef);
+      if (snap.exists()){
+        const v = snap.val() || {};
+        if (v.state && v.state !== 'ended' && (Date.now() - (v.startedAt || 0) < DUEL.STALE_AFTER_MS)){
+          console.log('[duel] другая дуэль в процессе, нельзя запустить хостовую');
+          return;
+        }
+      }
+    } catch(e){}
+
+    const victimName = targetPoint?.name || 'Соперник';
+    const victimColor = targetPoint?.color || '#888';
+    const startedAt = Date.now();
+
+    try {
+      await set(duelActiveRef, {
+        challenger: hostUid,
+        challengerName: '🐻 Медведь',
+        challengerColor: '#1e40af',
+        hostDuel: true,  // маркер что это хост-дуэль (для автопереключения интерактива)
+        victim: targetUid,
+        victimName, victimColor,
+        state: 'starting',
+        startedAt,
+        endsAt: startedAt + DUEL.STARTING_MS + DUEL.FIGHT_MS,
+        clicks: { [hostUid]: 0, [targetUid]: 0 },
+        winner: null
+      });
+      console.log(`[duel] ХОСТ вызывает ${victimName}`);
+
+      // Закрываем панель выбора
+      const panel = document.getElementById('overlayEmojiPanel');
+      if (panel){
+        panel.dataset.mode = '';
+        panel.innerHTML = '';
+        panel.classList.remove('show');
+      }
+    } catch(e){
+      console.warn('[duel] host-duel start failed', e);
+    }
+  }
 
   // Исправленный обработчик хоткеев
   window.overlayHotkey = function(idx) {
