@@ -1186,35 +1186,44 @@ background:
 /* === FIX: сообщения должны растягиваться под длинный текст === */
 /* Проблема была: .chat-msg имел overflow:hidden, и flex-дети по дефолту
    имеют min-width:auto — из-за этого длинные строки вылезали за границы
-   и накладывались на соседние сообщения. Переопределяем для ОБОИХ списков. */
+   и накладывались на соседние сообщения. Переопределяем для ОБОИХ списков.
+   v2: агрессивнее — break-all ломает даже длинные слова без пробелов. */
 #chatListSite .chat-msg,
 #chatListOverlay .chat-msg,
 .chat-msg{
   height: auto !important;
   overflow: visible !important;
   min-width: 0 !important;
+  max-width: 100% !important;
+  width: 100% !important;
+  box-sizing: border-box !important;
 }
 .chat-msg-header{
   flex-wrap: wrap !important;
   min-width: 0 !important;
+  max-width: 100% !important;
 }
 .chat-msg-header > b{
   min-width: 0 !important;
+  max-width: 100% !important;
   overflow-wrap: anywhere !important;
-  word-break: break-word !important;
+  word-break: break-all !important;
 }
 .chat-msg-text{
   display: block !important;
   width: 100% !important;
   min-width: 0 !important;
+  max-width: 100% !important;
   white-space: pre-wrap !important;
-  word-break: break-word !important;
+  word-break: break-all !important;
   overflow-wrap: anywhere !important;
+  hyphens: auto;
 }
 .chat-msg-reply-preview{
   min-width: 0 !important;
+  max-width: 100% !important;
   overflow-wrap: anywhere !important;
-  word-break: break-word !important;
+  word-break: break-all !important;
   white-space: normal !important;
 }
 
@@ -3674,6 +3683,9 @@ document.head.appendChild(ratAnimStyle);
   // Стартуем подписку сразу
   try { bindRandomBroadcast(); } catch(e) { console.warn('[random] bind failed', e); }
 
+  // Выставляем в window чтобы ghost_overlay.py мог вызвать через runJavaScript
+  window.triggerRandomBroadcast = triggerRandomBroadcast;
+
   // ===== PAUSE — пауза видео у хоста через оверлей =====
   const pauseCmdRoot = ref(db, `${basePath}/commands/pause`);
   let __pauseBindAt = Date.now();
@@ -3750,6 +3762,12 @@ document.head.appendChild(ratAnimStyle);
     if (tag === 'INPUT' || tag === 'TEXTAREA') return;
     if (e.repeat) return;
     if (e.code === 'KeyR' && e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey){
+      triggerRandomBroadcast();
+      e.preventDefault();
+      e.stopPropagation();
+    }
+    // Alt+N — удобнее одной рукой. Без Shift. Работает всюду кроме инпутов.
+    if (e.code === 'KeyN' && e.altKey && !e.shiftKey && !e.ctrlKey && !e.metaKey){
       triggerRandomBroadcast();
       e.preventDefault();
       e.stopPropagation();
