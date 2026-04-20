@@ -5770,6 +5770,125 @@ ctx.restore();
   // Участники УЖЕ исключены из обычной кластеризации в computeClusters —
   // здесь мы просто рисуем их "дубликаты" в фиксированных точках слева/справа.
   // Настоящие points в Firebase не двигаются.
+
+  // === Система осколков (Variant 2: растрескивание + разлёт треугольных кусков) ===
+  // Живёт независимо от drawFighter, чтобы осколки могли летать и после того,
+  // как морда уже "умерла". Хранится в замыкании модуля drawFrame.
+  let _duelShards = [];         // активные осколки (частицы)
+  let _duelShardsSpawnedFor = null; // чей uid мы уже "взорвали" — не спавнить повторно
+  const _DUEL_SHATTER_DELAY = 500;  // мс от ended до взрыва (фаза трещин)
+  const _DUEL_SHARDS_COUNT = 22;
+
+  function _spawnDuelShards(cx, cy, radius, color){
+    const rgb = hexToRgb(color || DEFAULT_COLOR);
+    const now = performance.now();
+    const dpr = window.devicePixelRatio || 1;
+    for (let i = 0; i < _DUEL_SHARDS_COUNT; i++){
+      const angle = (i / _DUEL_SHARDS_COUNT) * Math.PI * 2 + (Math.random() - 0.5) * 0.4;
+      const speed = (4 + Math.random() * 6) * dpr;
+      // размер треугольника-осколка
+      const r = radius * (0.18 + Math.random() * 0.22);
+      _duelShards.push({
+        x: cx + Math.cos(angle) * radius * 0.3,
+        y: cy + Math.sin(angle) * radius * 0.3,
+        vx: Math.cos(angle) * speed + (Math.random() - 0.5) * 2 * dpr,
+        vy: Math.sin(angle) * speed - Math.random() * 3 * dpr, // чуть вверх
+        rot: Math.random() * Math.PI * 2,
+        vrot: (Math.random() - 0.5) * 0.3,
+        size: r,
+        bornAt: now,
+        life: 1600 + Math.random() * 600, // мс
+        rgb,
+      });
+    }
+  }
+
+  function _updateAndDrawShards(){
+    if (_duelShards.length === 0) return;
+    const now = performance.now();
+    const dpr = window.devicePixelRatio || 1;
+    const gravity = 0.35 * dpr;
+
+    ctx.save();
+    for (let i = _duelShards.length - 1; i >= 0; i--){
+      const s = _duelShards[i];
+      const age = now - s.bornAt;
+      if (age > s.life){
+        _duelShards.splice(i, 1);
+        continue;
+      }
+      // физика
+      s.x += s.vx;
+      s.y += s.vy;
+      s.vy += gravity;
+      s.vx *= 0.992; // лёгкое трение воздуха
+      s.rot += s.vrot;
+
+      const k = age / s.life;
+      const alpha = 1 - k * k; // нелинейное затухание, долго держит яркость
+
+      // треугольный осколок
+      ctx.save();
+      ctx.translate(s.x, s.y);
+      ctx.rotate(s.rot);
+      ctx.globalCompositeOperation = 'source-over';
+      ctx.fillStyle = `rgba(${s.rgb.r},${s.rgb.g},${s.rgb.b},${alpha.toFixed(3)})`;
+      ctx.shadowColor = `rgba(${s.rgb.r},${s.rgb.g},${s.rgb.b},${(alpha*0.8).toFixed(3)})`;
+      ctx.shadowBlur = 6 * dpr;
+      // неровный треугольник
+      const r = s.size;
+      ctx.beginPath();
+      ctx.moveTo(0, -r);
+      ctx.lineTo(r * 0.85, r * 0.7);
+      ctx.lineTo(-r * 0.75, r * 0.55);
+      ctx.closePath();
+      ctx.fill();
+      // блик
+      ctx.globalCompositeOperation = 'screen';
+      ctx.fillStyle = `rgba(255,255,255,${(alpha*0.35).toFixed(3)})`;
+      ctx.beginPath();
+      ctx.moveTo(-r*0.1, -r*0.7);
+      ctx.lineTo(r*0.3, -r*0.2);
+      ctx.lineTo(-r*0.3, -r*0.1);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+    ctx.restore();
+  }
+
+  function _drawCracks(cx, cy, radius, color, progress){
+    // progress 0..1 — насколько "развернулись" трещины
+    if (progress <= 0) return;
+    const rgb = hexToRgb(color || '#ffffff');
+    const dpr = window.devicePixelRatio || 1;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-over';
+    ctx.strokeStyle = `rgba(255,255,255,${0.9 * progress})`;
+    ctx.lineWidth = 2 * dpr;
+    ctx.shadowColor = `rgba(${rgb.r},${rgb.g},${rgb.b},0.9)`;
+    ctx.shadowBlur = 8 * dpr;
+    // 5-6 трещин из центра
+    const branches = 6;
+    for (let i = 0; i < branches; i++){
+      const a = (i / branches) * Math.PI * 2 + (i * 0.3);
+      const len = radius * (0.4 + progress * 0.55);
+      let x = cx, y = cy;
+      ctx.beginPath();
+      ctx.moveTo(x, y);
+      // ломаная из 3 сегментов
+      for (let k = 0; k < 3; k++){
+        const sub = len / 3;
+        const jitter = (Math.random() - 0.5) * 0.6;
+        x += Math.cos(a + jitter) * sub;
+        y += Math.sin(a + jitter) * sub;
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   if (currentDuel && (currentDuel.state === 'starting' || currentDuel.state === 'fighting' || currentDuel.state === 'ended')){
     const dpr = window.devicePixelRatio || 1;
     const W = canvas.width, H = canvas.height;
@@ -5796,28 +5915,55 @@ ctx.restore();
       let drawX = x, drawY = y, scale = 1;
       const d = currentDuel;
       const now = Date.now();
-      const fightStart = (d.startedAt || 0) + 1500; // после starting
+
+      // Флаги
+      const isLoser = d.state === 'ended' && d.winner && uid !== d.winner;
+      const isWinner = d.state === 'ended' && d.winner && uid === d.winner;
 
       if (d.state === 'ended'){
         const endTime = (d.endsAt || (d.startedAt + 16500));
         const sinceEnd = Math.max(0, now - endTime);
 
-        if (d.winner && uid === d.winner){
+        if (isWinner){
           // Победитель: пульсирует (начинается через 1.5с после ended, пока идёт win-звук)
           if (sinceEnd > 1500){
             const t = (sinceEnd - 1500) / 1000;
-            scale = 1 + 0.15 * Math.abs(Math.sin(t * 4));
+            scale = 1 + 0.18 * Math.abs(Math.sin(t * 4));
           }
-        } else if (d.winner && uid !== d.winner){
-          // Проигравший: лёгкая тряска + уменьшение
-          const shakeX = Math.sin(now / 40) * 4 * dpr;
-          drawX = x + shakeX;
-          scale = Math.max(0.5, 1 - sinceEnd / 2000); // сдувается за 2 сек
+        } else if (isLoser){
+          // ФАЗА 1 (0..500мс): сильная тряска + трещины
+          if (sinceEnd < _DUEL_SHATTER_DELAY){
+            const intensity = sinceEnd / _DUEL_SHATTER_DELAY;
+            drawX = x + Math.sin(now / 25) * 8 * dpr * intensity;
+            drawY = y + Math.cos(now / 27) * 4 * dpr * intensity;
+            scale = 1 - intensity * 0.08;
+            // рисуем саму морду
+            drawSingleDot(drawX, drawY, arenaR * scale, fighter);
+            // рисуем трещины поверх
+            _drawCracks(drawX, drawY, arenaR * scale, fighter.color, intensity);
+            // Имя
+            ctx.save();
+            ctx.font = `900 ${Math.round(16 * dpr)}px 'Montserrat','Open Sans',sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'top';
+            ctx.fillStyle = fighter.color;
+            ctx.shadowColor = 'rgba(0,0,0,0.9)';
+            ctx.shadowBlur = 8 * dpr;
+            ctx.fillText(fighter.name, drawX, drawY + arenaR * scale * 1.2);
+            ctx.restore();
+            return;
+          }
+          // ФАЗА 2: взрыв (спавн осколков один раз)
+          if (_duelShardsSpawnedFor !== uid){
+            _duelShardsSpawnedFor = uid;
+            _spawnDuelShards(x, y, arenaR, fighter.color);
+          }
+          // Морды проигравшего больше нет — только осколки (они отрисуются ниже)
+          return;
         }
       } else if (d.state === 'fighting'){
-        // Живые удары: лёгкий bounce при кликах — смотрим на количество кликов
+        // Живые удары: bounce при кликах
         const myClicks = Number((d.clicks||{})[uid] || 0);
-        // Сохраняем последний известный счёт и анимируем всплеск при приросте
         const key = `_duelBounce_${uid}`;
         const last = window[key] || { c: 0, t: 0 };
         if (myClicks > last.c){
@@ -5848,7 +5994,7 @@ ctx.restore();
     drawFighter(currentDuel.challenger, currentDuel.challengerName, currentDuel.challengerColor, leftX, cy, 'challenger');
     drawFighter(currentDuel.victim,     currentDuel.victimName,     currentDuel.victimColor,     rightX, cy, 'victim');
 
-    // Между ними — скрещенные мечи (symbol) во время starting и fighting
+    // Между ними — скрещенные мечи во время starting и fighting
     if (currentDuel.state === 'starting' || currentDuel.state === 'fighting'){
       ctx.save();
       const emoji = '⚔️';
@@ -5856,7 +6002,6 @@ ctx.restore();
       ctx.font = `${size}px 'Apple Color Emoji','Segoe UI Emoji','Noto Color Emoji',sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      // Лёгкое покачивание
       const wob = Math.sin(Date.now()/150) * 0.05;
       ctx.translate(W/2, cy);
       ctx.rotate(wob);
@@ -5864,6 +6009,14 @@ ctx.restore();
       ctx.fillText(emoji, 0, 0);
       ctx.restore();
     }
+
+    // Рисуем осколки ПОВЕРХ всего (они летят в нашей арене)
+    _updateAndDrawShards();
+  } else {
+    // Дуэль не активна — дорисовываем оставшиеся осколки (могут ещё лететь сразу после cleanup)
+    // и сбрасываем флаг для следующей дуэли
+    if (_duelShards.length > 0) _updateAndDrawShards();
+    _duelShardsSpawnedFor = null;
   }
 
   // ===== Brush / Eraser cursor preview =====
