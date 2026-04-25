@@ -887,12 +887,12 @@ background:
         border-radius: 16px;
         padding: 12px;
         display: flex;
-        flex-wrap: wrap;            /* две строки */
+        flex-wrap: wrap;            /* теперь до 3 строк (последняя — кнопка дуэли) */
         gap: 8px;
-        width: min(560px, calc(100vw - 24px)); /* чтобы реально переносилось в 2 строки */
-        max-height: 112px;          /* ~2 строки кнопок */
+        width: min(560px, calc(100vw - 24px));
+        max-height: 168px;          /* было 112px (2 строки) — стало 3 строки чтобы 🗡️ помещалась */
         overflow-x: hidden;
-        overflow-y: hidden;
+        overflow-y: auto;           /* на всякий случай прокрутка если эмодзи станет ещё больше */
         opacity: 0; pointer-events: none;
         transition: 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
         z-index: 10000;
@@ -1300,25 +1300,35 @@ button, .btn{
     0 -6px 12px rgba(0,0,0,0.46) inset;
 }
 
-/* === PNG-реакции: лёгкая обводка, чтобы картинка читалась, а не рамка === */
-/* ВАЖНО: этот блок ДОЛЖЕН идти после .btn{} и всех его вариантов,
-   иначе каскад перебьёт наши стили. !important тоже оставляю для надёжности. */
+/* === PNG-реакции: МЯГКАЯ обводка как у эмодзи-кнопок === */
+/* Подавляем все три источника "толстого" свечения у PNG-кнопок:
+   1) .btn box-shadow (5 теней)
+   2) .btn::after (радиальный glow за курсором)
+   3) .btn:hover ещё более мощные тени
+   PNG должны выглядеть так же легко, как обычные эмодзи. */
 .btn[data-reaction-type="png"],
 .btn.ghost[data-reaction-type="png"]{
-  box-shadow: 0 4px 10px rgba(0,0,0,0.35), 0 0 0 1px rgba(255,255,255,0.04) inset, 0 0 8px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.10) !important;
-  border: 1px solid rgba(255,255,255,0.06) !important;
+  box-shadow: none !important;
+  border: 1px solid rgba(255,255,255,0.08) !important;
+  background: rgba(255,255,255,0.04) !important;
 }
-.btn[data-reaction-type="png"]::before{
-  opacity: 0.25 !important;
-  background: none !important;
+.btn[data-reaction-type="png"]::before,
+.btn[data-reaction-type="png"]::after{
+  display: none !important;
 }
 .btn[data-reaction-type="png"] img{
-  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.35));
+  filter: drop-shadow(0 1px 2px rgba(0,0,0,0.5));
   display: inline-block;
 }
 .btn[data-reaction-type="png"]:hover{
-  box-shadow: 0 6px 14px rgba(0,0,0,0.4), 0 0 0 1px rgba(255,255,255,0.08) inset, 0 0 14px rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.18) !important;
-  border-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.25) !important;
+  box-shadow: 0 0 12px rgba(var(--acc-r),var(--acc-r),var(--acc-b),0.20) !important;
+  border-color: rgba(var(--acc-r),var(--acc-g),var(--acc-b),0.4) !important;
+  background: rgba(255,255,255,0.07) !important;
+  transform: none !important;
+}
+.btn[data-reaction-type="png"]:active{
+  transform: translateY(1px) !important;
+  box-shadow: none !important;
 }
 
 /* danger buttons: keep standard red, do NOT get tinted */
@@ -1651,10 +1661,10 @@ input[type="range"]{
       <button id="emoBtn_16"  class="btn ghost small" data-emo="🤯" style="font-size:1.4em;padding:8px 14px">🤯</button>
       <button id="emoBtn_17"  class="btn ghost small" data-emo="🔔" style="font-size:1.4em;padding:8px 14px">🔔</button>
       <button class="btn ghost small" data-reaction-type="png" data-reaction-src="images/crying.png" data-reaction-key="плачу" style="font-size:1.4em;padding:4px 10px">
-        <img src="images/crying.png" alt="Плачу" style="width: 32px; height: 32px; vertical-align: middle;">
+        <img src="images/crying.png" alt="Плачу" style="width: 48px; height: 48px; vertical-align: middle;">
       </button>
       <button class="btn ghost small" data-reaction-type="png" data-reaction-src="images/dancing.png" data-reaction-key="танцую" style="font-size:1.4em;padding:4px 10px">
-        <img src="images/dancing.png" alt="Танцую" style="width: 32px; height: 32px; vertical-align: middle;">
+        <img src="images/dancing.png" alt="Танцую" style="width: 48px; height: 48px; vertical-align: middle;">
       </button>
 
 </div>
@@ -2363,8 +2373,13 @@ state.presence.clear();
     '🔥','🤡','🤬','🍷','🧐','💃',
     '🚩','🤷‍♂️','🙄','💔','🤯','🔔'
   ];
+  const EMOJI_SLOTS_MAX = 36;          // потолок чтобы не разнесло БД
+  const EMOJI_SLOTS_BASE = DEFAULT_EMOJIS.length; // 18 первых жёстких слотов в HTML
 
   let userEmojis = []; // Сюда загрузим твои кастомные штуки
+  // Поддерживаемые элементы массива:
+  //   "👍"                                    — обычная эмодзи (строка)
+  //   {type:'png', src:'data:image/png;base64,...'}  — кастомная PNG-картинка
 
   function setupEmojiListener(uid) {
     const emojiRef = ref(db, `${basePath}/users/${uid}/settings/emojis`);
@@ -2384,19 +2399,199 @@ state.presence.clear();
     });
   }
 
-  // Функция, которая берет массив и "засовывает" эмодзи в твои кнопки.
-  // Для слотов, где у пользователя ничего нет, показываем дефолтный эмодзи.
-  function applyUserEmojis() {
-    for (let i = 0; i < DEFAULT_EMOJIS.length; i++) {
+  // === Работа со слотами ===
+  // У нас 18 фиксированных кнопок (emoBtn_0..17) в HTML. Если userEmojis длиннее,
+  // динамически создаем кнопки emoBtn_18, 19, ... до длины массива (но не больше EMOJI_SLOTS_MAX).
+  function _ensureSlotButton(i){
+    let btn = document.getElementById(`emoBtn_${i}`);
+    if (btn) return btn;
+    const bar = document.getElementById('reactionsBar');
+    if (!bar) return null;
+    btn = document.createElement('button');
+    btn.id = `emoBtn_${i}`;
+    btn.className = 'btn ghost small';
+    btn.style.cssText = 'font-size:1.4em;padding:8px 14px';
+    // Вставляем перед "плюсиком" (если он уже есть) — иначе в конец
+    const plus = document.getElementById('emoAddBtn');
+    if (plus) bar.insertBefore(btn, plus); else bar.appendChild(btn);
+    // Вешаем те же обработчики что есть на статичных кнопках
+    _attachEmojiBtnHandlers(btn, i);
+    return btn;
+  }
+
+  // Обработчики для одной кнопки эмодзи: клик (отправка), правый клик (замена), drop (PNG)
+  function _attachEmojiBtnHandlers(btn, i){
+    // Клик: отправляем реакцию (учитывая, что слот может быть PNG)
+    btn.onclick = () => {
+      const t = btn.getAttribute('data-reaction-type');
+      if (t === 'png'){
+        const src = btn.getAttribute('data-reaction-src');
+        sendReaction({ type:'png', src, key:'custom' });
+        if (window.createFlyingEmoji) window.createFlyingEmoji(src, true);
+      } else {
+        const ch = btn.getAttribute('data-emo') || btn.textContent;
+        sendReaction(ch);
+        if (window.createFlyingEmoji) window.createFlyingEmoji(ch, false);
+      }
+    };
+    // Правый клик: меню — изменить эмодзи / сбросить
+    btn.oncontextmenu = (e) => {
+      e.preventDefault();
+      const isPng = btn.getAttribute('data-reaction-type') === 'png';
+      const choice = prompt(
+        isPng
+          ? `Слот #${i+1}: PNG картинка.\n\nЧто сделать?\nВведи новую эмодзи или напиши "сброс" чтобы вернуть дефолт.`
+          : `Слот #${i+1}: ${btn.getAttribute('data-emo')||btn.textContent}\n\nВведи новую эмодзи (или "сброс" для дефолта):`,
+        isPng ? '' : (btn.getAttribute('data-emo') || '')
+      );
+      if (choice === null) return;
+      const trimmed = choice.trim();
+      if (trimmed === '' || trimmed.toLowerCase() === 'сброс'){
+        // Сброс к дефолту (или удаление если слот выше дефолтных)
+        if (i < DEFAULT_EMOJIS.length){
+          saveEmojiToDb(i, DEFAULT_EMOJIS[i]);
+        } else {
+          _removeEmojiSlot(i);
+        }
+      } else {
+        saveEmojiToDb(i, trimmed);
+      }
+    };
+    // Drag & drop: бросаем картинку → она становится PNG-эмодзи
+    btn.addEventListener('dragover', (e) => { e.preventDefault(); btn.style.outline = '2px dashed #16c7b7'; });
+    btn.addEventListener('dragleave', () => { btn.style.outline = ''; });
+    btn.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      btn.style.outline = '';
+      const file = e.dataTransfer?.files?.[0];
+      if (!file || !file.type.startsWith('image/')) return;
+      try {
+        // Сжимаем до 96x96 — отображаем в 48px, поэтому 2x для retina-чёткости
+        const dataUrl = await _imageFileToCompressedPNG(file, 96);
+        saveEmojiToDb(i, { type:'png', src: dataUrl });
+      } catch(err){
+        alert('Не удалось обработать картинку: ' + err.message);
+      }
+    });
+  }
+
+  // Удаляет ВЕРХНИЙ дополнительный слот (для слотов >= 18)
+  function _removeEmojiSlot(i){
+    if (i < EMOJI_SLOTS_BASE) return; // фиксированные слоты не удаляем
+    if (!Array.isArray(userEmojis)) userEmojis = [];
+    // Можно удалять только последний (иначе порядок ломается)
+    // Если просят удалить не последний — просто очищаем (станет дефолт-пусто)
+    if (i === userEmojis.length - 1){
+      userEmojis.pop();
       const btn = document.getElementById(`emoBtn_${i}`);
+      if (btn) btn.remove();
+    } else {
+      userEmojis[i] = '';
+    }
+    if (!auth.currentUser) return;
+    const emojiRef = ref(db, `${basePath}/users/${auth.currentUser.uid}/settings/emojis`);
+    set(emojiRef, userEmojis).then(()=>applyUserEmojis()).catch(()=>{});
+  }
+
+  // Сжимает картинку до квадрата `size`x`size` PNG, возвращает data URL.
+  // Это критично — сырая фотка в БД положит её на колени.
+  function _imageFileToCompressedPNG(file, size){
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onerror = () => reject(new Error('read failed'));
+      reader.onload = () => {
+        const img = new Image();
+        img.onerror = () => reject(new Error('decode failed'));
+        img.onload = () => {
+          const cv = document.createElement('canvas');
+          cv.width = size; cv.height = size;
+          const cx = cv.getContext('2d');
+          // вписываем сохраняя пропорции, центрируем
+          const ratio = Math.min(size / img.width, size / img.height);
+          const w = img.width * ratio, h = img.height * ratio;
+          cx.drawImage(img, (size-w)/2, (size-h)/2, w, h);
+          resolve(cv.toDataURL('image/png'));
+        };
+        img.src = reader.result;
+      };
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // Применяем сохранённые слоты к DOM, создаём недостающие, удаляем лишние
+  function applyUserEmojis() {
+    const target = Math.min(EMOJI_SLOTS_MAX, Math.max(EMOJI_SLOTS_BASE, userEmojis.length));
+
+    // Удаляем динамически созданные кнопки, которые больше не нужны
+    for (let i = target; i < EMOJI_SLOTS_MAX; i++){
+      const old = document.getElementById(`emoBtn_${i}`);
+      if (old) old.remove();
+    }
+
+    // Создаём/обновляем слоты от 0 до target-1
+    for (let i = 0; i < target; i++) {
+      const btn = _ensureSlotButton(i);
       if (!btn) continue;
       const saved = userEmojis[i];
-      const emo = (saved && String(saved).trim()) ? saved : DEFAULT_EMOJIS[i];
-      btn.innerHTML = emo;
-      btn.setAttribute('data-emo', emo);
+      // PNG-слот?
+      if (saved && typeof saved === 'object' && saved.type === 'png' && saved.src){
+        btn.innerHTML = `<img src="${saved.src}" alt="" style="width:48px;height:48px;vertical-align:middle;">`;
+        btn.setAttribute('data-reaction-type', 'png');
+        btn.setAttribute('data-reaction-src', saved.src);
+        btn.removeAttribute('data-emo');
+      } else {
+        // Обычная эмодзи
+        const emo = (saved && typeof saved === 'string' && saved.trim()) ? saved : (DEFAULT_EMOJIS[i] || '◯');
+        btn.innerHTML = emo;
+        btn.setAttribute('data-emo', emo);
+        btn.removeAttribute('data-reaction-type');
+        btn.removeAttribute('data-reaction-src');
+      }
     }
+
+    // Перерисовываем кнопку "+" в конце (создаст если нет)
+    _ensurePlusButton();
+
     // Если есть панель оверлея, её тоже обновим
     if (typeof renderOverlayEmojis === 'function') renderOverlayEmojis();
+  }
+
+  // Кнопка "+" — добавляет новый пустой слот (до лимита)
+  function _ensurePlusButton(){
+    const bar = document.getElementById('reactionsBar');
+    if (!bar) return;
+    let plus = document.getElementById('emoAddBtn');
+    const currentLen = Math.max(EMOJI_SLOTS_BASE, userEmojis.length);
+    if (currentLen >= EMOJI_SLOTS_MAX){
+      if (plus) plus.remove();
+      return;
+    }
+    if (!plus){
+      plus = document.createElement('button');
+      plus.id = 'emoAddBtn';
+      plus.className = 'btn ghost small';
+      plus.style.cssText = 'font-size:1.2em;padding:6px 12px;border:1px dashed rgba(255,255,255,0.25);opacity:0.7';
+      plus.title = 'Добавить новый слот эмодзи (или перетащи картинку на любой слот для PNG)';
+      plus.textContent = '+';
+      plus.onclick = () => {
+        if (!Array.isArray(userEmojis)) userEmojis = [];
+        const next = Math.max(EMOJI_SLOTS_BASE, userEmojis.length);
+        if (next >= EMOJI_SLOTS_MAX) return;
+        // Просим эмодзи (можно отменить — тогда добавится пустой слот ◯)
+        const choice = prompt(`Слот #${next+1}\nВведи эмодзи (или Cancel — добавится пустой):`, '');
+        if (!auth.currentUser) return;
+        const value = (choice && choice.trim()) ? choice.trim() : '';
+        // Проставляем именно в позицию next
+        while (userEmojis.length < next) userEmojis.push('');
+        userEmojis[next] = value;
+        const emojiRef = ref(db, `${basePath}/users/${auth.currentUser.uid}/settings/emojis`);
+        set(emojiRef, userEmojis).then(()=>applyUserEmojis()).catch(()=>{});
+      };
+      bar.appendChild(plus);
+    } else {
+      // переместим в конец
+      bar.appendChild(plus);
+    }
   }
 
 
@@ -3819,6 +4014,14 @@ document.head.appendChild(ratAnimStyle);
       e.preventDefault();
       e.stopPropagation();
     }
+    // Ctrl+Shift+M — тест панели эмодзи в обычном браузере
+    // (основной Alt+M регистрируется Python-хоткеем ghost_overlay.py и
+    // в браузере не срабатывает)
+    if (e.code === 'KeyM' && e.ctrlKey && e.shiftKey && !e.altKey && !e.metaKey){
+      if (typeof window.toggleEmojiPanel === 'function') window.toggleEmojiPanel();
+      e.preventDefault();
+      e.stopPropagation();
+    }
   }, true);
 
   /* ============================================================
@@ -3858,7 +4061,24 @@ document.head.appendChild(ratAnimStyle);
     CLEANUP_DELAY_MS: 4000,
     // страховка на случай зависших клиентов
     STALE_AFTER_MS: 60000,
+    // UID-ы тех, кто считается "хостом" — НЕ используется (хост определяется по
+    // признаку overlay-режима, а не по uid). Оставлено для совместимости.
+    HOST_UIDS: new Set(),
+    HOST_NAME: 'Лёха',
+    HOST_COLOR: '#1e40af',
   };
+
+  // Хелпер: уже-залогиненный пользователь сейчас запущен через ghost_overlay.py?
+  // Это и есть "хост". Жертвы не могут быть хостом по определению.
+  const _amIHostNow = () => (
+    isOverlayMode()
+    || window.isOverlayHotkeys
+    || document.documentElement.classList.contains('overlay-live')
+    || document.documentElement.classList.contains('overlay-mode')
+  );
+  // Имя хоста для отображения — всегда "Лёха" если флаг hostDuel поднят
+  // (этот флаг ставит только запуск через кнопку 🗡️ хостом)
+  const _isHostInDuel = (uid) => !!(currentDuel && currentDuel.hostDuel && currentDuel.challenger === uid);
 
   const duelActiveRef = ref(db, DUEL.ROOT);
 
@@ -5958,10 +6178,12 @@ ctx.restore();
     // Собираем "поддельный" point из данных дуэли + актуального state.points (для emoji)
     const makeFighter = (uid, fallbackName, fallbackColor) => {
       const real = state.points.get(uid) || {};
+      // Хост в дуэли = challenger в hostDuel-флагом. Только тогда подменяем имя/цвет на Лёха/синий.
+      const isHost = _isHostInDuel(uid);
       return {
         id: uid,
-        name: fallbackName || real.name || '?',
-        color: fallbackColor || real.color || DEFAULT_COLOR,
+        name: isHost ? DUEL.HOST_NAME : (fallbackName || real.name || '?'),
+        color: isHost ? DUEL.HOST_COLOR : (fallbackColor || real.color || DEFAULT_COLOR),
         emoji: real.emoji || ''
       };
     };
@@ -6786,8 +7008,8 @@ window.closeLinkModal = function() {
     try {
       await set(duelActiveRef, {
         challenger: hostUid,
-        challengerName: '🐻 Медведь',
-        challengerColor: '#1e40af',
+        challengerName: DUEL.HOST_NAME,
+        challengerColor: DUEL.HOST_COLOR,
         hostDuel: true,  // маркер что это хост-дуэль (для автопереключения интерактива)
         victim: targetUid,
         victimName, victimColor,
@@ -6916,6 +7138,10 @@ window.closeLinkModal = function() {
       
       // Запускаем слушатель
       listenToLinkChanges();
+
+      // Подписка на свои сохранённые эмодзи (была определена, но не вызывалась —
+      // именно поэтому при перезагрузке у всех был дефолтный набор).
+      try { setupEmojiListener(user.uid); } catch(e){ console.warn('emoji listener fail', e); }
     }
   });
   
@@ -6949,31 +7175,36 @@ window.closeLinkModal = function() {
     // Сохранение
   function saveEmojiToDb(index, newValue) {
     if (!auth.currentUser) return;
+    if (index >= EMOJI_SLOTS_MAX) return; // защита от выхода за лимит
     // нормализуем массив до нужной длины, дыры заполняем дефолтами
-    // (если лить пустые строки, то потом applyUserEmojis сотрёт кнопки 0..index-1)
     if (!Array.isArray(userEmojis)) userEmojis = [];
     while (userEmojis.length <= index) {
       const i = userEmojis.length;
+      // Для дополнительных слотов (>=18) ставим пустую строку (◯ при отрисовке)
       userEmojis.push(DEFAULT_EMOJIS[i] || '');
     }
+    // newValue может быть строкой ("👍") или объектом ({type:'png', src:'data:...'})
     userEmojis[index] = newValue;
 
     // RTDB лучше хранить как массив через set на child-путь, а читать уметь и объектом тоже
     const emojiRef = ref(db, `${basePath}/users/${auth.currentUser.uid}/settings/emojis`);
-    set(emojiRef, userEmojis).then(()=>{ try{ applyUserEmojis(); }catch{} }).catch(()=>{});
+    set(emojiRef, userEmojis).then(()=>{ try{ applyUserEmojis(); }catch{} }).catch((err)=>{
+      console.warn('emoji save failed', err);
+      // Если PNG слишком большой — Firebase может отвергнуть; покажем юзеру
+      if (newValue && typeof newValue === 'object' && err && /size|too large/i.test(err.message||'')){
+        alert('Картинка слишком большая для БД. Попробуй другую.');
+      }
+    });
   }
 
-  // Вешаем правый клик на все кнопки при загрузке
-  document.querySelectorAll('[id^="emoBtn_"]').forEach((btn, i) => {
-    btn.oncontextmenu = (e) => {
-      e.preventDefault();
-      const current = btn.getAttribute('data-emo');
-      const newValue = prompt("Изменить эмодзи/текст:", current);
-      if (newValue !== null && newValue !== "") {
-        saveEmojiToDb(i, newValue);
-      }
-    };
+  // Вешаем обработчики (клик/правый клик/drag-drop) на все статичные кнопки
+  document.querySelectorAll('[id^="emoBtn_"]').forEach((btn) => {
+    const m = btn.id.match(/emoBtn_(\d+)/);
+    if (!m) return;
+    _attachEmojiBtnHandlers(btn, Number(m[1]));
   });
+  // Сразу же создаём кнопку "+" в конце ряда
+  _ensurePlusButton();
 
   // Для Python: нажал Alt+1..15 -> вылетела реакция
   window.overlayHotkey = function(idx) {
