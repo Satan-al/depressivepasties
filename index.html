@@ -4443,6 +4443,82 @@ document.head.appendChild(ratAnimStyle);
 
   function _applyDuelVisuals(on){
     document.body.classList.toggle('duel-active', !!on);
+    _ensureDuelClickCatcher();
+    _updateDuelClickCatcher();
+  }
+
+  // === Кликабельный слой для подсчёта ударов ===
+  // Решает проблему хост-дуэли в overlay-режиме: ghost_overlay.py не всегда
+  // успевает корректно убрать click-through, плюс окно может не иметь фокуса.
+  // А вот DOM-элемент с pointer-events:auto и onclick — ловит клики гарантированно.
+  let _duelClickCatcher = null;
+  function _ensureDuelClickCatcher(){
+    if (_duelClickCatcher) return _duelClickCatcher;
+    const el = document.createElement('div');
+    el.id = 'duelClickCatcher';
+    el.style.cssText = `
+      position: fixed; inset: 0;
+      z-index: 99000;     /* ниже карточки (100000), но выше всего остального */
+      display: none;
+      cursor: crosshair;
+      background: transparent;
+      /* Подсказка визуально что это арена */
+      box-shadow: inset 0 0 80px rgba(239,68,68,0.15);
+    `;
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      registerDuelClick();
+      // Визуальный фидбек на удар - вспышка под курсором
+      _spawnHitFlash(e.clientX, e.clientY);
+    });
+    // На всякий случай — и тач, и клик
+    el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
+    document.body.appendChild(el);
+    _duelClickCatcher = el;
+    return el;
+  }
+
+  function _updateDuelClickCatcher(){
+    const el = _ensureDuelClickCatcher();
+    if (!currentDuel || currentDuel.state !== 'fighting'){
+      el.style.display = 'none';
+      return;
+    }
+    // Показываем только тем кто участвует
+    const myUid = auth.currentUser?.uid;
+    if (myUid !== currentDuel.challenger && myUid !== currentDuel.victim){
+      el.style.display = 'none';
+      return;
+    }
+    el.style.display = 'block';
+  }
+
+  // Вспышка-фидбек при ударе
+  function _spawnHitFlash(x, y){
+    const flash = document.createElement('div');
+    flash.style.cssText = `
+      position: fixed;
+      left: ${x - 24}px; top: ${y - 24}px;
+      width: 48px; height: 48px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(251,191,36,0.6) 0%, rgba(239,68,68,0.4) 40%, transparent 70%);
+      pointer-events: none;
+      z-index: 99500;
+      animation: duelHitFlash 0.35s ease-out forwards;
+    `;
+    document.body.appendChild(flash);
+    setTimeout(() => flash.remove(), 400);
+  }
+  // CSS-анимация для вспышки
+  if (!document.getElementById('duelHitFlashStyle')){
+    const st = document.createElement('style');
+    st.id = 'duelHitFlashStyle';
+    st.textContent = `@keyframes duelHitFlash {
+      0%   { transform: scale(0.5); opacity: 1; }
+      100% { transform: scale(2.5); opacity: 0; }
+    }`;
+    document.head.appendChild(st);
   }
 
   // === Большой оверлей ===
@@ -4458,6 +4534,7 @@ document.head.appendChild(ratAnimStyle);
   }
 
   function _updateDuelUI(){
+    _updateDuelClickCatcher();
     const wrap = _ensureDuelBanner();
     if (!currentDuel){ wrap.style.display = 'none'; return; }
     wrap.style.display = 'flex';
