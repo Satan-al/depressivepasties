@@ -4372,6 +4372,15 @@ document.head.appendChild(ratAnimStyle);
         filter: grayscale(1) brightness(0.7) !important;
         transition: filter 0.5s ease;
       }
+      /* iframe vdo.ninja агрессивно ловит клики — отключаем его на время дуэли,
+         чтобы наш click-catcher гарантированно их получал */
+      body.duel-active #player {
+        pointer-events: none !important;
+      }
+      /* canvas тоже отдаём катчеру, чтобы pointerdown на канвасе не запускал голос/рисование */
+      body.duel-active canvas {
+        pointer-events: none !important;
+      }
       /* Глобальный лёгкий виньетинг чтобы арена чувствовалась */
       body.duel-active::after {
         content: "";
@@ -4457,22 +4466,29 @@ document.head.appendChild(ratAnimStyle);
     const el = document.createElement('div');
     el.id = 'duelClickCatcher';
     el.style.cssText = `
-      position: fixed; inset: 0;
-      z-index: 99000;     /* ниже карточки (100000), но выше всего остального */
+      position: fixed !important; inset: 0 !important;
+      z-index: 99000 !important;
       display: none;
-      cursor: crosshair;
+      cursor: crosshair !important;
       background: transparent;
-      /* Подсказка визуально что это арена */
+      pointer-events: auto !important;
       box-shadow: inset 0 0 80px rgba(239,68,68,0.15);
     `;
     el.addEventListener('pointerdown', (e) => {
+      console.log('[duel] click-catcher pointerdown at', e.clientX, e.clientY);
+      e.preventDefault();
+      e.stopPropagation();
+      registerDuelClick().then(r => console.log('[duel] registerDuelClick:', r));
+      _spawnHitFlash(e.clientX, e.clientY);
+    });
+    el.addEventListener('mousedown', (e) => {
+      // Дублирующий обработчик на случай если pointerdown не сработает
+      console.log('[duel] click-catcher mousedown at', e.clientX, e.clientY);
       e.preventDefault();
       e.stopPropagation();
       registerDuelClick();
-      // Визуальный фидбек на удар - вспышка под курсором
       _spawnHitFlash(e.clientX, e.clientY);
     });
-    // На всякий случай — и тач, и клик
     el.addEventListener('click', (e) => { e.preventDefault(); e.stopPropagation(); });
     document.body.appendChild(el);
     _duelClickCatcher = el;
