@@ -1661,10 +1661,10 @@ input[type="range"]{
       <button id="emoBtn_16"  class="btn ghost small" data-emo="🤯" style="font-size:1.4em;padding:8px 14px">🤯</button>
       <button id="emoBtn_17"  class="btn ghost small" data-emo="🔔" style="font-size:1.4em;padding:8px 14px">🔔</button>
       <button class="btn ghost small" data-reaction-type="png" data-reaction-src="images/crying.png" data-reaction-key="плачу" style="font-size:1.4em;padding:4px 10px">
-        <img src="images/crying.png" alt="Плачу" style="width: 48px; height: 48px; vertical-align: middle;">
+        <img src="images/crying.png" alt="Плачу" style="width: 32px; height: 32px; vertical-align: middle;">
       </button>
       <button class="btn ghost small" data-reaction-type="png" data-reaction-src="images/dancing.png" data-reaction-key="танцую" style="font-size:1.4em;padding:4px 10px">
-        <img src="images/dancing.png" alt="Танцую" style="width: 48px; height: 48px; vertical-align: middle;">
+        <img src="images/dancing.png" alt="Танцую" style="width: 32px; height: 32px; vertical-align: middle;">
       </button>
 
 </div>
@@ -2535,7 +2535,7 @@ state.presence.clear();
       const saved = userEmojis[i];
       // PNG-слот?
       if (saved && typeof saved === 'object' && saved.type === 'png' && saved.src){
-        btn.innerHTML = `<img src="${saved.src}" alt="" style="width:48px;height:48px;vertical-align:middle;">`;
+        btn.innerHTML = `<img src="${saved.src}" alt="" style="width:32px;height:32px;vertical-align:middle;">`;
         btn.setAttribute('data-reaction-type', 'png');
         btn.setAttribute('data-reaction-src', saved.src);
         btn.removeAttribute('data-emo');
@@ -4155,6 +4155,14 @@ document.head.appendChild(ratAnimStyle);
 
   // === Подписка на активную дуэль ===
   onValue(duelActiveRef, (snap)=>{
+    // Хелпер: есть ли признаки хост-режима (любой подходит)
+    const _isHostHere = () => (
+      isOverlayMode()
+      || window.isOverlayHotkeys
+      || document.documentElement.classList.contains('overlay-live')
+      || document.documentElement.classList.contains('overlay-mode')
+    );
+
     if (!snap.exists()){
       // Дуэль закончилась и была очищена
       if (currentDuel) {
@@ -4173,24 +4181,20 @@ document.head.appendChild(ratAnimStyle);
 
     if (!wasActive){
       _onDuelStart();
+      // Хост-дуэль: если я хост (initiator) — СРАЗУ просим Python включить интерактив,
+      // не дожидаясь fighting. Полторы секунды starting нам не лишние —
+      // лучше иметь интерактив заранее, чем пропустить начало кликов.
+      if (v.hostDuel && _isHostHere() && auth.currentUser && v.challenger === auth.currentUser.uid){
+        console.log('[DUEL_INTERACTIVE_ON]');
+      }
     }
 
     // Хелпер: есть ли признаки хост-режима (любой подходит)
-    const _isHostHere = () => (
-      isOverlayMode()
-      || window.isOverlayHotkeys
-      || document.documentElement.classList.contains('overlay-live')
-      || document.documentElement.classList.contains('overlay-mode')
-    );
+    // (объявлен здесь для использования ниже)
 
     // Переход в fighting: запускаем фоновый трек
     if (v.state === 'fighting' && prevState !== 'fighting'){
       _playDuelSound('loop', { loop: true, volume: 0.55 });
-      // Хост-дуэль: если я хост — прошу Python включить интерактив,
-      // чтобы клики регистрировались (без click-through).
-      if (v.hostDuel && _isHostHere() && auth.currentUser && v.challenger === auth.currentUser.uid){
-        console.log('[DUEL_INTERACTIVE_ON]');
-      }
     }
     // Переход в ended: глушим фон
     if (v.state === 'ended' && prevState !== 'ended'){
@@ -5007,11 +5011,13 @@ function spawnEmoji(it){
   const w = layer.clientWidth || window.innerWidth;
   const h = layer.clientHeight || window.innerHeight;
 
-  // СЛУЧАЙНЫЙ РАЗМЕР (от 30px до 60px)
-  const randomSize = 30 + Math.random() * 30;
+  // СЛУЧАЙНЫЙ РАЗМЕР: эмодзи 30-60px (font-size), PNG крупнее 60-110px
+  // (PNG c object-fit:contain визуально меньше своего бокса, поэтому контейнер нужен больше)
   if (!isPng) {
+    const randomSize = 30 + Math.random() * 30;
     el.style.fontSize = randomSize + 'px';
   } else {
+    const randomSize = 60 + Math.random() * 50;
     el.style.width = randomSize + 'px';
     el.style.height = randomSize + 'px';
   }
