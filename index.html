@@ -1633,6 +1633,7 @@ input[type="range"]{
       <button class="btn ghost small" id="logout" style="margin-left:auto">Выйти</button>
       <button class="btn ghost small" id="reloadVideo" title="Перезагрузить видео">📺</button>
       <button class="btn ghost small" id="pauseVideo" title="Пауза / Воспроизведение">⏸</button>
+      <button class="btn ghost small" id="btnGames" title="Игры — снайпер и др." style="border:1px solid rgba(168,85,247,0.5)">🎮</button>
       <div id="status" style="margin-left:6px">
       <span class="dot" id="dot-auth" title="Статус подключения"></span>
       <span id="status-text">Оффлайн</span>
@@ -4623,6 +4624,744 @@ document.head.appendChild(ratAnimStyle);
     testSound: (k)=>_playDuelSound(k||'start'),
   };
 
+  /* ============================================================
+     ============ СНАЙПЕР (через games/active) ===================
+     ============================================================
+     Отдельная игра. В Firebase лежит как games/active с type:'sniper'.
+     Структура:
+       {
+         type: 'sniper',
+         participants: { uid1: {name, color}, uid2: {...}, ... },
+         state: 'starting' | 'playing' | 'ended',
+         startedAt, endsAt (необязательно — ограничение по очкам),
+         scores: { uid1: 0, uid2: 0, ... },
+         currentTarget: { id: 'tgt_1234', x: 0.5, y: 0.5, r_norm: 0.05, spawnedAt: 1700000000 },
+         winner: uid | null
+       }
+     Логика: при каждом попадании target обновляется (генерится новый).
+     Игра идёт по таймеру FIGHT_MS, по окончанию инициатор пишет winner.
+  */
+
+  const SNIPER = {
+    ROOT: `${basePath}/games/active`,
+    STARTING_MS: 1500,
+    FIGHT_MS: 15000,        // 15 сек как в дуэли
+    GAP_MS: 200,            // 0.2 сек между шариками
+    BASE_R_DESKTOP: 0.04,   // относительный радиус (от min(W,H))
+    BASE_R_MOBILE: 0.07,
+    SHRINK_PER_SCORE: 0.02, // на каждое очко лидера радиус *= (1 - SHRINK*score)
+    MIN_R_PX: 10,           // абсолютный минимум 10 пикселей радиус
+    MARGIN: 0.10,           // отступ от краёв при спавне
+    STALE_AFTER_MS: 120000, // страховка
+    // Тайбрейк: если оба клика пришли в одно "окно", побеждает ближайший к центру
+    TIE_WINDOW_MS: 80,
+  };
+
+  const sniperRootRef = ref(db, SNIPER.ROOT);
+  let currentSniper = null;
+  let sniperCleanupScheduled = false;
+  // Для тайбрейка: храним свой клик локально (если он пришёл, но мы не первые)
+  let _myLastSniperShot = null; // { tgtId, dist, t }
+
+  // === Запуск выбора соперника (для снайпера) ===
+  function _enterSniperPickMode(panel){
+    panel.dataset.mode = 'sniper-pick';
+    panel.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'width:100%; color:#fff; font-weight:700; padding:4px 10px 8px; font-size:13px; letter-spacing:0.5px;';
+    header.textContent = '🎯 Выбери соперника:';
+    panel.appendChild(header);
+
+    const myUid = auth.currentUser?.uid;
+    const candidates = [...state.points.entries()].filter(([uid,_]) => uid !== myUid);
+
+    if (candidates.length === 0){
+      const empty = document.createElement('div');
+      empty.style.cssText = 'width:100%; color:#aaa; padding:6px 10px; font-size:12px;';
+      empty.textContent = 'Нет доступных соперников';
+      panel.appendChild(empty);
+      setTimeout(()=>{ if (panel.dataset.mode === 'sniper-pick'){ panel.dataset.mode=''; panel.innerHTML=''; panel.classList.remove('show'); }}, 2000);
+      return;
+    }
+
+    for (const [uid, p] of candidates){
+      const btn = document.createElement('button');
+      btn.className = 'btn ghost small';
+      const name = (p.name || '?').substring(0, 14);
+      const color = p.color || '#888';
+      const emoji = p.emoji || '';
+      btn.style.cssText = `
+        font-size: 1em; padding: 6px 10px; min-width: 84px;
+        display: flex; flex-direction: column; align-items: center; gap: 2px;
+        border: 2px solid ${color}; color: #fff;
+        box-shadow: 0 0 12px ${color}55;
+      `;
+      btn.innerHTML = `
+        <span style="font-size:1.6em;line-height:1;">${emoji || '●'}</span>
+        <span style="font-size:0.75em;font-weight:700;color:${color};">${escapeHtml(name)}</span>
+      `;
+      btn.title = `Снайпер с ${name}`;
+      btn.onclick = () => _triggerSniper(uid, p);
+      panel.appendChild(btn);
+    }
+  }
+
+  // === Запуск снайпера (от инициатора) ===
+  async function _triggerSniper(targetUid, targetPoint){
+    if (!auth.currentUser) return;
+    const myUid = auth.currentUser.uid;
+    if (targetUid === myUid) return;
+
+    // Проверяем что нет активной игры
+    try {
+      const snap = await get(sniperRootRef);
+      if (snap.exists()){
+        const v = snap.val() || {};
+        if (v.state && v.state !== 'ended' && (Date.now() - (v.startedAt || 0) < SNIPER.STALE_AFTER_MS)){
+          alert('Уже идёт игра, дождись её окончания');
+          return;
+        }
+      }
+    } catch(e){}
+
+    const myName = getDisplayName(state) || 'Игрок';
+    const myColor = state.color || '#16c7b7';
+    const startedAt = Date.now();
+
+    try {
+      const initialTarget = _generateSniperTarget(0, true);
+      await set(sniperRootRef, {
+        type: 'sniper',
+        participants: {
+          [myUid]: { name: myName, color: myColor },
+          [targetUid]: { name: targetPoint?.name || '?', color: targetPoint?.color || '#888' },
+        },
+        state: 'starting',
+        startedAt,
+        endsAt: startedAt + SNIPER.STARTING_MS + SNIPER.FIGHT_MS,
+        scores: { [myUid]: 0, [targetUid]: 0 },
+        currentTarget: initialTarget,
+        winner: null,
+      });
+      console.log(`[sniper] вызов ${targetPoint?.name}`);
+      const p2 = document.getElementById('overlayEmojiPanel');
+      if (p2){ p2.dataset.mode=''; p2.innerHTML=''; p2.classList.remove('show'); }
+    } catch(e){
+      console.warn('[sniper] start failed', e);
+    }
+  }
+
+  // Генератор шарика. Радиус уменьшается с ростом счёта (берём максимальный из участников).
+  function _generateSniperTarget(maxScore, isInitial){
+    const minSide = Math.min(window.innerWidth, window.innerHeight);
+    const isMobile = minSide < 700;
+    const baseR = isMobile ? SNIPER.BASE_R_MOBILE : SNIPER.BASE_R_DESKTOP;
+    // Уменьшаем относительный радиус с очками
+    const shrink = Math.max(0, 1 - SNIPER.SHRINK_PER_SCORE * maxScore);
+    let r_norm = baseR * shrink;
+    // Жёсткий минимум в пикселях (10px радиус = 20px диаметр, попасть пальцем уже трудно но можно)
+    const minNorm = SNIPER.MIN_R_PX / minSide;
+    if (r_norm < minNorm) r_norm = minNorm;
+    return {
+      id: 'tgt_' + Date.now() + '_' + Math.random().toString(36).slice(2,7),
+      x: SNIPER.MARGIN + Math.random() * (1 - 2 * SNIPER.MARGIN),
+      y: SNIPER.MARGIN + Math.random() * (1 - 2 * SNIPER.MARGIN),
+      r_norm,
+      spawnedAt: Date.now(),
+    };
+  }
+
+  // === Подписка на состояние ===
+  onValue(sniperRootRef, (snap)=>{
+    if (!snap.exists()){
+      if (currentSniper){
+        console.log('[sniper] очищено');
+        _onSniperEnd();
+      }
+      currentSniper = null;
+      _updateSniperUI();
+      _updateSniperOverlay();
+      return;
+    }
+    const v = snap.val();
+    if (v.type !== 'sniper') return; // вдруг другая игра
+
+    const wasActive = !!currentSniper;
+    const prevState = currentSniper ? currentSniper.state : null;
+    currentSniper = v;
+
+    if (!wasActive){
+      _onSniperStart();
+    }
+
+    // переход starting → playing делает только инициатор
+    // (сравниваем по тому, кто первый в участниках — но проще: первое имя в Object.keys)
+    const participants = Object.keys(v.participants || {});
+    const isInitiator = (auth.currentUser && participants[0] === auth.currentUser.uid);
+
+    if (v.state === 'starting' && isInitiator){
+      const fightAt = (v.startedAt || 0) + SNIPER.STARTING_MS;
+      if (Date.now() >= fightAt){
+        update(sniperRootRef, { state: 'playing' }).catch(()=>{});
+      } else {
+        setTimeout(()=>{
+          // Повторяем попытку после задержки
+          if (currentSniper && currentSniper.state === 'starting'){
+            update(sniperRootRef, { state: 'playing' }).catch(()=>{});
+          }
+        }, SNIPER.STARTING_MS - (Date.now() - (v.startedAt || 0)) + 100);
+      }
+    }
+
+    // Переход playing → ended по таймеру (как в дуэли) - делает только инициатор
+    if (v.state === 'playing' && isInitiator && v.endsAt){
+      const msUntilEnd = (v.endsAt) - Date.now();
+      if (msUntilEnd <= 0){
+        // Уже закончилось — определяем победителя
+        _finishSniperByTimer();
+      } else {
+        // Запланируем
+        setTimeout(_finishSniperByTimer, msUntilEnd + 200);
+      }
+    }
+
+    // Победитель определён? — закрываемся
+    if (v.state === 'ended' && !sniperCleanupScheduled && isInitiator){
+      sniperCleanupScheduled = true;
+      setTimeout(()=>{
+        remove(sniperRootRef).catch(()=>{});
+        sniperCleanupScheduled = false;
+      }, 4000);
+    }
+
+    // Страховка от зависших
+    if (v.state !== 'ended' && (Date.now() - (v.startedAt || 0)) > SNIPER.STALE_AFTER_MS){
+      console.warn('[sniper] зависла, снимаем');
+      try { remove(sniperRootRef); } catch{}
+    }
+
+    _updateSniperUI();
+    _updateSniperOverlay();
+  });
+
+  // Завершение по таймеру: пишет winner-а и переводит в ended.
+  // Вызывается только инициатором, и только один раз (защита через флаг).
+  let _sniperFinishCalled = false;
+  async function _finishSniperByTimer(){
+    if (_sniperFinishCalled) return;
+    if (!currentSniper || currentSniper.state !== 'playing') return;
+    if (!auth.currentUser) return;
+    const participants = Object.keys(currentSniper.participants || {});
+    if (participants[0] !== auth.currentUser.uid) return; // не инициатор
+    _sniperFinishCalled = true;
+
+    const scores = currentSniper.scores || {};
+    let winner = null;
+    let max = -1;
+    let tie = false;
+    for (const uid of participants){
+      const s = Number(scores[uid] || 0);
+      if (s > max){ max = s; winner = uid; tie = false; }
+      else if (s === max){ tie = true; }
+    }
+    if (tie) winner = null; // ничья
+
+    try {
+      await update(sniperRootRef, { state: 'ended', winner, currentTarget: null });
+    } catch(e){
+      console.warn('[sniper] finish failed', e);
+      _sniperFinishCalled = false;
+    }
+  }
+
+  function _onSniperStart(){
+    console.log('[sniper] началась');
+    _playDuelSound('snipStart'); // отдельный звук, см. ниже
+    document.body.classList.add('sniper-active');
+    sniperCleanupScheduled = false;
+    _sniperFinishCalled = false;
+    // Если я хост и в игре — прошу интерактив
+    if (auth.currentUser && currentSniper && currentSniper.participants
+        && currentSniper.participants[auth.currentUser.uid]
+        && _isHostHere()){
+      console.log('[DUEL_INTERACTIVE_ON]'); // переиспользуем тот же сигнал ghost_overlay
+    }
+  }
+  function _onSniperEnd(){
+    document.body.classList.remove('sniper-active');
+    sniperCleanupScheduled = false;
+    if (auth.currentUser && _isHostHere()){
+      console.log('[DUEL_INTERACTIVE_OFF]');
+    }
+  }
+  // Хелпер хоста (он же в дуэли есть, но в другом scope — продублируем)
+  function _isHostHere(){
+    return isOverlayMode()
+      || window.isOverlayHotkeys
+      || document.documentElement.classList.contains('overlay-live')
+      || document.documentElement.classList.contains('overlay-mode');
+  }
+
+  // === Регистрация выстрела ===
+  // Проверяем попадание в шарик. Если попали — делаем transaction-обновление:
+  // увеличиваем счёт и спавним новый таргет. Игра идёт пока не истечёт таймер.
+  // Тайбрейк: если кто-то УЖЕ зарегистрировал попадание в этот же tgtId (taarget id уже сменился),
+  // мы локально проверяем дистанцию до центра и если мы ближе — побеждаем "в окне".
+  async function _registerSniperShot(clientX, clientY){
+    if (!currentSniper || currentSniper.state !== 'playing') return;
+    const myUid = auth.currentUser?.uid;
+    if (!myUid || !currentSniper.participants?.[myUid]) return;
+
+    const tgt = currentSniper.currentTarget;
+    if (!tgt) return;
+
+    // Переводим клик в нормализованные координаты
+    const W = window.innerWidth, H = window.innerHeight;
+    const minSide = Math.min(W, H);
+    const nx = clientX / W;
+    const ny = clientY / H;
+
+    // Дистанция в пиксельных единицах (чтобы радиус сравнивать)
+    const dx_n = nx - tgt.x, dy_n = ny - tgt.y;
+    const distNorm = Math.hypot(dx_n * W, dy_n * H) / minSide;
+
+    if (distNorm > tgt.r_norm){
+      // Промах — ничего не делаем (по твоему ТЗ штрафа нет)
+      return;
+    }
+
+    _myLastSniperShot = { tgtId: tgt.id, dist: distNorm, t: Date.now() };
+
+    // Атомарное обновление через transaction-подобный get→update
+    try {
+      const snap = await get(sniperRootRef);
+      if (!snap.exists()) return;
+      const v = snap.val();
+      if (v.state !== 'playing') return;
+      // Если таргет уже сменился (другой попал быстрее) — проверяем тайбрейк
+      if (!v.currentTarget || v.currentTarget.id !== tgt.id){
+        // тайбрейк: если ближе чем тот, кто записан как победитель раунда, то могли бы спорить...
+        // но без серверного timestamp у нас нет надёжного arbiter — отказываемся, кто первый записал тот молодец
+        return;
+      }
+
+      // Я попал первым по этому таргету. Увеличиваем счёт и спавним новый.
+      const myScore = Number((v.scores || {})[myUid] || 0) + 1;
+      const newScores = { ...(v.scores || {}), [myUid]: myScore };
+      const maxScore = Math.max(...Object.values(newScores).map(Number));
+
+      // Игра идёт по таймеру — конца по очкам нет, всегда спавним новый шарик
+      await new Promise(r => setTimeout(r, SNIPER.GAP_MS));
+      const updates = {
+        scores: newScores,
+        currentTarget: _generateSniperTarget(maxScore, false),
+      };
+
+      await update(sniperRootRef, updates);
+      // Локальный фидбек
+      _spawnSniperHitFlash(clientX, clientY);
+      _playDuelSound('snipPop'); // звук попадания
+    } catch(e){
+      console.warn('[sniper] shot failed', e);
+    }
+  }
+
+  // === UI: оверлей с шариком + карточка счёта ===
+  let _sniperOverlay = null;
+  function _ensureSniperOverlay(){
+    if (_sniperOverlay) return _sniperOverlay;
+    const el = document.createElement('div');
+    el.id = 'sniperOverlay';
+    el.style.cssText = `
+      position: fixed; inset: 0;
+      z-index: 99000;
+      display: none;
+      cursor: crosshair;
+      background: transparent;
+      pointer-events: auto;
+    `;
+    el.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      _registerSniperShot(e.clientX, e.clientY);
+    });
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      _registerSniperShot(e.clientX, e.clientY);
+    });
+    document.body.appendChild(el);
+    _sniperOverlay = el;
+    return el;
+  }
+
+  let _sniperBall = null;
+  function _ensureSniperBall(){
+    if (_sniperBall) return _sniperBall;
+    const ball = document.createElement('div');
+    ball.id = 'sniperBall';
+    ball.style.cssText = `
+      position: fixed;
+      pointer-events: none;
+      border-radius: 50%;
+      background: radial-gradient(circle, #fbbf24 0%, #ef4444 70%, transparent 100%);
+      box-shadow: 0 0 30px rgba(251,191,36,0.8), 0 0 60px rgba(239,68,68,0.5);
+      transition: opacity 0.15s ease;
+      z-index: 99500;
+      will-change: transform, left, top;
+      animation: sniperBallPulse 0.7s ease-in-out infinite;
+    `;
+    document.body.appendChild(ball);
+    _sniperBall = ball;
+    return ball;
+  }
+  // CSS пульсация шарика
+  if (!document.getElementById('sniperStyles')){
+    const st = document.createElement('style');
+    st.id = 'sniperStyles';
+    st.textContent = `
+      @keyframes sniperBallPulse {
+        0%, 100% { transform: scale(1); }
+        50%      { transform: scale(1.15); }
+      }
+      body.sniper-active #player,
+      body.sniper-active #fx-layer {
+        filter: grayscale(0.6) brightness(0.7) !important;
+      }
+      body.sniper-active #player,
+      body.sniper-active canvas {
+        pointer-events: none !important;
+      }
+      #sniperCard {
+        position: fixed; left: 50%; top: 12px;
+        transform: translateX(-50%);
+        z-index: 100000; pointer-events: none;
+        background: linear-gradient(180deg, rgba(15,23,42,0.94), rgba(8,14,27,0.94));
+        border: 1px solid rgba(168,85,247,0.4);
+        border-radius: 14px;
+        padding: 12px 24px;
+        box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(168,85,247,0.2);
+        font-family: 'Montserrat', 'Open Sans', sans-serif;
+        text-align: center; min-width: 320px;
+      }
+      #sniperCard .s-title { font-size: 18px; font-weight: 800; color: #fff; margin-bottom: 4px; }
+      #sniperCard .s-row { display: flex; gap: 12px; align-items: center; justify-content: center; }
+      #sniperCard .s-name { font-weight: 800; font-size: 14px; }
+      #sniperCard .s-score { font-size: 28px; font-weight: 900; color: #fbbf24; min-width: 36px; text-shadow: 0 0 10px rgba(251,191,36,0.6); }
+      #sniperCard .s-timer { margin-top: 6px; font-size: 12px; color: #aaa; letter-spacing: 0.5px; }
+      #sniperCard .s-end { font-size: 24px; font-weight: 900; animation: sniperWinPulse 0.6s ease-in-out infinite; }
+      @keyframes sniperWinPulse { 0%,100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+    `;
+    document.head.appendChild(st);
+  }
+
+  function _spawnSniperHitFlash(x, y){
+    const flash = document.createElement('div');
+    flash.style.cssText = `
+      position: fixed;
+      left: ${x - 32}px; top: ${y - 32}px;
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(34,197,94,0.7) 0%, rgba(251,191,36,0.4) 50%, transparent 75%);
+      pointer-events: none;
+      z-index: 99800;
+      animation: duelHitFlash 0.4s ease-out forwards;
+    `;
+    document.body.appendChild(flash);
+    setTimeout(() => flash.remove(), 450);
+  }
+
+  function _updateSniperOverlay(){
+    const ov = _ensureSniperOverlay();
+    const ball = _ensureSniperBall();
+
+    if (!currentSniper || currentSniper.state !== 'playing'){
+      ov.style.display = 'none';
+      ball.style.display = 'none';
+      return;
+    }
+    const myUid = auth.currentUser?.uid;
+    const isParticipant = !!(myUid && currentSniper.participants?.[myUid]);
+    if (!isParticipant){
+      ov.style.display = 'none';
+      ball.style.display = 'none';
+      return;
+    }
+
+    ov.style.display = 'block';
+
+    const tgt = currentSniper.currentTarget;
+    if (!tgt){ ball.style.display = 'none'; return; }
+
+    const W = window.innerWidth, H = window.innerHeight;
+    const minSide = Math.min(W, H);
+    const r_px = tgt.r_norm * minSide;
+    const x_px = tgt.x * W;
+    const y_px = tgt.y * H;
+    ball.style.display = 'block';
+    ball.style.left = (x_px - r_px) + 'px';
+    ball.style.top  = (y_px - r_px) + 'px';
+    ball.style.width  = (r_px * 2) + 'px';
+    ball.style.height = (r_px * 2) + 'px';
+  }
+
+  let _sniperCard = null;
+  function _ensureSniperCard(){
+    if (_sniperCard) return _sniperCard;
+    const c = document.createElement('div');
+    c.id = 'sniperCard';
+    document.body.appendChild(c);
+    _sniperCard = c;
+    return c;
+  }
+
+  function _updateSniperUI(){
+    const c = _ensureSniperCard();
+    if (!currentSniper){ c.style.display = 'none'; return; }
+    c.style.display = 'block';
+
+    const d = currentSniper;
+    const participants = Object.entries(d.participants || {});
+    const scores = d.scores || {};
+
+    if (d.state === 'starting'){
+      const until = Math.max(0, Math.ceil(((d.startedAt||0) + SNIPER.STARTING_MS - Date.now())/1000));
+      c.innerHTML = `<div class="s-title">🎯 СНАЙПЕР</div>
+        <div class="s-row">${participants.map(([uid,p])=>`<span class="s-name" style="color:${p.color}">${escapeHtml(p.name||'?')}</span>`).join('<span style="color:#666">vs</span>')}</div>
+        <div class="s-timer">СТАРТ ЧЕРЕЗ ${until}С • ${Math.round(SNIPER.FIGHT_MS/1000)} СЕКУНД</div>`;
+    } else if (d.state === 'playing'){
+      const leftMs = Math.max(0, (d.endsAt||0) - Date.now());
+      const leftSec = Math.ceil(leftMs/1000);
+      c.innerHTML = `<div class="s-row">${participants.map(([uid,p])=>`
+        <span class="s-name" style="color:${p.color}">${escapeHtml(p.name||'?')}</span>
+        <span class="s-score">${Number(scores[uid]||0)}</span>
+      `).join('<span class="s-name" style="color:#444">|</span>')}</div>
+        <div class="s-timer">⏱ ${leftSec}С</div>`;
+    } else if (d.state === 'ended'){
+      const wp = d.winner ? d.participants?.[d.winner] : null;
+      const txt = wp ? `🏆 ПОБЕДИЛ ${escapeHtml(wp.name || '?')}` : '🤝 НИЧЬЯ';
+      const col = wp?.color || '#fbbf24';
+      c.innerHTML = `<div class="s-end" style="color:${col}">${txt}</div>`;
+      // Звук конца — переиспользуем lose+win
+      if (!c.__endSoundPlayed){
+        c.__endSoundPlayed = true;
+        if (d.winner === auth.currentUser?.uid) _playDuelSound('win');
+        else _playDuelSound('lose');
+      }
+    }
+    if (d.state !== 'ended') c.__endSoundPlayed = false;
+  }
+
+  // Обновление каждые 250мс пока активна (нужно для таймера и для случая если ball-update пропустился)
+  setInterval(()=>{
+    if (currentSniper){
+      _updateSniperUI();
+      _updateSniperOverlay();
+    }
+  }, 250);
+
+  // Звук snipStart (новый файл, добавляем в DUEL_SOUNDS)
+  // Также добавим snipPop. _playDuelSound уже умеет работать с кэшем — просто
+  // дополним маппинг.
+  if (typeof DUEL_SOUNDS !== 'undefined'){
+    DUEL_SOUNDS.snipStart = 'sounds/snip_start.mp3';
+    DUEL_SOUNDS.snipPop = 'sounds/pop.mp3';
+  }
+
+  // === ДЛЯ ТЕСТА: Alt + ` (тильда) автокликает в текущий шарик у тебя локально ===
+  // Удалить эту строку после проверки.
+  window.addEventListener('keydown', (e) => {
+    if (e.altKey && (e.code === 'Backquote' || e.key === '`' || e.key === 'ё' || e.key === 'Ё')) {
+      if (currentSniper && currentSniper.state === 'playing' && currentSniper.currentTarget){
+        const W = window.innerWidth, H = window.innerHeight;
+        const x = currentSniper.currentTarget.x * W;
+        const y = currentSniper.currentTarget.y * H;
+        _registerSniperShot(x, y);
+        e.preventDefault();
+      }
+    }
+  });
+
+  window.__sniper = {
+    state: ()=>currentSniper,
+    force: ()=>{ try { remove(sniperRootRef); } catch{} },
+  };
+
+  window.__openGamesModal = _openGamesModal; // удобно вызвать из консоли
+  // Открывает простое модальное окно: выбор игры → выбор соперника.
+  (function _setupGamesButton(){
+    const btn = document.getElementById('btnGames');
+    if (!btn) return;
+    btn.addEventListener('click', () => _openGamesModal());
+  })();
+
+  function _openGamesModal(){
+    // Закрыть прошлую если есть
+    const old = document.getElementById('gamesModal');
+    if (old) old.remove();
+
+    const isHost = isOverlayMode()
+      || window.isOverlayHotkeys
+      || document.documentElement.classList.contains('overlay-live')
+      || document.documentElement.classList.contains('overlay-mode');
+
+    const wrap = document.createElement('div');
+    wrap.id = 'gamesModal';
+    wrap.style.cssText = `
+      position: fixed; inset: 0;
+      z-index: 100001;
+      background: rgba(0,0,0,0.6);
+      display: flex; align-items: center; justify-content: center;
+      backdrop-filter: blur(4px);
+      animation: gamesModalFadeIn 0.2s ease;
+    `;
+    wrap.addEventListener('click', (e) => {
+      if (e.target === wrap) wrap.remove(); // клик по подложке закрывает
+    });
+
+    const card = document.createElement('div');
+    card.style.cssText = `
+      background: linear-gradient(180deg, rgba(15,23,42,0.96), rgba(8,14,27,0.96));
+      border: 1px solid rgba(168,85,247,0.4);
+      border-radius: 18px;
+      padding: 24px 28px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.7), 0 0 60px rgba(168,85,247,0.2);
+      min-width: 360px; max-width: 90vw;
+      font-family: 'Montserrat', 'Open Sans', sans-serif;
+    `;
+
+    const title = document.createElement('div');
+    title.style.cssText = 'font-size:20px;font-weight:800;color:#fff;text-align:center;margin-bottom:18px;letter-spacing:0.5px';
+    title.textContent = '🎮 Выбери игру';
+    card.appendChild(title);
+
+    const list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-wrap:wrap;gap:12px;justify-content:center';
+
+    const games = [];
+    if (isHost){
+      games.push({ icon:'🗡️', name:'Дуэль', color:'#ef4444', onClick:()=>_modalPickVictim(card, 'duel') });
+    }
+    games.push({ icon:'🎯', name:'Снайпер', color:'#a855f7', onClick:()=>_modalPickVictim(card, 'sniper') });
+
+    for (const g of games){
+      const btn = document.createElement('button');
+      btn.className = 'btn ghost';
+      btn.style.cssText = `
+        padding: 14px 20px; min-width: 110px;
+        display: flex; flex-direction: column; align-items: center; gap: 4px;
+        border: 2px solid ${g.color}; color: #fff; cursor: pointer;
+        background: rgba(15,23,42,0.6);
+        box-shadow: 0 0 16px ${g.color}55;
+        font-family: inherit;
+      `;
+      btn.innerHTML = `
+        <span style="font-size:2.4em;line-height:1;">${g.icon}</span>
+        <span style="font-size:0.95em;font-weight:800;color:${g.color};">${g.name}</span>
+      `;
+      btn.onclick = g.onClick;
+      list.appendChild(btn);
+    }
+
+    card.appendChild(list);
+
+    // Кнопка "Закрыть" внизу
+    const close = document.createElement('button');
+    close.textContent = '✕ Отмена';
+    close.style.cssText = `
+      display: block; margin: 18px auto 0;
+      padding: 6px 16px; font-size: 12px;
+      background: transparent; border: 1px solid rgba(255,255,255,0.15);
+      color: #999; border-radius: 8px; cursor: pointer;
+      font-family: inherit;
+    `;
+    close.onclick = () => wrap.remove();
+    card.appendChild(close);
+
+    wrap.appendChild(card);
+    document.body.appendChild(wrap);
+
+    // Стили анимации (один раз)
+    if (!document.getElementById('gamesModalStyles')){
+      const st = document.createElement('style');
+      st.id = 'gamesModalStyles';
+      st.textContent = `@keyframes gamesModalFadeIn { from { opacity: 0; } to { opacity: 1; } }`;
+      document.head.appendChild(st);
+    }
+  }
+
+  // Второй экран модалки: выбор соперника
+  function _modalPickVictim(card, gameType){
+    card.innerHTML = '';
+
+    const title = document.createElement('div');
+    const accent = gameType === 'duel' ? '#ef4444' : '#a855f7';
+    const icon = gameType === 'duel' ? '🗡️' : '🎯';
+    title.style.cssText = `font-size:18px;font-weight:800;color:${accent};text-align:center;margin-bottom:14px;letter-spacing:0.5px`;
+    title.textContent = `${icon} Выбери соперника`;
+    card.appendChild(title);
+
+    const myUid = auth.currentUser?.uid;
+    const candidates = [...state.points.entries()].filter(([uid,_]) => uid !== myUid);
+
+    const list = document.createElement('div');
+    list.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;justify-content:center;max-width:560px';
+
+    if (candidates.length === 0){
+      const empty = document.createElement('div');
+      empty.style.cssText = 'color:#aaa;text-align:center;padding:20px;';
+      empty.textContent = 'Нет доступных соперников';
+      card.appendChild(empty);
+    } else {
+      for (const [uid, p] of candidates){
+        const btn = document.createElement('button');
+        btn.className = 'btn ghost';
+        const name = (p.name || '?').substring(0, 14);
+        const color = p.color || '#888';
+        const emoji = p.emoji || '';
+        btn.style.cssText = `
+          padding: 10px 14px; min-width: 96px;
+          display: flex; flex-direction: column; align-items: center; gap: 3px;
+          border: 2px solid ${color}; color: #fff; cursor: pointer;
+          background: rgba(15,23,42,0.6);
+          box-shadow: 0 0 12px ${color}55;
+          font-family: inherit;
+        `;
+        btn.innerHTML = `
+          <span style="font-size:1.8em;line-height:1;">${emoji || '●'}</span>
+          <span style="font-size:0.85em;font-weight:800;color:${color};">${escapeHtml(name)}</span>
+        `;
+        btn.onclick = () => {
+          const modal = document.getElementById('gamesModal');
+          if (modal) modal.remove();
+          if (gameType === 'duel') _triggerHostDuel(uid, p);
+          else if (gameType === 'sniper') _triggerSniper(uid, p);
+        };
+        list.appendChild(btn);
+      }
+      card.appendChild(list);
+    }
+
+    // Назад + Отмена
+    const row = document.createElement('div');
+    row.style.cssText = 'display:flex;gap:8px;justify-content:center;margin-top:16px';
+    const back = document.createElement('button');
+    back.textContent = '← Назад';
+    back.style.cssText = 'padding:6px 14px;font-size:12px;background:transparent;border:1px solid rgba(255,255,255,0.15);color:#aaa;border-radius:8px;cursor:pointer;font-family:inherit';
+    back.onclick = () => {
+      const modal = document.getElementById('gamesModal');
+      if (modal) modal.remove();
+      _openGamesModal();
+    };
+    const close = document.createElement('button');
+    close.textContent = '✕ Отмена';
+    close.style.cssText = 'padding:6px 14px;font-size:12px;background:transparent;border:1px solid rgba(255,255,255,0.15);color:#999;border-radius:8px;cursor:pointer;font-family:inherit';
+    close.onclick = () => { const m = document.getElementById('gamesModal'); if (m) m.remove(); };
+    row.appendChild(back);
+    row.appendChild(close);
+    card.appendChild(row);
+  }
 // ЗАКРЫТИЕ ОВЕРЛЕЯ: Escape в overlay режиме
   window.addEventListener('keydown', (e)=>{
     if (e.code === 'Escape' && isOverlayMode()){
@@ -7011,26 +7750,62 @@ window.closeLinkModal = function() {
           };
         });
 
-        // === ДОБАВЛЯЕМ КНОПКУ ДУЭЛИ (только для overlay/хоста) ===
+        // === КНОПКА "ИГРЫ" (для хоста — все игры, для остальных — только снайпер) ===
         // Расширенная проверка: любой из признаков хоста считается
         // (localStorage, URL-параметр, класс overlay-live от ghost_overlay.py)
         const isHost = isOverlayMode()
           || window.isOverlayHotkeys
           || document.documentElement.classList.contains('overlay-live')
           || document.documentElement.classList.contains('overlay-mode');
-        if (isHost){
-          const duelBtn = document.createElement('button');
-          duelBtn.className = 'btn ghost small';
-          duelBtn.textContent = '🗡️';
-          duelBtn.title = 'Дуэль! Выбрать соперника';
-          duelBtn.style.cssText = 'font-size:1.6em;padding:4px 10px;border:1px solid rgba(239,68,68,0.4);';
-          duelBtn.onclick = () => _enterDuelPickMode(panel);
-          panel.appendChild(duelBtn);
-        }
+
+        const gamesBtn = document.createElement('button');
+        gamesBtn.className = 'btn ghost small';
+        gamesBtn.textContent = '🎮';
+        gamesBtn.title = 'Запустить игру';
+        gamesBtn.style.cssText = 'font-size:1.6em;padding:4px 10px;border:1px solid rgba(168,85,247,0.5);';
+        gamesBtn.onclick = () => _enterGamesMenu(panel, isHost);
+        panel.appendChild(gamesBtn);
       }
     }
     return panel.classList.toggle('show');
   };
+
+  // === МЕНЮ ВЫБОРА ИГРЫ ===
+  // Хосту показываем все игры (дуэль + снайпер), всем остальным — только снайпер
+  // (потому что дуэль требует подмены имени на "Лёха" и кнопок-хоста).
+  function _enterGamesMenu(panel, isHost){
+    panel.dataset.mode = 'games-menu';
+    panel.innerHTML = '';
+
+    const header = document.createElement('div');
+    header.style.cssText = 'width:100%; color:#fff; font-weight:700; padding:4px 10px 8px; font-size:13px; letter-spacing:0.5px;';
+    header.textContent = '🎮 Выбери игру:';
+    panel.appendChild(header);
+
+    // Игры в порядке предпочтения
+    const games = [];
+    if (isHost){
+      games.push({ icon: '🗡️', name: 'Дуэль', color: '#ef4444', onClick: () => _enterDuelPickMode(panel) });
+    }
+    games.push({ icon: '🎯', name: 'Снайпер', color: '#a855f7', onClick: () => _enterSniperPickMode(panel) });
+
+    for (const g of games){
+      const btn = document.createElement('button');
+      btn.className = 'btn ghost small';
+      btn.style.cssText = `
+        font-size: 1em; padding: 8px 12px; min-width: 96px;
+        display: flex; flex-direction: column; align-items: center; gap: 2px;
+        border: 2px solid ${g.color}; color: #fff;
+        box-shadow: 0 0 12px ${g.color}55;
+      `;
+      btn.innerHTML = `
+        <span style="font-size:1.8em;line-height:1;">${g.icon}</span>
+        <span style="font-size:0.85em;font-weight:700;color:${g.color};">${g.name}</span>
+      `;
+      btn.onclick = g.onClick;
+      panel.appendChild(btn);
+    }
+  }
 
   // === ХОСТ-ДУЭЛЬ: режим выбора соперника ===
   // Панель очищается и заполняется аватарками всех присутствующих (кроме хоста).
