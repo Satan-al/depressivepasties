@@ -5188,6 +5188,1329 @@ document.head.appendChild(ratAnimStyle);
     force: ()=>{ try { remove(sniperRootRef); } catch{} },
   };
 
+  /* ============================================================
+     ============= ГОНКИ — ЭТАП 1 (только трасса) ================
+     ============================================================
+     Сейчас здесь: генератор замкнутой трассы + рендер на canvas.
+     Машинок, движения, синхронизации НЕТ — только посмотреть форму.
+     Запуск из консоли: __testRace() — генерирует и показывает.
+                       __testRace.close() — убирает.
+                       __testRace.regen() — новую трассу.
+  */
+  const RACE = {
+    NUM_POINTS: 14,            // вершин в "бублике"
+    RADIUS_BASE: 0.34,         // средний радиус относительно min(W,H)
+    RADIUS_NOISE: 0.18,        // насколько вершины могут гулять (амплитуда)
+    SHARP_TURN_DELTA: 0.45,    // максимальное "резкое сжатие" одной вершины (для острого поворота)
+    TRACK_WIDTH_DESKTOP: 110,  // ширина асфальта в пикселях
+    TRACK_WIDTH_MOBILE: 75,
+    SUBDIVISIONS: 8,           // на каждый сегмент сколько микро-точек (для гладкости/шума)
+    JITTER: 0.012,             // мелкий шум на каждой микро-точке (норм. координаты)
+    LAPS_TO_WIN: 3,            // сколько кругов для победы
+    TIME_LIMIT_MS: 90000,      // 90 секунд на гонку, потом ничья
+  };
+
+  // Генератор замкнутой ломаной "бублик".
+  // Возвращает { centerline: [{x,y}, ...], width_px, sharpIndex }
+  // centerline — нормализованные координаты [0..1].
+  function generateRaceTrack(){
+    const N = RACE.NUM_POINTS;
+    const cx = 0.5, cy = 0.5;
+    // Гарантируем хотя бы один резкий поворот: выбираем индекс, его радиус "сожмём"
+    const sharpIndex = Math.floor(Math.random() * N);
+
+    const verts = [];
+    for (let i = 0; i < N; i++){
+      const angle = (i / N) * Math.PI * 2 + (Math.random() - 0.5) * 0.15;
+      let radius = RACE.RADIUS_BASE + (Math.random() - 0.5) * RACE.RADIUS_NOISE;
+      if (i === sharpIndex){
+        // Сильно сжимаем эту вершину к центру → острый угол
+        radius *= (1 - RACE.SHARP_TURN_DELTA);
+      }
+      // С учётом aspect ratio экрана — растягиваем по большей стороне
+      const ax = cx + Math.cos(angle) * radius;
+      const ay = cy + Math.sin(angle) * radius;
+      verts.push({ x: ax, y: ay });
+    }
+
+    // Подразделяем сегменты + добавляем мелкий шум для "рисованной" фактуры
+    const centerline = [];
+    for (let i = 0; i < N; i++){
+      const a = verts[i];
+      const b = verts[(i + 1) % N];
+      const subs = RACE.SUBDIVISIONS;
+      for (let s = 0; s < subs; s++){
+        const t = s / subs;
+        const x = a.x + (b.x - a.x) * t + (Math.random() - 0.5) * RACE.JITTER;
+        const y = a.y + (b.y - a.y) * t + (Math.random() - 0.5) * RACE.JITTER;
+        centerline.push({ x, y });
+      }
+    }
+
+    return {
+      centerline,        // массив точек центра трассы
+      vertexCount: N,
+      sharpIndex,
+      verts,             // оригинальные вершины (для дебага и чекпоинтов потом)
+      // Чекпоинты — индексы в centerline которые нужно пройти по порядку
+      // чтобы засчитать круг. Расставляем равномерно: старт + 3 промежуточных.
+      checkpoints: (function(){
+        const len = centerline.length;
+        return [
+          0,                                // старт
+          Math.floor(len * 0.25),
+          Math.floor(len * 0.5),
+          Math.floor(len * 0.75),
+        ];
+      })(),
+    };
+  }
+
+  // Отдельный canvas-слой для гонок (поверх основного)
+  // Иначе основной drawFrame постоянно очищает canvas и наш рендер мерцает.
+  let _raceCanvas = null;
+  let _raceCtx = null;
+  function _ensureRaceCanvas(){
+    if (_raceCanvas) return _raceCanvas;
+    const cv = document.createElement('canvas');
+    cv.id = 'raceCanvas';
+    cv.style.cssText = `
+      position: fixed; inset: 0;
+      pointer-events: none;
+      z-index: 99000;
+    `;
+    document.body.appendChild(cv);
+    _raceCanvas = cv;
+    _raceCtx = cv.getContext('2d');
+    _resizeRaceCanvas();
+    window.addEventListener('resize', _resizeRaceCanvas);
+    return cv;
+  }
+  function _resizeRaceCanvas(){
+    if (!_raceCanvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    _raceCanvas.width = window.innerWidth * dpr;
+    _raceCanvas.height = window.innerHeight * dpr;
+    _raceCanvas.style.width = window.innerWidth + 'px';
+    _raceCanvas.style.height = window.innerHeight + 'px';
+  }
+  function _hideRaceCanvas(){
+    if (_raceCanvas){ _raceCanvas.remove(); _raceCanvas = null; _raceCtx = null; }
+  }
+
+  // Рендер на отдельный canvas (без мигания от основного drawFrame).
+  function _renderRaceTrack(track){
+    _ensureRaceCanvas();
+    const cv = _raceCanvas;
+    const ctx2 = _raceCtx;
+    const W = cv.width, H = cv.height;
+    const dpr = window.devicePixelRatio || 1;
+    const minSide = Math.min(W, H);
+    const isMobile = minSide < 700 * dpr;
+    const widthPx = (isMobile ? RACE.TRACK_WIDTH_MOBILE : RACE.TRACK_WIDTH_DESKTOP) * dpr;
+
+    // Полностью очищаем (это НАШ собственный слой, никто его не трогает)
+    ctx2.clearRect(0, 0, W, H);
+    ctx2.save();
+
+    // Полупрозрачная подложка (затемнение всего экрана)
+    ctx2.fillStyle = 'rgba(8, 12, 22, 0.7)';
+    ctx2.fillRect(0, 0, W, H);
+
+    const cl = track.centerline;
+    if (cl.length < 2){ ctx2.restore(); return; }
+
+    // 1) Бордюр — широкая красная полоса
+    ctx2.lineWidth = widthPx + 8 * (window.devicePixelRatio || 1);
+    ctx2.strokeStyle = '#ef4444';
+    ctx2.lineJoin = 'round';
+    ctx2.lineCap = 'round';
+    ctx2.beginPath();
+    ctx2.moveTo(cl[0].x * W, cl[0].y * H);
+    for (let i = 1; i < cl.length; i++){
+      ctx2.lineTo(cl[i].x * W, cl[i].y * H);
+    }
+    ctx2.closePath();
+    ctx2.stroke();
+
+    // 2) Асфальт — внутри
+    ctx2.lineWidth = widthPx;
+    ctx2.strokeStyle = '#2d3748';
+    ctx2.beginPath();
+    ctx2.moveTo(cl[0].x * W, cl[0].y * H);
+    for (let i = 1; i < cl.length; i++){
+      ctx2.lineTo(cl[i].x * W, cl[i].y * H);
+    }
+    ctx2.closePath();
+    ctx2.stroke();
+
+    // 3) Центральная линия — белая пунктирная (как разметка)
+    ctx2.lineWidth = 2 * (window.devicePixelRatio || 1);
+    ctx2.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+    ctx2.setLineDash([12, 18]);
+    ctx2.beginPath();
+    ctx2.moveTo(cl[0].x * W, cl[0].y * H);
+    for (let i = 1; i < cl.length; i++){
+      ctx2.lineTo(cl[i].x * W, cl[i].y * H);
+    }
+    ctx2.closePath();
+    ctx2.stroke();
+    ctx2.setLineDash([]);
+
+    // 4) Стартовая линия — шахматная лента поперёк трассы (классика гонок)
+    {
+      const startA = track.verts[0];
+      const startB = track.verts[1];
+      // Направление вдоль трассы (от старта к следующей вершине)
+      const dx_n = startB.x - startA.x;
+      const dy_n = startB.y - startA.y;
+      const len_n = Math.hypot(dx_n, dy_n) || 1;
+      const tx_n = dx_n / len_n;   // тангент (вдоль)
+      const ty_n = dy_n / len_n;
+      const nrx = -ty_n;           // нормаль (поперёк)
+      const nry = tx_n;
+
+      // Переводим в пиксели
+      const startPx = { x: startA.x * W, y: startA.y * H };
+      const tangent = { x: tx_n * W, y: ty_n * H }; // ВНИМАНИЕ: разные масштабы по X и Y!
+      // Чтобы шахматка была "квадратная" в пикселях, считаем единичные пиксельные векторы
+      const tan_len_px = Math.hypot(tangent.x, tangent.y) || 1;
+      const tan_unit = { x: tangent.x / tan_len_px, y: tangent.y / tan_len_px };
+      // Нормаль в пикселях — поворот тангента на 90°
+      const norm_unit = { x: -tan_unit.y, y: tan_unit.x };
+
+      const halfWidthPx = widthPx / 2 + 6 * dpr;
+      const cellPx = 11 * dpr;
+      const cellsAcross = Math.max(6, Math.round((halfWidthPx * 2) / cellPx));
+      const realCellW = (halfWidthPx * 2) / cellsAcross;
+      const rows = 2;
+      const stripeDepth = realCellW * rows;
+
+      ctx2.save();
+      for (let row = 0; row < rows; row++){
+        for (let col = 0; col < cellsAcross; col++){
+          const isWhite = ((row + col) % 2) === 0;
+          // Смещение центра клетки относительно startPx
+          // - вдоль (back -stripeDepth/2 .. forward 0): row=0 это сразу после линии, row=1 ещё дальше
+          const along = -stripeDepth / 2 + (row + 0.5) * realCellW;
+          // - поперёк: -halfWidthPx .. +halfWidthPx, с центром клетки
+          const across = -halfWidthPx + (col + 0.5) * realCellW;
+
+          const cx_px = startPx.x + tan_unit.x * along + norm_unit.x * across;
+          const cy_px = startPx.y + tan_unit.y * along + norm_unit.y * across;
+
+          ctx2.save();
+          ctx2.translate(cx_px, cy_px);
+          ctx2.rotate(Math.atan2(tan_unit.y, tan_unit.x));
+          ctx2.fillStyle = isWhite ? '#ffffff' : '#0a0a0a';
+          ctx2.fillRect(-realCellW / 2, -realCellW / 2, realCellW, realCellW);
+          ctx2.restore();
+        }
+      }
+      ctx2.restore();
+    }
+
+    // 5) Маркер резкого поворота (для дебага этого этапа — потом уберём)
+    if (track.sharpIndex != null){
+      const sv = track.verts[track.sharpIndex];
+      ctx2.fillStyle = 'rgba(168, 85, 247, 0.7)';
+      ctx2.beginPath();
+      ctx2.arc(sv.x * W, sv.y * H, 12 * (window.devicePixelRatio || 1), 0, Math.PI * 2);
+      ctx2.fill();
+    }
+
+    ctx2.restore();
+  }
+
+  // Тестовый режим: показываем трассу поверх всего, добавляем кнопку "Перегенерировать"
+  let _raceTestActive = false;
+  let _raceTestTrack = null;
+  let _raceTestPanel = null;
+  let _raceTestRAF = null;
+
+  function _testRaceShow(){
+    if (_raceTestActive){
+      _raceTestTrack = generateRaceTrack();
+      return;
+    }
+    _raceTestActive = true;
+    _raceTestTrack = generateRaceTrack();
+
+    // Кнопочки управления
+    const panel = document.createElement('div');
+    panel.id = 'raceTestPanel';
+    panel.style.cssText = `
+      position: fixed; top: 12px; left: 12px;
+      z-index: 100002;
+      background: rgba(15,23,42,0.92);
+      border: 1px solid rgba(168,85,247,0.4);
+      border-radius: 10px;
+      padding: 10px 14px;
+      display: flex; gap: 8px; align-items: center;
+      font-family: 'Open Sans', sans-serif; color: #fff;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+    `;
+    panel.innerHTML = `
+      <span style="font-weight:700;color:#a855f7">🏎️ Тест трассы</span>
+      <button class="btn ghost small" id="raceTestRegen">🔄 Новая</button>
+      <button class="btn ghost small" id="raceTestClose">✕</button>
+    `;
+    document.body.appendChild(panel);
+    _raceTestPanel = panel;
+    document.getElementById('raceTestRegen').onclick = () => { _raceTestTrack = generateRaceTrack(); };
+    document.getElementById('raceTestClose').onclick = () => _testRaceHide();
+
+    // Цикл рендера
+    const tick = () => {
+      if (!_raceTestActive) return;
+      if (_raceTestTrack) _renderRaceTrack(_raceTestTrack);
+      _raceTestRAF = requestAnimationFrame(tick);
+    };
+    _raceTestRAF = requestAnimationFrame(tick);
+  }
+
+  function _testRaceHide(){
+    _raceTestActive = false;
+    if (_raceTestRAF) cancelAnimationFrame(_raceTestRAF);
+    _raceTestRAF = null;
+    if (_raceTestPanel) _raceTestPanel.remove();
+    _raceTestPanel = null;
+    _raceTestTrack = null;
+    _hideRaceCanvas();
+  }
+
+  // Экспорт в window — запускать из консоли
+  window.__testRace = _testRaceShow;
+  window.__testRace.close = _testRaceHide;
+  window.__testRace.regen = () => { if (_raceTestActive) _raceTestTrack = generateRaceTrack(); };
+
+  /* ====== ГОНКИ — ЭТАП 2: машинка, физика, коллизии ======
+     Тестируется локально через __testRaceCar() — генерим трассу,
+     ставим машинку на старт, она едет за курсором мыши с инерцией.
+     При попадании в стену — мигает красным, штраф пока не считаем
+     (сделаем когда добавим круги в этапе 3).
+  */
+
+  const RACE_CAR = {
+    SPEED: 22,             // максимальная скорость (была 12) - x2 ещё раз
+    ACCEL: 0.7,            // ускорение к целевой скорости (было 0.45) - быстрее набирает
+    BRAKE: 0.85,           // коэф замедления когда курсор поднят / далеко
+    TURN_LERP: 0.16,       // насколько резко руль поворачивает (было 0.12)
+    STOP_DIST_PX: 12,      // если курсор ближе чем это - почти стоим
+    BRAKE_DIST_PX: 50,     // зона торможения (было 80) - меньше дистанция, дольше едем на полной
+    MOUSE_SPEED_DECAY: 0.92, // память о скорости движения мыши (было 0.85) - дольше помнит
+    MOUSE_SPEED_NORM: 12,    // px/кадр после которых считаем "макс активность" (было 30) - проще достичь
+    SIZE_W: 22,
+    SIZE_L: 36,
+    HIT_COOLDOWN_MS: 400,
+  };
+
+  // Точка-к-сегменту: минимальное расстояние от точки до отрезка
+  function _distPointToSegment(px, py, ax, ay, bx, by){
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx*dx + dy*dy;
+    if (len2 === 0) return Math.hypot(px - ax, py - ay);
+    let t = ((px - ax) * dx + (py - ay) * dy) / len2;
+    t = Math.max(0, Math.min(1, t));
+    const cx = ax + dx * t, cy = ay + dy * t;
+    return Math.hypot(px - cx, py - cy);
+  }
+
+  // Проверка: точка (px,py) внутри асфальта (т.е. ближе чем halfWidth к центральной линии)?
+  function _isOnTrack(px_norm, py_norm, track, halfWidthNorm){
+    const cl = track.centerline;
+    let minDist = Infinity;
+    for (let i = 0; i < cl.length; i++){
+      const a = cl[i];
+      const b = cl[(i + 1) % cl.length];
+      const d = _distPointToSegment(px_norm, py_norm, a.x, a.y, b.x, b.y);
+      if (d < minDist) minDist = d;
+      if (minDist < halfWidthNorm) return true;
+    }
+    return false;
+  }
+
+  // Локальное состояние машинки (для теста)
+  let _carState = null; // { x_norm, y_norm, vx, vy, angle, lastHitAt }
+  let _mouseClient = { x: 0, y: 0, hasInput: false, lastX: 0, lastY: 0, speed: 0, lastT: 0 };
+
+  function _initCarOnTrack(track){
+    // Ставим машинку на startA, направление — к startB
+    const a = track.verts[0];
+    const b = track.verts[1];
+    const dx = b.x - a.x, dy = b.y - a.y;
+    _carState = {
+      x_norm: a.x,
+      y_norm: a.y,
+      vx: 0, vy: 0,
+      angle: Math.atan2(dy, dx),
+      hits: 0,                  // всего столкновений
+      lastHitAt: 0,
+      hitFlashUntil: 0,
+      color: '#16c7b7',
+      // Гонка
+      laps: 0,                  // сколько кругов завершено
+      nextCheckpointIdx: 1,     // следующий чекпоинт (стартовый = 0, мы уже там)
+      penaltyUntil: 0,          // машинка стоит парализованная до этого момента (5/10/15 сек)
+      finished: false,
+      finishedAt: 0,
+      startedAt: Date.now(),
+    };
+  }
+
+  // Один шаг физики
+  function _stepCar(track){
+    if (!_carState) return;
+    const W = window.innerWidth, H = window.innerHeight;
+    const dpr = window.devicePixelRatio || 1;
+    const minSide = Math.min(W * dpr, H * dpr);
+    const isMobile = minSide < 700 * dpr;
+    const widthPx = (isMobile ? RACE.TRACK_WIDTH_MOBILE : RACE.TRACK_WIDTH_DESKTOP) * dpr;
+    const halfWidthNorm = (widthPx / 2) / minSide;
+
+    const car = _carState;
+    const now = Date.now();
+
+    // Если в штрафной паузе — машинка стоит парализованная, реагирует только на таймер
+    if (car.penaltyUntil > now){
+      car.vx = 0; car.vy = 0;
+      return;
+    }
+
+    // Если закончила гонку — стоит на месте
+    if (car.finished){
+      car.vx *= 0.7; car.vy *= 0.7;
+      return;
+    }
+
+    // Текущая позиция в пикселях
+    const cx_px = car.x_norm * W;
+    const cy_px = car.y_norm * H;
+
+    if (_mouseClient.hasInput){
+      const dx = _mouseClient.x - cx_px;
+      const dy = _mouseClient.y - cy_px;
+      const dist = Math.hypot(dx, dy);
+
+      // Затухание "памяти" скорости мыши (она обновляется в обработчике mousemove, тут плавно угасает)
+      _mouseClient.speed *= RACE_CAR.MOUSE_SPEED_DECAY;
+
+      if (dist < RACE_CAR.STOP_DIST_PX){
+        // Курсор прямо на машине - стоп
+        car.vx *= 0.5;
+        car.vy *= 0.5;
+      } else {
+        // Желаемое направление
+        const targetAngle = Math.atan2(dy, dx);
+        let da = targetAngle - car.angle;
+        while (da > Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        car.angle += da * RACE_CAR.TURN_LERP;
+
+        // Скорость управляется ДВИЖЕНИЕМ МЫШИ.
+        // Если мышь не двигалась — машина останавливается (даже если курсор далеко).
+        // Если мышь активно водится — машина едет на полной скорости.
+        const mouseActivity = Math.min(1, _mouseClient.speed / RACE_CAR.MOUSE_SPEED_NORM);
+
+        // Если курсор близко (внутри тормозной зоны) — масштабируем целевую скорость к 0,
+        // чтобы не пролетать сквозь курсор и не кружить вокруг него.
+        const distFactor = dist < RACE_CAR.BRAKE_DIST_PX
+          ? (dist / RACE_CAR.BRAKE_DIST_PX)
+          : 1;
+
+        const targetSpeed = RACE_CAR.SPEED * mouseActivity * distFactor;
+        const targetVx = Math.cos(car.angle) * targetSpeed;
+        const targetVy = Math.sin(car.angle) * targetSpeed;
+        car.vx += (targetVx - car.vx) * RACE_CAR.ACCEL;
+        car.vy += (targetVy - car.vy) * RACE_CAR.ACCEL;
+
+        // АНТИ-КРУЖЕНИЕ: если курсор близко, гасим скорость напрямую.
+        // Иначе из-за инерции машинка пролетает курсор, разворачивается, опять летит — и так по кругу.
+        if (dist < RACE_CAR.BRAKE_DIST_PX){
+          const dampen = 0.55 + 0.4 * (dist / RACE_CAR.BRAKE_DIST_PX);
+          // dist=0 → dampen=0.55 (сильно тормозим), dist=BRAKE_DIST → dampen=0.95 (почти не тормозим)
+          car.vx *= dampen;
+          car.vy *= dampen;
+        }
+      }
+    } else {
+      // Курсор не активен (палец/мышь поднят) - тормозим до нуля
+      car.vx *= RACE_CAR.BRAKE;
+      car.vy *= RACE_CAR.BRAKE;
+      _mouseClient.speed = 0;
+    }
+
+    // Движение
+    const nextX_px = cx_px + car.vx;
+    const nextY_px = cy_px + car.vy;
+    const nextX_norm = nextX_px / W;
+    const nextY_norm = nextY_px / H;
+
+    // Коллизия: проверяем 4 угла машинки в новой позиции
+    const ang = car.angle;
+    const cos_a = Math.cos(ang), sin_a = Math.sin(ang);
+    const halfL = (RACE_CAR.SIZE_L / 2) / W;  // нормированная полудлина
+    const halfWNorm = (RACE_CAR.SIZE_W / 2) / H;
+    // Углы локальной системы, повёрнутые на angle
+    const corners = [
+      [+halfL, +halfWNorm],
+      [+halfL, -halfWNorm],
+      [-halfL, +halfWNorm],
+      [-halfL, -halfWNorm],
+    ];
+    let hitWall = false;
+    for (const [lx, ly] of corners){
+      const wx = nextX_norm + lx * cos_a - ly * sin_a;
+      const wy = nextY_norm + lx * sin_a + ly * cos_a;
+      if (!_isOnTrack(wx, wy, track, halfWidthNorm)){
+        hitWall = true;
+        break;
+      }
+    }
+
+    const now2 = Date.now();
+    if (hitWall){
+      car.vx *= 0.3;
+      car.vy *= 0.3;
+      if (now2 - car.lastHitAt > RACE_CAR.HIT_COOLDOWN_MS){
+        car.lastHitAt = now2;
+        car.hits = (car.hits || 0) + 1;
+        car.hitFlashUntil = now2 + 350;
+
+        // Штраф: всегда 5 сек (иначе слишком долго ждать)
+        const penaltySec = 5;
+        car.penaltyUntil = now2 + penaltySec * 1000;
+        // Телепортируем на старт + сбрасываем скорость и направление
+        const a = track.verts[0];
+        const b = track.verts[1];
+        car.x_norm = a.x;
+        car.y_norm = a.y;
+        car.angle = Math.atan2(b.y - a.y, b.x - a.x);
+        car.vx = 0; car.vy = 0;
+        // Прогресс по кругу не сбрасываем (чекпоинты остаются взятыми)
+      }
+    } else {
+      car.x_norm = nextX_norm;
+      car.y_norm = nextY_norm;
+
+      // Проверка чекпоинтов: если мы достаточно близко к следующему чекпоинту — берём его
+      if (track.checkpoints && car.nextCheckpointIdx != null){
+        const cps = track.checkpoints;
+        const targetIdx = cps[car.nextCheckpointIdx];
+        const target = track.centerline[targetIdx];
+        if (target){
+          const ddx = (car.x_norm - target.x) * W;
+          const ddy = (car.y_norm - target.y) * H;
+          const ddist = Math.hypot(ddx, ddy);
+          // Чекпоинт берём если в радиусе ~ширины трассы
+          if (ddist < widthPx * 0.6){
+            car.nextCheckpointIdx++;
+            if (car.nextCheckpointIdx >= cps.length){
+              // Все промежуточные взяты, значит ждём возврата к старту (cp[0])
+              const startCp = track.centerline[cps[0]];
+              const sdx = (car.x_norm - startCp.x) * W;
+              const sdy = (car.y_norm - startCp.y) * H;
+              const sdist = Math.hypot(sdx, sdy);
+              if (sdist < widthPx * 0.6){
+                // Круг завершён
+                car.laps++;
+                car.nextCheckpointIdx = 1;
+                if (car.laps >= RACE.LAPS_TO_WIN){
+                  car.finished = true;
+                  car.finishedAt = now2;
+                }
+              } else {
+                // Встанем "ждать старт" — можно держать индекс на длине, проверять отдельно
+                car.nextCheckpointIdx = cps.length; // флаг "жду старт"
+              }
+            }
+          }
+        }
+        // Если жду старт (nextCheckpointIdx === cps.length) — отдельная проверка касания старта
+        if (car.nextCheckpointIdx === track.checkpoints.length){
+          const startCp = track.centerline[track.checkpoints[0]];
+          const sdx = (car.x_norm - startCp.x) * W;
+          const sdy = (car.y_norm - startCp.y) * H;
+          const sdist = Math.hypot(sdx, sdy);
+          if (sdist < widthPx * 0.6){
+            car.laps++;
+            car.nextCheckpointIdx = 1;
+            if (car.laps >= RACE.LAPS_TO_WIN){
+              car.finished = true;
+              car.finishedAt = now2;
+            }
+          }
+        }
+      }
+    }
+  }
+
+  // Рендер машинки на нашем raceCanvas (поверх трассы)
+  // isMe=true — рисуем дополнительно крупный UI (круги, штрафной таймер, финиш)
+  function _renderCar(isMe){
+    if (isMe === undefined) isMe = true; // в тестовом режиме всегда показываем UI
+    if (!_carState || !_raceCtx) return;
+    const cv = _raceCanvas;
+    const ctx2 = _raceCtx;
+    const W = cv.width, H = cv.height;
+    const dpr = window.devicePixelRatio || 1;
+    const car = _carState;
+
+    const cx = car.x_norm * W;
+    const cy = car.y_norm * H;
+    const lenPx = RACE_CAR.SIZE_L * dpr;
+    const widPx = RACE_CAR.SIZE_W * dpr;
+
+    const isFlashing = Date.now() < car.hitFlashUntil;
+    const baseColor = isFlashing ? '#ef4444' : (car.color || '#16c7b7');
+
+    ctx2.save();
+    ctx2.translate(cx, cy);
+    ctx2.rotate(car.angle);
+
+    // Тень под машиной
+    ctx2.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx2.beginPath();
+    if (ctx2.roundRect) ctx2.roundRect(-lenPx/2 + 2*dpr, -widPx/2 + 2*dpr, lenPx, widPx, 4*dpr);
+    else ctx2.rect(-lenPx/2 + 2*dpr, -widPx/2 + 2*dpr, lenPx, widPx);
+    ctx2.fill();
+
+    // Кузов
+    ctx2.fillStyle = baseColor;
+    ctx2.beginPath();
+    if (ctx2.roundRect) ctx2.roundRect(-lenPx/2, -widPx/2, lenPx, widPx, 5*dpr);
+    else ctx2.rect(-lenPx/2, -widPx/2, lenPx, widPx);
+    ctx2.fill();
+
+    // Лобовое стекло (вид сверху - небольшой тёмный прямоугольник в передней половине)
+    ctx2.fillStyle = 'rgba(20,30,50,0.7)';
+    ctx2.fillRect(lenPx*0.05, -widPx*0.35, lenPx*0.25, widPx*0.7);
+
+    // Заднее стекло
+    ctx2.fillStyle = 'rgba(20,30,50,0.5)';
+    ctx2.fillRect(-lenPx*0.32, -widPx*0.32, lenPx*0.18, widPx*0.64);
+
+    // Передние фары (носик)
+    ctx2.fillStyle = '#fef3c7';
+    ctx2.fillRect(lenPx*0.42, -widPx*0.4, lenPx*0.06, widPx*0.18);
+    ctx2.fillRect(lenPx*0.42, +widPx*0.22, lenPx*0.06, widPx*0.18);
+
+    // Тонкая обводка
+    ctx2.strokeStyle = 'rgba(0,0,0,0.6)';
+    ctx2.lineWidth = 1.5 * dpr;
+    ctx2.beginPath();
+    if (ctx2.roundRect) ctx2.roundRect(-lenPx/2, -widPx/2, lenPx, widPx, 5*dpr);
+    else ctx2.rect(-lenPx/2, -widPx/2, lenPx, widPx);
+    ctx2.stroke();
+
+    ctx2.restore();
+
+    if (isMe){
+      // Счётчик коллизий
+      ctx2.save();
+      ctx2.font = `bold ${14*dpr}px 'Open Sans', sans-serif`;
+      ctx2.fillStyle = '#fff';
+      ctx2.shadowColor = 'rgba(0,0,0,0.8)';
+      ctx2.shadowBlur = 4 * dpr;
+      ctx2.fillText(`Столкновений: ${car.hits || 0}`, 14*dpr, H - 14*dpr);
+      ctx2.restore();
+
+      // Круги — крупно сверху
+      ctx2.save();
+      ctx2.font = `900 ${28*dpr}px 'Open Sans', sans-serif`;
+      ctx2.textAlign = 'center';
+      ctx2.fillStyle = '#fbbf24';
+      ctx2.shadowColor = 'rgba(0,0,0,0.9)';
+      ctx2.shadowBlur = 6 * dpr;
+      const lapsText = `🏁 КРУГ ${Math.min(car.laps + 1, RACE.LAPS_TO_WIN)} / ${RACE.LAPS_TO_WIN}`;
+      ctx2.fillText(lapsText, W / 2, 80 * dpr);
+      ctx2.restore();
+
+      // Штрафной таймер
+      if (car.penaltyUntil > Date.now()){
+        const left = Math.ceil((car.penaltyUntil - Date.now()) / 1000);
+        ctx2.save();
+        ctx2.font = `900 ${48*dpr}px 'Open Sans', sans-serif`;
+        ctx2.textAlign = 'center';
+        ctx2.fillStyle = '#ef4444';
+        ctx2.shadowColor = 'rgba(0,0,0,0.9)';
+        ctx2.shadowBlur = 10 * dpr;
+        ctx2.fillText(`💥 ШТРАФ: ${left}С`, W / 2, H / 2);
+        ctx2.font = `bold ${16*dpr}px 'Open Sans', sans-serif`;
+        ctx2.fillStyle = '#fff';
+        ctx2.fillText(`Столкновение #${car.hits}`, W / 2, H / 2 + 30 * dpr);
+        ctx2.restore();
+      }
+
+      // Финиш (для тестового режима)
+      if (car.finished && !currentRace){
+        ctx2.save();
+        ctx2.font = `900 ${56*dpr}px 'Open Sans', sans-serif`;
+        ctx2.textAlign = 'center';
+        ctx2.fillStyle = '#10b981';
+        ctx2.shadowColor = 'rgba(0,0,0,0.9)';
+        ctx2.shadowBlur = 12 * dpr;
+        ctx2.fillText(`🏆 ФИНИШ!`, W / 2, H / 2);
+        ctx2.font = `bold ${20*dpr}px 'Open Sans', sans-serif`;
+        ctx2.fillStyle = '#fff';
+        ctx2.fillText(`Столкновений за гонку: ${car.hits}`, W / 2, H / 2 + 40 * dpr);
+        ctx2.restore();
+      }
+    }
+  }
+
+  // === Тестовый режим этапа 2 ===
+  let _carTestActive = false;
+
+  function _testRaceCarShow(){
+    if (_carTestActive){
+      // Перегенерация
+      _raceTestTrack = generateRaceTrack();
+      _initCarOnTrack(_raceTestTrack);
+      return;
+    }
+    _carTestActive = true;
+    _raceTestActive = true; // переиспользуем флаг отрисовки трассы
+    _raceTestTrack = generateRaceTrack();
+    _initCarOnTrack(_raceTestTrack);
+
+    // Отслеживание мыши + скорости движения
+    const onMove = (e) => {
+      const now = performance.now();
+      if (_mouseClient.hasInput && _mouseClient.lastT > 0){
+        const dt = Math.max(1, now - _mouseClient.lastT);
+        const moved = Math.hypot(e.clientX - _mouseClient.lastX, e.clientY - _mouseClient.lastY);
+        // px/16ms (нормировано к одному кадру 60fps)
+        const speedPerFrame = (moved / dt) * 16;
+        // Берём максимум: новое или старое (decay в _stepCar)
+        _mouseClient.speed = Math.max(_mouseClient.speed, speedPerFrame);
+      }
+      _mouseClient.lastX = e.clientX;
+      _mouseClient.lastY = e.clientY;
+      _mouseClient.lastT = now;
+      _mouseClient.x = e.clientX;
+      _mouseClient.y = e.clientY;
+      _mouseClient.hasInput = true;
+    };
+    const onLeave = () => { _mouseClient.hasInput = false; _mouseClient.speed = 0; };
+    const onTouch = (e) => {
+      if (e.touches && e.touches[0]){
+        const t = e.touches[0];
+        const now = performance.now();
+        if (_mouseClient.hasInput && _mouseClient.lastT > 0){
+          const dt = Math.max(1, now - _mouseClient.lastT);
+          const moved = Math.hypot(t.clientX - _mouseClient.lastX, t.clientY - _mouseClient.lastY);
+          _mouseClient.speed = Math.max(_mouseClient.speed, (moved / dt) * 16);
+        }
+        _mouseClient.lastX = t.clientX;
+        _mouseClient.lastY = t.clientY;
+        _mouseClient.lastT = now;
+        _mouseClient.x = t.clientX;
+        _mouseClient.y = t.clientY;
+        _mouseClient.hasInput = true;
+      }
+    };
+    const onTouchEnd = () => { _mouseClient.hasInput = false; _mouseClient.speed = 0; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseleave', onLeave);
+    window.addEventListener('touchmove', onTouch, { passive: true });
+    window.addEventListener('touchend', onTouchEnd);
+    window.addEventListener('touchcancel', onTouchEnd);
+
+    // Панелька управления
+    const panel = document.createElement('div');
+    panel.id = 'raceCarPanel';
+    panel.style.cssText = `
+      position: fixed; top: 12px; left: 12px;
+      z-index: 100002;
+      background: rgba(15,23,42,0.92);
+      border: 1px solid rgba(168,85,247,0.4);
+      border-radius: 10px;
+      padding: 10px 14px;
+      display: flex; gap: 8px; align-items: center;
+      font-family: 'Open Sans', sans-serif; color: #fff;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.5);
+    `;
+    panel.innerHTML = `
+      <span style="font-weight:700;color:#a855f7">🏎️ Тест машинки</span>
+      <button class="btn ghost small" id="raceCarRegen">🔄 Новая трасса</button>
+      <button class="btn ghost small" id="raceCarReset">🔁 На старт</button>
+      <button class="btn ghost small" id="raceCarClose">✕</button>
+    `;
+    document.body.appendChild(panel);
+    _raceTestPanel = panel;
+    document.getElementById('raceCarRegen').onclick = () => {
+      _raceTestTrack = generateRaceTrack();
+      _initCarOnTrack(_raceTestTrack);
+    };
+    document.getElementById('raceCarReset').onclick = () => {
+      if (_raceTestTrack) _initCarOnTrack(_raceTestTrack);
+    };
+    document.getElementById('raceCarClose').onclick = () => _testRaceCarHide(onMove, onLeave, onTouch, onTouchEnd);
+
+    const tick = () => {
+      if (!_carTestActive) return;
+      if (_raceTestTrack){
+        _stepCar(_raceTestTrack);
+        _renderRaceTrack(_raceTestTrack);
+        _renderCar();
+      }
+      _raceTestRAF = requestAnimationFrame(tick);
+    };
+    _raceTestRAF = requestAnimationFrame(tick);
+  }
+
+  function _testRaceCarHide(onMove, onLeave, onTouch, onTouchEnd){
+    _carTestActive = false;
+    _raceTestActive = false;
+    if (_raceTestRAF) cancelAnimationFrame(_raceTestRAF);
+    _raceTestRAF = null;
+    if (_raceTestPanel){ _raceTestPanel.remove(); _raceTestPanel = null; }
+    _raceTestTrack = null;
+    _carState = null;
+    _hideRaceCanvas();
+    if (onMove) window.removeEventListener('mousemove', onMove);
+    if (onLeave) window.removeEventListener('mouseleave', onLeave);
+    if (onTouch) window.removeEventListener('touchmove', onTouch);
+    if (onTouchEnd){
+      window.removeEventListener('touchend', onTouchEnd);
+      window.removeEventListener('touchcancel', onTouchEnd);
+    }
+  }
+
+  window.__testRaceCar = _testRaceCarShow;
+
+  /* ============================================================
+     ============ ГОНКИ — ЭТАП 4: онлайн через Firebase ===========
+     ============================================================
+     Структура в Firebase: games/active с type:'race'.
+       {
+         type: 'race',
+         state: 'lobby' | 'starting' | 'racing' | 'ended',
+         host: uid,                        // кто запустил (готовит трассу)
+         track: { centerline: [...], verts: [...], checkpoints: [...] },  // одна трасса для всех
+         participants: { uid1: {name, color}, ... },
+         startedAt, endsAt,
+         // Каждый клиент пишет своё состояние в cars/<uid>:
+         cars: {
+           uid1: {
+             x: 0.5, y: 0.5, angle: 1.57,
+             laps: 0, hits: 0, finished: false, finishedAt: 0,
+             nextCheckpoint: 1, penaltyUntil: 0,
+             updatedAt: ...
+           }, ...
+         },
+         // Финиширование: записывается порядок (для призовых мест)
+         finishOrder: [uid1, uid2, ...]
+       }
+
+     Фаза 'lobby' — все могут "вписаться". Через 10 сек или когда хост стартанёт — начинается.
+     Своя машинка управляется локально (физика + коллизии), и пишется в cars/<myUid> ~10 раз/сек.
+     Чужие машинки рисуются по последним данным из БД с интерполяцией.
+  */
+
+  const RACE_NET = {
+    ROOT: `${basePath}/games/active`,
+    STARTING_MS: 3000,         // обратный отсчёт после lobby
+    LOBBY_MS: 12000,           // лобби 12 сек, но хост может начать раньше
+    POSITION_HZ: 12,           // как часто пишем свою позицию (раз в сек)
+    STALE_AFTER_MS: 180000,    // страховка: 3 минуты, потом снимаем
+  };
+
+  const raceRootRef = ref(db, RACE_NET.ROOT);
+  let currentRace = null;
+  let _raceCleanupScheduled = false;
+  let _raceMyCarRAF = null;
+  let _raceMyCarLastWrite = 0;
+  let _raceTrack = null;          // локальная копия трассы (взята из Firebase)
+  let _raceMyCarState = null;     // локальное состояние моей машинки
+  let _raceFinishOrder = [];      // локальный порядок финишировавших
+  let _raceLobbyTimer = null;
+  let _raceMouseHandlers = null;
+  let _raceMainRAF = null;
+
+  // === Запуск гонок ===
+  // Не выбираем соперника — все игроки попадают в лобби и нажимают "вписаться".
+  async function _triggerRaceLobby(){
+    if (!auth.currentUser) return;
+    const myUid = auth.currentUser.uid;
+
+    try {
+      const snap = await get(raceRootRef);
+      if (snap.exists()){
+        const v = snap.val() || {};
+        if (v.state && v.state !== 'ended' && (Date.now() - (v.startedAt || 0) < RACE_NET.STALE_AFTER_MS)){
+          alert('Уже идёт игра, дождитесь окончания');
+          return;
+        }
+      }
+    } catch(e){}
+
+    const myName = getDisplayName(state) || 'Гонщик';
+    const myColor = state.color || '#16c7b7';
+    const startedAt = Date.now();
+    const track = generateRaceTrack();
+
+    try {
+      await set(raceRootRef, {
+        type: 'race',
+        state: 'lobby',
+        host: myUid,
+        track: track,
+        participants: { [myUid]: { name: myName, color: myColor } },
+        startedAt,
+        lobbyEndsAt: startedAt + RACE_NET.LOBBY_MS,
+        cars: {},
+        finishOrder: [],
+        winner: null,
+      });
+      console.log('[race] лобби открыто');
+    } catch(e){
+      console.warn('[race] start failed', e);
+    }
+  }
+
+  // Подписка на состояние
+  onValue(raceRootRef, (snap) => {
+    if (!snap.exists()){
+      if (currentRace){
+        console.log('[race] очищено');
+        _onRaceEnd();
+      }
+      currentRace = null;
+      _updateRaceUI();
+      return;
+    }
+    const v = snap.val();
+    if (v.type !== 'race') return;
+
+    const wasActive = !!currentRace;
+    const prevState = currentRace ? currentRace.state : null;
+    currentRace = v;
+
+    if (!wasActive){
+      _onRaceStart();
+    }
+
+    // Хост двигает фазы:
+    const isHost = (auth.currentUser && v.host === auth.currentUser.uid);
+
+    if (v.state === 'lobby' && isHost){
+      // Если время лобби вышло — начинаем
+      if (Date.now() >= (v.lobbyEndsAt || 0)){
+        _raceBeginCountdown();
+      }
+    }
+
+    if (v.state === 'starting' && isHost && v.startingEndsAt){
+      const ms = v.startingEndsAt - Date.now();
+      if (ms <= 0){
+        update(raceRootRef, {
+          state: 'racing',
+          racingStartedAt: Date.now(),
+          endsAt: Date.now() + RACE.TIME_LIMIT_MS,
+        }).catch(()=>{});
+      } else {
+        setTimeout(()=>{
+          if (currentRace && currentRace.state === 'starting'){
+            update(raceRootRef, {
+              state: 'racing',
+              racingStartedAt: Date.now(),
+              endsAt: Date.now() + RACE.TIME_LIMIT_MS,
+            }).catch(()=>{});
+          }
+        }, ms + 100);
+      }
+    }
+
+    // Перевод в ended при таймауте 90 сек или когда все финишировали
+    if (v.state === 'racing' && isHost){
+      const allFinished = Object.keys(v.participants || {}).every(uid => {
+        const c = v.cars?.[uid];
+        return c && c.finished;
+      });
+      const timeUp = v.endsAt && Date.now() >= v.endsAt;
+      if (allFinished || timeUp){
+        update(raceRootRef, { state: 'ended', endedAt: Date.now() }).catch(()=>{});
+      } else {
+        // Запланировать проверку
+        if (v.endsAt && !_raceCleanupScheduled){
+          setTimeout(()=>{
+            // повторная проверка
+            if (currentRace && currentRace.state === 'racing'){
+              const c2 = currentRace;
+              const all2 = Object.keys(c2.participants || {}).every(uid => {
+                const c = c2.cars?.[uid]; return c && c.finished;
+              });
+              const t2 = c2.endsAt && Date.now() >= c2.endsAt;
+              if (all2 || t2){
+                update(raceRootRef, { state: 'ended', endedAt: Date.now() }).catch(()=>{});
+              }
+            }
+          }, Math.max(200, v.endsAt - Date.now() + 200));
+        }
+      }
+    }
+
+    if (v.state === 'ended' && !_raceCleanupScheduled && isHost){
+      _raceCleanupScheduled = true;
+      setTimeout(() => {
+        remove(raceRootRef).catch(()=>{});
+        _raceCleanupScheduled = false;
+      }, 8000);
+    }
+
+    if (v.state !== 'ended' && (Date.now() - (v.startedAt || 0)) > RACE_NET.STALE_AFTER_MS){
+      console.warn('[race] зависла, снимаем');
+      try { remove(raceRootRef); } catch{}
+    }
+
+    _updateRaceUI();
+  });
+
+  // Хост стартует обратный отсчёт
+  async function _raceBeginCountdown(){
+    if (!currentRace) return;
+    if (Object.keys(currentRace.participants || {}).length < 2){
+      alert('Нужно минимум 2 участника. Игра отменена.');
+      try { await remove(raceRootRef); } catch{}
+      return;
+    }
+    try {
+      await update(raceRootRef, {
+        state: 'starting',
+        startingStartedAt: Date.now(),
+        startingEndsAt: Date.now() + RACE_NET.STARTING_MS,
+      });
+    } catch(e){ console.warn('[race] countdown failed', e); }
+  }
+
+  // Вписаться в лобби
+  async function _raceJoin(){
+    if (!currentRace || currentRace.state !== 'lobby') return;
+    if (!auth.currentUser) return;
+    const myUid = auth.currentUser.uid;
+    if (currentRace.participants?.[myUid]) return; // уже есть
+    const myName = getDisplayName(state) || 'Гонщик';
+    const myColor = state.color || '#16c7b7';
+    try {
+      await update(ref(db, `${RACE_NET.ROOT}/participants/${myUid}`), {
+        name: myName, color: myColor
+      });
+    } catch(e){ console.warn('[race] join failed', e); }
+  }
+
+  // === Старт / конец гонки локально ===
+  function _onRaceStart(){
+    console.log('[race] началась');
+    document.body.classList.add('race-active');
+    _raceCleanupScheduled = false;
+    _raceMyCarLastWrite = 0;
+    _raceFinishOrder = [];
+    _ensureRaceCanvas();
+    // Курсор-обработчики
+    if (!_raceMouseHandlers){
+      _raceMouseHandlers = {
+        move: (e) => {
+          const now = performance.now();
+          if (_mouseClient.hasInput && _mouseClient.lastT > 0){
+            const dt = Math.max(1, now - _mouseClient.lastT);
+            const moved = Math.hypot(e.clientX - _mouseClient.lastX, e.clientY - _mouseClient.lastY);
+            _mouseClient.speed = Math.max(_mouseClient.speed, (moved / dt) * 16);
+          }
+          _mouseClient.lastX = e.clientX;
+          _mouseClient.lastY = e.clientY;
+          _mouseClient.lastT = now;
+          _mouseClient.x = e.clientX;
+          _mouseClient.y = e.clientY;
+          _mouseClient.hasInput = true;
+        },
+        leave: () => { _mouseClient.hasInput = false; _mouseClient.speed = 0; },
+        touch: (e) => {
+          if (e.touches && e.touches[0]){
+            const t = e.touches[0];
+            const now = performance.now();
+            if (_mouseClient.hasInput && _mouseClient.lastT > 0){
+              const dt = Math.max(1, now - _mouseClient.lastT);
+              const moved = Math.hypot(t.clientX - _mouseClient.lastX, t.clientY - _mouseClient.lastY);
+              _mouseClient.speed = Math.max(_mouseClient.speed, (moved / dt) * 16);
+            }
+            _mouseClient.lastX = t.clientX;
+            _mouseClient.lastY = t.clientY;
+            _mouseClient.lastT = now;
+            _mouseClient.x = t.clientX;
+            _mouseClient.y = t.clientY;
+            _mouseClient.hasInput = true;
+          }
+        },
+        touchEnd: () => { _mouseClient.hasInput = false; _mouseClient.speed = 0; },
+      };
+      window.addEventListener('mousemove', _raceMouseHandlers.move);
+      window.addEventListener('mouseleave', _raceMouseHandlers.leave);
+      window.addEventListener('touchmove', _raceMouseHandlers.touch, { passive: true });
+      window.addEventListener('touchend', _raceMouseHandlers.touchEnd);
+      window.addEventListener('touchcancel', _raceMouseHandlers.touchEnd);
+    }
+
+    // Главный цикл рендера
+    const tick = () => {
+      if (!currentRace){ return; }
+      _raceMainRAF = requestAnimationFrame(tick);
+
+      if (!_raceTrack && currentRace.track){
+        _raceTrack = currentRace.track;
+      }
+
+      if (_raceTrack && currentRace.state === 'racing'){
+        _raceStepMyCar();
+        _raceWriteMyCarThrottled();
+      }
+
+      // Рендер
+      if (_raceTrack){
+        _renderRaceTrack(_raceTrack);
+        _renderAllCars();
+      }
+    };
+    _raceMainRAF = requestAnimationFrame(tick);
+  }
+
+  function _onRaceEnd(){
+    document.body.classList.remove('race-active');
+    if (_raceMainRAF){ cancelAnimationFrame(_raceMainRAF); _raceMainRAF = null; }
+    _raceTrack = null;
+    _raceMyCarState = null;
+    _hideRaceCanvas();
+    _hideRaceUI();
+    if (_raceMouseHandlers){
+      window.removeEventListener('mousemove', _raceMouseHandlers.move);
+      window.removeEventListener('mouseleave', _raceMouseHandlers.leave);
+      window.removeEventListener('touchmove', _raceMouseHandlers.touch);
+      window.removeEventListener('touchend', _raceMouseHandlers.touchEnd);
+      window.removeEventListener('touchcancel', _raceMouseHandlers.touchEnd);
+      _raceMouseHandlers = null;
+    }
+    _mouseClient.hasInput = false;
+  }
+
+  // Локальный шаг моей машинки (использует ту же физику что в тесте)
+  function _raceStepMyCar(){
+    if (!auth.currentUser) return;
+    const myUid = auth.currentUser.uid;
+    if (!currentRace.participants?.[myUid]) return;
+
+    if (!_raceMyCarState){
+      // Инициализация
+      const a = _raceTrack.verts[0];
+      const b = _raceTrack.verts[1];
+      _raceMyCarState = {
+        x_norm: a.x, y_norm: a.y,
+        vx: 0, vy: 0,
+        angle: Math.atan2(b.y - a.y, b.x - a.x),
+        hits: 0, lastHitAt: 0, hitFlashUntil: 0,
+        color: currentRace.participants[myUid].color || '#16c7b7',
+        laps: 0, nextCheckpointIdx: 1,
+        penaltyUntil: 0, finished: false, finishedAt: 0,
+        startedAt: Date.now(),
+      };
+    }
+
+    // Используем _stepCar но с _raceMyCarState
+    const savedCar = _carState;
+    _carState = _raceMyCarState;
+    _stepCar(_raceTrack);
+    _raceMyCarState = _carState;
+    _carState = savedCar;
+
+    // При финише пишем в finishOrder
+    if (_raceMyCarState.finished && !_raceMyCarState._reportedFinish){
+      _raceMyCarState._reportedFinish = true;
+      _raceReportFinish();
+    }
+  }
+
+  async function _raceReportFinish(){
+    if (!auth.currentUser || !currentRace) return;
+    const myUid = auth.currentUser.uid;
+    try {
+      // Атомарно добавляем в finishOrder если меня там нет
+      const snap = await get(ref(db, `${RACE_NET.ROOT}/finishOrder`));
+      const order = snap.val() || [];
+      if (!order.includes(myUid)){
+        order.push(myUid);
+        await set(ref(db, `${RACE_NET.ROOT}/finishOrder`), order);
+      }
+    } catch(e){ console.warn('[race] finish report failed', e); }
+  }
+
+  // Throttled запись моей позиции в Firebase
+  function _raceWriteMyCarThrottled(){
+    if (!auth.currentUser || !_raceMyCarState) return;
+    const now = Date.now();
+    const interval = 1000 / RACE_NET.POSITION_HZ;
+    if (now - _raceMyCarLastWrite < interval) return;
+    _raceMyCarLastWrite = now;
+
+    const myUid = auth.currentUser.uid;
+    const c = _raceMyCarState;
+    set(ref(db, `${RACE_NET.ROOT}/cars/${myUid}`), {
+      x: c.x_norm, y: c.y_norm, angle: c.angle,
+      laps: c.laps, hits: c.hits,
+      finished: !!c.finished, finishedAt: c.finishedAt || 0,
+      penaltyUntil: c.penaltyUntil || 0,
+      updatedAt: now,
+    }).catch(()=>{});
+  }
+
+  // Рендер всех машинок (моя по локальному state, чужие по Firebase)
+  function _renderAllCars(){
+    if (!currentRace || !currentRace.participants) return;
+    const myUid = auth.currentUser?.uid;
+    const cars = currentRace.cars || {};
+
+    for (const [uid, info] of Object.entries(currentRace.participants)){
+      const isMe = uid === myUid;
+      const carData = isMe ? _raceMyCarState : cars[uid];
+      if (!carData) continue;
+
+      const tempCar = isMe ? _raceMyCarState : {
+        x_norm: carData.x, y_norm: carData.y, angle: carData.angle,
+        color: info.color, hits: carData.hits, laps: carData.laps,
+        hitFlashUntil: 0, finished: carData.finished,
+        penaltyUntil: carData.penaltyUntil || 0,
+        finishedAt: carData.finishedAt, startedAt: 0,
+      };
+      const savedCar = _carState;
+      _carState = tempCar;
+      _renderCar(uid === myUid); // только своему рисуем "крупный UI"
+      _carState = savedCar;
+    }
+  }
+
+  // === UI: лобби-окно, обратный отсчёт, экран результатов ===
+  let _raceUI = null;
+  function _ensureRaceUI(){
+    if (_raceUI) return _raceUI;
+    const el = document.createElement('div');
+    el.id = 'raceUI';
+    el.style.cssText = `
+      position: fixed; left: 50%; top: 12px;
+      transform: translateX(-50%);
+      z-index: 100000; pointer-events: auto;
+      background: linear-gradient(180deg, rgba(15,23,42,0.95), rgba(8,14,27,0.95));
+      border: 1px solid rgba(16,185,129,0.5);
+      border-radius: 14px;
+      padding: 14px 22px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 0 40px rgba(16,185,129,0.2);
+      font-family: 'Montserrat','Open Sans',sans-serif;
+      text-align: center; min-width: 420px; max-width: 90vw;
+      color: #fff;
+    `;
+    document.body.appendChild(el);
+    _raceUI = el;
+    return el;
+  }
+  function _hideRaceUI(){
+    if (_raceUI){ _raceUI.remove(); _raceUI = null; }
+  }
+
+  function _updateRaceUI(){
+    if (!currentRace){
+      _hideRaceUI();
+      return;
+    }
+    const el = _ensureRaceUI();
+    const v = currentRace;
+    const myUid = auth.currentUser?.uid;
+    const isHost = (myUid === v.host);
+    const amIn = !!(myUid && v.participants?.[myUid]);
+
+    if (v.state === 'lobby'){
+      const left = Math.max(0, Math.ceil(((v.lobbyEndsAt || 0) - Date.now()) / 1000));
+      const list = Object.entries(v.participants || {}).map(([uid,p]) =>
+        `<span style="color:${p.color};font-weight:700">${escapeHtml(p.name||'?')}</span>`
+      ).join(' • ');
+      const joinBtn = amIn ? '' :
+        `<button id="raceJoinBtn" class="btn ghost small" style="background:#10b981;border:0;color:#fff;font-weight:800;padding:6px 16px">ВПИСАТЬСЯ</button>`;
+      const startBtn = (isHost && Object.keys(v.participants || {}).length >= 2) ?
+        `<button id="raceStartBtn" class="btn ghost small" style="background:#fbbf24;border:0;color:#000;font-weight:800;padding:6px 16px">СТАРТ!</button>` : '';
+      el.innerHTML = `
+        <div style="font-size:18px;font-weight:900;color:#10b981">🏎️ ГОНКИ — ЛОББИ</div>
+        <div style="margin:8px 0;font-size:13px">До старта: <b style="color:#fbbf24">${left}с</b></div>
+        <div style="margin:6px 0;font-size:14px">Участники: ${list || '<i style="color:#888">пока никого</i>'}</div>
+        <div style="margin-top:10px;display:flex;gap:8px;justify-content:center">${joinBtn} ${startBtn}</div>
+      `;
+      const j = document.getElementById('raceJoinBtn');
+      if (j) j.onclick = _raceJoin;
+      const s = document.getElementById('raceStartBtn');
+      if (s) s.onclick = _raceBeginCountdown;
+    } else if (v.state === 'starting'){
+      const left = Math.max(0, Math.ceil(((v.startingEndsAt || 0) - Date.now()) / 1000));
+      el.innerHTML = `
+        <div style="font-size:14px;color:#aaa">СТАРТ ЧЕРЕЗ</div>
+        <div style="font-size:64px;font-weight:900;color:#fbbf24;line-height:1;text-shadow:0 0 20px rgba(251,191,36,0.6)">${left}</div>
+      `;
+    } else if (v.state === 'racing'){
+      const left = Math.max(0, Math.ceil(((v.endsAt || 0) - Date.now()) / 1000));
+      const list = Object.entries(v.participants || {}).map(([uid,p]) => {
+        const c = (uid === myUid) ? _raceMyCarState : (v.cars?.[uid] || {});
+        const laps = c?.laps || 0;
+        const fin = c?.finished ? '🏁' : '';
+        return `<span style="color:${p.color};font-weight:700">${escapeHtml(p.name||'?')} ${fin}<span style="color:#fbbf24">${laps}/${RACE.LAPS_TO_WIN}</span></span>`;
+      }).join(' • ');
+      el.innerHTML = `
+        <div style="font-size:13px">⏱ <b style="color:#fbbf24">${left}с</b> • ${list}</div>
+      `;
+    } else if (v.state === 'ended'){
+      const order = v.finishOrder || [];
+      const medals = ['🥇','🥈','🥉'];
+      let html = '<div style="font-size:20px;font-weight:900;color:#10b981;margin-bottom:10px">🏁 ФИНИШ</div>';
+      if (order.length === 0){
+        html += '<div style="color:#aaa">Никто не финишировал — ничья</div>';
+      } else {
+        html += '<div style="display:flex;flex-direction:column;gap:4px">';
+        order.forEach((uid, i) => {
+          const p = v.participants?.[uid];
+          if (!p) return;
+          const m = medals[i] || `${i+1}.`;
+          html += `<div style="font-size:16px"><span style="font-size:1.4em">${m}</span> <b style="color:${p.color}">${escapeHtml(p.name||'?')}</b></div>`;
+        });
+        // Те кто не финишировал
+        const dnf = Object.keys(v.participants||{}).filter(u => !order.includes(u));
+        if (dnf.length){
+          html += '<div style="margin-top:6px;font-size:12px;color:#888">Не финишировали: ';
+          html += dnf.map(u => `<span style="color:${v.participants[u].color}">${escapeHtml(v.participants[u].name||'?')}</span>`).join(', ');
+          html += '</div>';
+        }
+        html += '</div>';
+      }
+      el.innerHTML = html;
+    }
+  }
+
+  // Обновление UI каждую секунду пока активна
+  setInterval(()=>{ if (currentRace) _updateRaceUI(); }, 500);
+
+  // CSS для гонок
+  if (!document.getElementById('raceStyles')){
+    const st = document.createElement('style');
+    st.id = 'raceStyles';
+    st.textContent = `
+      body.race-active #player,
+      body.race-active #fx-layer { filter: brightness(0.45) !important; }
+      body.race-active #player, body.race-active canvas { pointer-events: none !important; }
+    `;
+    document.head.appendChild(st);
+  }
+
+  window.__race = {
+    state: () => currentRace,
+    force: () => { try { remove(raceRootRef); } catch{} },
+    join: _raceJoin,
+    start: _raceBeginCountdown,
+  };
+
+
   window.__openGamesModal = _openGamesModal; // удобно вызвать из консоли
   // Открывает простое модальное окно: выбор игры → выбор соперника.
   (function _setupGamesButton(){
@@ -5244,6 +6567,11 @@ document.head.appendChild(ratAnimStyle);
       games.push({ icon:'🗡️', name:'Дуэль', color:'#ef4444', onClick:()=>_modalPickVictim(card, 'duel') });
     }
     games.push({ icon:'🎯', name:'Снайпер', color:'#a855f7', onClick:()=>_modalPickVictim(card, 'sniper') });
+    games.push({ icon:'🏎️', name:'Гонки', color:'#10b981', onClick:()=>{
+      const m = document.getElementById('gamesModal');
+      if (m) m.remove();
+      _triggerRaceLobby();
+    }});
 
     for (const g of games){
       const btn = document.createElement('button');
