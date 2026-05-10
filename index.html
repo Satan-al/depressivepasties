@@ -1601,6 +1601,107 @@ input[type="range"]{
       margin: 0 !important;
       pointer-events: none;
     }
+  /* Зоны голосования */
+  .vote-zone {
+    position: fixed;
+    width: 180px;
+    height: 120px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(255, 255, 255, 0.03);
+    border: 2px dashed rgba(255, 255, 255, 0.1);
+    color: rgba(255, 255, 255, 0.3);
+    font-weight: 800;
+    z-index: 50;
+    pointer-events: none;
+    transition: all 0.3s;
+  }
+
+  /* В оверлее зоны становятся кнопками */
+  html.overlay-mode .vote-zone,
+  html.overlay-live .vote-zone {
+    pointer-events: auto;
+    background: var(--panel);
+    border-style: solid;
+    color: #fff;
+    cursor: pointer;
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+  }
+
+  .top-left {
+    top: 100px;
+    left: 10px;
+    border-radius: 0 0 40px 0;
+  }
+
+  .top-right {
+    top: 100px;
+    right: 10px;
+    border-radius: 0 0 0 40px;
+  }
+
+  .bottom-left {
+    bottom: 80px;
+    left: 10px;
+    border-radius: 0 40px 0 0;
+  }
+
+  .bottom-right {
+    bottom: 80px;
+    right: 10px;
+    border-radius: 40px 0 0 0;
+  }
+
+  .center-clock {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 80px;
+    height: 80px;
+    border-radius: 50%;
+  }
+
+  /* Панель хоста */
+  #host-music-controls {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    width: 600px;
+  }
+
+  .host-controls-card {
+    background: var(--panel);
+    padding: 10px 20px;
+    border-radius: 15px;
+    display: flex;
+    align-items: center;
+    gap: 15px;
+    border: 1px solid var(--accent);
+  }
+
+  .timeline-wrap {
+    flex: 1;
+  }
+
+  #musicTimeline {
+    width: 100%;
+  }
+
+  /* Очередь: цветовые индикаторы */
+  .queue-item {
+    padding: 8px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    justify-content: space-between;
+  }
+
+  .queue-item.my-track {
+    border-left: 4px solid var(--accent);
+  }
+
 
 </style>
 </head>
@@ -1699,19 +1800,140 @@ input[type="range"]{
   </aside>
 
   <main class="stage" id="contentWrap">
+    <!-- 🎵 МУЗЫКАЛЬНЫЙ UI (для хоста) -->
+    <div id="music-ui-container" class="hidden">
+      <!-- Панель поиска -->
+      <aside class="chat-panel" id="musicSearchPanel" style="left: 16px; top: 120px; height: 300px; width: 300px;">
+        <div class="chat-bg"></div>
+        <div class="chat-shell">
+          <div class="chat-header" id="searchDragHandle">
+            <span>🔍 Поиск музыки</span>
+          </div>
+          <div class="chat-input">
+            <input id="spotifySearchInput" placeholder="Название или ссылка..." />
+          </div>
+          <div class="chat-body" id="searchResultsList"></div>
+        </div>
+      </aside>
+
+      <!-- Панель очереди -->
+      <aside class="chat-panel" id="musicQueuePanel" style="left: 330px; top: 120px; height: 400px; width: 320px;">
+        <div class="chat-bg"></div>
+        <div class="chat-shell">
+          <div class="chat-header" id="queueDragHandle">
+            <span>📜 Очередь</span>
+            <button class="btn ghost small" id="queueToggle">_</button>
+          </div>
+          <div class="chat-body" id="musicQueueList"></div>
+        </div>
+      </aside>
+    </div>
+
+    <!-- 🎯 ЗОНЫ ГОЛОСОВАНИЯ -->
+    <div id="vote-zones-container" class="hidden">
+      <div class="vote-zone top-left" id="zone_da_no"><span>Да, но... 🕒</span></div>
+      <div class="vote-zone top-right" id="zone_exc"><span>Исключение 🤘</span></div>
+      <div class="vote-zone bottom-left" id="zone_da"><span>ДА ❤️</span></div>
+      <div class="vote-zone bottom-right" id="zone_no"><span>НЕТ 🗑️</span></div>
+      <div class="vote-zone center-clock" id="zone_time"><span>⏳</span></div>
+    </div>
+
+    <!-- 🎛️ КОНТРОЛИ МУЗЫКИ (для хоста) -->
+    <div id="host-music-controls" class="hidden">
+      <div class="host-controls-card">
+        <button class="btn small" id="hostPlayPause">⏯️</button>
+        <div class="timeline-wrap">
+          <input type="range" id="musicTimeline" min="0" max="100" value="0">
+        </div>
+        <div class="mode-switch">
+          <span>Все</span>
+          <label class="switch">
+            <input type="checkbox" id="modePlaylistToggle">
+            <span class="slider"></span>
+          </label>
+          <span>Суббота</span>
+        </div>
+        <button class="btn small hidden" id="salyoseLikeBtn" style="background: #e91e63;">❤️ Like</button>
+      </div>
+    </div>
+
+    <!-- 🎥 ВИДЕО КОНТЕЙНЕР (обязательная обёртка для overlay canvas!) -->
     <div class="videoWrap" id="videoWrap">
-      <iframe id="player" allow="autoplay; microphone; camera" referrerpolicy="no-referrer"></iframe>
+      <!-- Iframe для стрима -->
+      <iframe 
+        id="player" 
+        src="about:blank" 
+        allow="autoplay; camera; microphone; fullscreen; picture-in-picture; display-capture; self">
+      </iframe>
+      
+      <!-- 🎨 CANVAS ДЛЯ ОВЕРЛЕЯ (ОБЯЗАТЕЛЬНО внутри videoWrap!) -->
       <canvas id="overlay"></canvas>
+      
+      <!-- ✨ СЛОЙ ЭФФЕКТОВ -->
       <div id="fx-layer"></div>
-      <div id="overlayToast" class="overlay-toast" aria-live="polite"></div>
-      <!-- CHAT: оверлей С ПОЛЕМ ВВОДА -->
+      
+      <!-- 💬 ЧАТ ОВЕРЛЕЙ -->
       <div class="chat-overlay" id="chatOverlay">
         <div class="chat-body" id="chatListOverlay"></div>
         <div class="chat-input">
-          <input id="chatInputOverlay" placeholder="Сообщение…" />
-          <button class="btn small" id="chatSendOverlay">→</button>
+          <input id="chatInputOverlay" placeholder="Напиши в чат (Alt+F7)..." />
+          <button class="btn small" id="chatSendOverlay">Отправить</button>
         </div>
       </div>
+      
+      <!-- 🍞 УВЕДОМЛЕНИЯ -->
+      <div class="overlay-toast" id="overlayToast" aria-live="polite"></div>
+      <!-- Плашка с текущим треком - добавь внутрь videoWrap -->
+      <div id="now-playing" style="
+        position: absolute;
+        bottom: 20px;
+        left: 50%;
+        transform: translateX(-50%);
+        background: rgba(0,0,0,0.85);
+        backdrop-filter: blur(10px);
+        border-radius: 12px;
+        padding: 10px 16px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        z-index: 20;
+        min-width: 280px;
+        max-width: 480px;
+        display: none;
+        border: 1px solid rgba(255,255,255,0.1);
+      ">
+        <!-- Обложка -->
+        <img id="nowPlayingCover" src="" style="
+          width: 48px; 
+          height: 48px; 
+          border-radius: 6px;
+          object-fit: cover;
+          flex-shrink: 0;
+        "/>
+        
+        <!-- Инфо -->
+        <div style="flex: 1; overflow: hidden;">
+          <div id="nowPlayingSong" style="
+            font-size: 0.95em;
+            font-weight: 700;
+            color: white;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          ">—</div>
+          <div id="nowPlayingArtist" style="
+            font-size: 0.8em;
+            color: rgba(255,255,255,0.6);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+          ">—</div>
+        </div>
+
+        <!-- Статус -->
+        <div id="nowPlayingIcon" style="font-size: 1.4em;">⏸️</div>
+      </div>
+
     </div>
   </main>
 
@@ -1979,6 +2201,8 @@ input[type="range"]{
   const app = initializeApp(firebaseConfig);
   const db = getDatabase(app);
   const auth = getAuth();
+  window.db = db; 
+  window.auth = auth;
 
 
   // ── Чебурнет-фикс: переподключение через long-polling ──
@@ -9093,6 +9317,23 @@ window.closeLinkModal = function() {
         gamesBtn.style.cssText = 'font-size:1.6em;padding:4px 10px;border:1px solid rgba(168,85,247,0.5);';
         gamesBtn.onclick = () => _enterGamesMenu(panel, isHost);
         panel.appendChild(gamesBtn);
+        // === КНОПКА "МУЗЫКА" (Только для хоста) ===
+        if (isHost) {
+          const musicBtn = document.createElement('button');
+          musicBtn.className = 'btn ghost small';
+          musicBtn.textContent = '🎵';
+          musicBtn.title = 'Режим вечеринки';
+          musicBtn.style.cssText = 'font-size:1.6em;padding:4px 10px;border:1px solid rgba(22,199,183,0.5); margin-left: 8px;';
+
+          musicBtn.onclick = () => {
+            if (typeof window.toggleMusicMode === 'function') {
+              window.toggleMusicMode();
+              // Закрываем панель эмодзи после нажатия, чтобы не мешала
+              panel.classList.remove('show');
+            }
+          };
+          panel.appendChild(musicBtn);
+        }
       }
     }
     return panel.classList.toggle('show');
@@ -9838,6 +10079,191 @@ gateColor.addEventListener('input', syncColor);
   else boot();
 })();
 </script>
+<script type="module">
+  import { ref, onValue, set, push, update, remove } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
+  // Функция инициализации, которая будет ждать появления базы
+  function initMusicModule() {
+    const music_db = window.db;
+
+    if (!music_db) {
+      // Если база еще не готова, попробуем еще раз через 100мс
+      setTimeout(initMusicModule, 100);
+      return;
+    }
+
+    console.log("✅ Музыкальный модуль: База найдена, запускаемся!");
+
+    const musicPath = 'sessions/DepressivePasties/music';
+    const musicRef = ref(music_db, musicPath);
+    const musicStatusRef = ref(music_db, `${musicPath}/active`);
+
+    window.toggleMusicMode = () => {
+      onValue(musicStatusRef, (snap) => {
+        const currentActive = snap.val() || false;
+        update(musicRef, { active: !currentActive });
+      }, { onlyOnce: true });
+    };
+
+    onValue(musicStatusRef, (snap) => {
+      const isActive = snap.val() || false;
+      const ui_box = document.getElementById('music-ui-container');
+      const vote_box = document.getElementById('vote-zones-container');
+      const host_box = document.getElementById('host-music-controls');
+
+      if (isActive) {
+        ui_box?.classList.remove('hidden');
+        vote_box?.classList.remove('hidden');
+        if (window.location.search.includes('overlay=1')) host_box?.classList.remove('hidden');
+      } else {
+        ui_box?.classList.add('hidden');
+        vote_box?.classList.add('hidden');
+        host_box?.classList.add('hidden');
+      }
+    });
+
+    const spotifyInp = document.getElementById('spotifySearchInput');
+    spotifyInp?.addEventListener('input', (e) => {
+      if (e.target.value.trim().length > 2) {
+        update(musicRef, { search_query: e.target.value.trim() });
+      }
+    });
+
+    onValue(ref(music_db, `${musicPath}/search_results`), (snap) => {
+      const tracks = snap.val() || [];
+      const resList = document.getElementById('searchResultsList');
+      if (!resList) return;
+      resList.innerHTML = tracks.map(t => `
+        <div class="queue-item" style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid #333; background:rgba(255,255,255,0.02);">
+          <span style="font-size:0.9em;"><b>${t.artist}</b> - ${t.name}</span>
+          <button class="btn small" onclick="window.addTrackToQueue('${t.uri}', '${t.name.replace(/'/g,"")}', '${t.artist.replace(/'/g,"")}')">+</button>
+        </div>
+      `).join('');
+    });
+
+    window.addTrackToQueue = (uri, name, artist) => {
+      push(ref(music_db, `${musicPath}/queue`), { 
+        uri, name, artist, 
+        addedBy: localStorage.getItem('cc_name') || 'Гость', 
+        color: localStorage.getItem('cc_color') || '#16c7b7', 
+        ts: Date.now() 
+      });
+      if (spotifyInp) spotifyInp.value = '';
+    };
+
+    onValue(ref(music_db, `${musicPath}/queue`), (snap) => {
+      const qList = document.getElementById('musicQueueList');
+      if (!qList) return;
+      const queueData = snap.val() || {};
+      const myName = localStorage.getItem('cc_name');
+      qList.innerHTML = Object.entries(queueData).map(([key, t]) => `
+        <div class="queue-item" style="border-left: 4px solid ${t.color}; margin-bottom:6px; padding:6px 10px; background: rgba(0,0,0,0.3); border-radius:4px;">
+          <div style="font-size:0.85em; opacity:0.8;">${t.artist}</div>
+          <div style="font-size:0.95em; font-weight:700;">${t.name}</div>
+          ${t.addedBy === myName ? `<button class="btn ghost small danger" onclick="window.removeTrack('${key}')" style="margin-top:4px; padding:2px 6px; font-size:10px;">удалить</button>` : ''}
+        </div>
+      `).join('');
+    });
+
+    window.removeTrack = (key) => remove(ref(music_db, `${musicPath}/queue/${key}`));
+
+    document.querySelectorAll('.vote-zone').forEach(zone => {
+      zone.addEventListener('click', () => {
+        set(ref(music_db, `${musicPath}/votes/${localStorage.getItem('cc_name') || 'Аноним'}`), zone.id.replace('zone_', ''));
+      });
+    });
+
+    document.getElementById('hostPlayPause')?.addEventListener('click', () => {
+      update(musicRef, { command: 'play_pause' });
+    });
+  }
+
+  // Запускаем ожидание базы
+  initMusicModule();
+  // ========== DRAG для музыкальных панелей ==========
+  function makeDraggable(panel, handle) {
+    const handleEl = document.getElementById(handle);
+    const panelEl = document.getElementById(panel);
+    
+    if (!handleEl || !panelEl) {
+      console.warn(`❌ Drag: не найден ${panel} или ${handle}`);
+      return;
+    }
+
+    let isDragging = false;
+    let startX, startY, startLeft, startTop;
+
+    handleEl.style.cursor = 'grab';
+
+    handleEl.addEventListener('pointerdown', (e) => {
+      isDragging = true;
+      handleEl.style.cursor = 'grabbing';
+      
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = panelEl.offsetLeft;
+      startTop = panelEl.offsetTop;
+      
+      handleEl.setPointerCapture(e.pointerId);
+      e.preventDefault();
+    });
+
+    handleEl.addEventListener('pointermove', (e) => {
+      if (!isDragging) return;
+      
+      const dx = e.clientX - startX;
+      const dy = e.clientY - startY;
+      
+      panelEl.style.left = `${startLeft + dx}px`;
+      panelEl.style.top = `${startTop + dy}px`;
+    });
+
+    handleEl.addEventListener('pointerup', () => {
+      isDragging = false;
+      handleEl.style.cursor = 'grab';
+    });
+
+    console.log(`✅ Drag: ${panel} готов к перетаскиванию`);
+  }
+
+  // Запускаем drag после загрузки
+  document.addEventListener('DOMContentLoaded', () => {
+    makeDraggable('musicSearchPanel', 'searchDragHandle');
+    makeDraggable('musicQueuePanel', 'queueDragHandle');
+  });
+  // ========== СТАТУС ПЛЕЕРА ==========
+  onValue(ref(music_db, `${musicPath}/status`), (snap) => {
+    const status = snap.val();
+    const nowPlaying = document.getElementById('now-playing');
+    
+    if (!status || !status.track_name) {
+      if (nowPlaying) nowPlaying.style.display = 'none';
+      return;
+    }
+
+    // Показываем плашку
+    if (nowPlaying) nowPlaying.style.display = 'flex';
+
+    // Обновляем данные
+    const song = document.getElementById('nowPlayingSong');
+    const artist = document.getElementById('nowPlayingArtist');
+    const cover = document.getElementById('nowPlayingCover');
+    const icon = document.getElementById('nowPlayingIcon');
+    const timeline = document.getElementById('musicTimeline');
+    const playBtn = document.getElementById('hostPlayPause');
+
+    if (song) song.textContent = status.song || status.track_name;
+    if (artist) artist.textContent = status.artist || '';
+    if (cover && status.cover) cover.src = status.cover;
+    if (icon) icon.textContent = status.is_playing ? '▶️' : '⏸️';
+    if (playBtn) playBtn.textContent = status.is_playing ? '⏸️' : '▶️';
+    
+    if (timeline && status.duration) {
+      timeline.value = Math.round((status.progress / status.duration) * 100);
+    }
+
+    console.log(`🎵 Статус: ${status.track_name} | ${status.is_playing ? '▶️' : '⏸️'}`);
+  });
+</script>
 </body>
 </html>
