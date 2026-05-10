@@ -10082,113 +10082,237 @@ gateColor.addEventListener('input', syncColor);
 <script type="module">
   import { ref, onValue, set, push, update, remove } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
-  // Функция инициализации, которая будет ждать появления базы
   function initMusicModule() {
     const music_db = window.db;
 
     if (!music_db) {
-      // Если база еще не готова, попробуем еще раз через 100мс
       setTimeout(initMusicModule, 100);
       return;
     }
 
-    console.log("✅ Музыкальный модуль: База найдена, запускаемся!");
+    console.log("✅ Музыкальный модуль: База найдена!");
 
     const musicPath = 'sessions/DepressivePasties/music';
     const musicRef = ref(music_db, musicPath);
-    const musicStatusRef = ref(music_db, `${musicPath}/active`);
 
+    // ========== АКТИВАЦИЯ ==========
     window.toggleMusicMode = () => {
-      onValue(musicStatusRef, (snap) => {
-        const currentActive = snap.val() || false;
-        update(musicRef, { active: !currentActive });
+      onValue(ref(music_db, `${musicPath}/active`), (snap) => {
+        update(musicRef, { active: !(snap.val() || false) });
       }, { onlyOnce: true });
     };
 
-    onValue(musicStatusRef, (snap) => {
+    onValue(ref(music_db, `${musicPath}/active`), (snap) => {
       const isActive = snap.val() || false;
-      const ui_box = document.getElementById('music-ui-container');
-      const vote_box = document.getElementById('vote-zones-container');
-      const host_box = document.getElementById('host-music-controls');
-
-      if (isActive) {
-        ui_box?.classList.remove('hidden');
-        vote_box?.classList.remove('hidden');
-        if (window.location.search.includes('overlay=1')) host_box?.classList.remove('hidden');
-      } else {
-        ui_box?.classList.add('hidden');
-        vote_box?.classList.add('hidden');
-        host_box?.classList.add('hidden');
-      }
+      const isOverlay = window.location.search.includes('overlay=1');
+      
+      document.getElementById('music-ui-container')?.classList.toggle('hidden', !isActive);
+      document.getElementById('vote-zones-container')?.classList.toggle('hidden', !isActive);
+      document.getElementById('host-music-controls')?.classList.toggle('hidden', !(isActive && isOverlay));
     });
 
+    // ========== ПОИСК ==========
+    let searchTimer = null;
     const spotifyInp = document.getElementById('spotifySearchInput');
+    
     spotifyInp?.addEventListener('input', (e) => {
-      if (e.target.value.trim().length > 2) {
-        update(musicRef, { search_query: e.target.value.trim() });
+      const q = e.target.value.trim();
+      clearTimeout(searchTimer);
+      
+      if (q.length > 1) {
+        searchTimer = setTimeout(() => {
+          console.log('🔍 Отправка поиска:', q);
+          set(ref(music_db, `${musicPath}/search_query`), q);
+        }, 500);
+      } else {
+        set(ref(music_db, `${musicPath}/search_results`), null);
       }
     });
 
+    // ========== РЕЗУЛЬТАТЫ ==========
     onValue(ref(music_db, `${musicPath}/search_results`), (snap) => {
       const tracks = snap.val() || [];
       const resList = document.getElementById('searchResultsList');
       if (!resList) return;
+
+      console.log('📦 Результаты:', tracks);
+
+      if (!Array.isArray(tracks) || tracks.length === 0) {
+        resList.innerHTML = '<div style="padding:12px;opacity:0.5;text-align:center;">🔍 Ничего не найдено</div>';
+        return;
+      }
+
       resList.innerHTML = tracks.map(t => `
-        <div class="queue-item" style="display:flex; justify-content:space-between; padding:8px; border-bottom:1px solid #333; background:rgba(255,255,255,0.02);">
-          <span style="font-size:0.9em;"><b>${t.artist}</b> - ${t.name}</span>
-          <button class="btn small" onclick="window.addTrackToQueue('${t.uri}', '${t.name.replace(/'/g,"")}', '${t.artist.replace(/'/g,"")}')">+</button>
+        <div class="search-result" style="
+          display:flex; 
+          gap:8px;
+          padding:8px; 
+          border-bottom:1px solid rgba(255,255,255,0.1);
+          cursor:pointer;
+          transition: background 0.2s;
+        " onmouseover="this.style.background='rgba(255,255,255,0.05)'" 
+           onmouseout="this.style.background='transparent'">
+          <div style="flex:1;overflow:hidden;">
+            <div style="font-size:0.9em;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.name)}</div>
+            <div style="font-size:0.8em;opacity:0.6;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.artist)}</div>
+          </div>
+          <button 
+            class="btn small" 
+            onclick="window.addTrackToQueue('${escapeAttr(t.uri)}', '${escapeAttr(t.name)}', '${escapeAttr(t.artist)}'); event.stopPropagation();"
+          >+</button>
         </div>
       `).join('');
     });
 
+    // ========== ОЧЕРЕДЬ ==========
     window.addTrackToQueue = (uri, name, artist) => {
+      console.log('➕ Добавление:', name);
       push(ref(music_db, `${musicPath}/queue`), { 
         uri, name, artist, 
         addedBy: localStorage.getItem('cc_name') || 'Гость', 
         color: localStorage.getItem('cc_color') || '#16c7b7', 
         ts: Date.now() 
       });
+      
       if (spotifyInp) spotifyInp.value = '';
+      set(ref(music_db, `${musicPath}/search_query`), null);
+      set(ref(music_db, `${musicPath}/search_results`), null);
     };
 
     onValue(ref(music_db, `${musicPath}/queue`), (snap) => {
       const qList = document.getElementById('musicQueueList');
       if (!qList) return;
+      
       const queueData = snap.val() || {};
       const myName = localStorage.getItem('cc_name');
-      qList.innerHTML = Object.entries(queueData).map(([key, t]) => `
-        <div class="queue-item" style="border-left: 4px solid ${t.color}; margin-bottom:6px; padding:6px 10px; background: rgba(0,0,0,0.3); border-radius:4px;">
-          <div style="font-size:0.85em; opacity:0.8;">${t.artist}</div>
-          <div style="font-size:0.95em; font-weight:700;">${t.name}</div>
-          ${t.addedBy === myName ? `<button class="btn ghost small danger" onclick="window.removeTrack('${key}')" style="margin-top:4px; padding:2px 6px; font-size:10px;">удалить</button>` : ''}
+      const entries = Object.entries(queueData);
+
+      if (entries.length === 0) {
+        qList.innerHTML = '<div style="padding:12px;opacity:0.5;text-align:center;">📜 Очередь пуста</div>';
+        return;
+      }
+
+      qList.innerHTML = entries.map(([key, t]) => `
+        <div style="
+          border-left:4px solid ${t.color || '#16c7b7'}; 
+          margin-bottom:6px; 
+          padding:8px 10px; 
+          background:rgba(0,0,0,0.3); 
+          border-radius:4px;
+        ">
+          <div style="font-size:0.9em;font-weight:600;">${escapeHtml(t.name)}</div>
+          <div style="font-size:0.75em;opacity:0.6;">${escapeHtml(t.artist)}</div>
+          <div style="font-size:0.7em;opacity:0.4;margin-top:2px;">от ${escapeHtml(t.addedBy)}</div>
+          ${t.addedBy === myName ? `
+            <button 
+              class="btn ghost small" 
+              onclick="window.removeTrack('${key}')" 
+              style="margin-top:4px;padding:2px 6px;font-size:10px;color:#ff4444;"
+            >✕</button>
+          ` : ''}
         </div>
       `).join('');
     });
 
     window.removeTrack = (key) => remove(ref(music_db, `${musicPath}/queue/${key}`));
 
+    // ========== ГОЛОСОВАНИЕ ==========
     document.querySelectorAll('.vote-zone').forEach(zone => {
       zone.addEventListener('click', () => {
-        set(ref(music_db, `${musicPath}/votes/${localStorage.getItem('cc_name') || 'Аноним'}`), zone.id.replace('zone_', ''));
+        const name = localStorage.getItem('cc_name') || 'Аноним';
+        const vote = zone.id.replace('zone_', '');
+        set(ref(music_db, `${musicPath}/votes/${name}`), vote);
+        
+        zone.style.transform = 'scale(0.95)';
+        setTimeout(() => zone.style.transform = '', 200);
       });
     });
 
+    // ========== КОНТРОЛИ ==========
     document.getElementById('hostPlayPause')?.addEventListener('click', () => {
-      update(musicRef, { command: 'play_pause' });
+      console.log('⏯️ Play/Pause');
+      set(ref(music_db, `${musicPath}/command`), 'play_pause');
     });
+
+    document.getElementById('modePlaylistToggle')?.addEventListener('change', (e) => {
+      const cmd = e.target.checked ? 'smart_saturday' : 'smart_liked';
+      set(ref(music_db, `${musicPath}/command`), cmd);
+    });
+
+    document.getElementById('salyoseLikeBtn')?.addEventListener('click', () => {
+      set(ref(music_db, `${musicPath}/command`), 'like_salyose');
+    });
+
+    // ========== ПЕРЕМОТКА ==========
+    let seeking = false;
+    const timeline = document.getElementById('musicTimeline');
+    
+    timeline?.addEventListener('input', (e) => {
+      seeking = true;
+      const percent = parseFloat(e.target.value);
+      set(ref(music_db, `${musicPath}/seek_position`), percent);
+    });
+
+    timeline?.addEventListener('change', () => {
+      setTimeout(() => seeking = false, 1000);
+    });
+
+    // ========== СТАТУС ==========
+    onValue(ref(music_db, `${musicPath}/status`), (snap) => {
+      const status = snap.val();
+      if (!status) return;
+
+      const nowPlaying = document.getElementById('now-playing');
+      const song = document.getElementById('nowPlayingSong');
+      const artist = document.getElementById('nowPlayingArtist');
+      const cover = document.getElementById('nowPlayingCover');
+      const icon = document.getElementById('nowPlayingIcon');
+      const playBtn = document.getElementById('hostPlayPause');
+
+      if (status.track_name) {
+        if (nowPlaying) nowPlaying.style.display = 'flex';
+        if (song) song.textContent = status.song || status.track_name;
+        if (artist) artist.textContent = status.artist || '';
+        if (cover && status.cover) cover.src = status.cover;
+        if (icon) icon.textContent = status.is_playing ? '▶️' : '⏸️';
+        if (playBtn) playBtn.textContent = status.is_playing ? '⏸️' : '▶️';
+        
+        if (timeline && status.duration && !seeking) {
+          timeline.value = Math.round((status.progress / status.duration) * 100);
+        }
+      } else {
+        if (nowPlaying) nowPlaying.style.display = 'none';
+      }
+    });
+
+    // Кнопка Salyose
+    const myName = localStorage.getItem('cc_name');
+    if (myName === 'Salyose' || myName === 'salyose') {
+      document.getElementById('salyoseLikeBtn')?.classList.remove('hidden');
+    }
+
+    console.log("✅ Музыкальный модуль готов!");
   }
 
-  // Запускаем ожидание базы
-  initMusicModule();
-  // ========== DRAG для музыкальных панелей ==========
+  function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function escapeAttr(str) {
+    if (!str) return '';
+    return String(str).replace(/'/g, "\\'").replace(/"/g, '\\"');
+  }
+
   function makeDraggable(panel, handle) {
     const handleEl = document.getElementById(handle);
     const panelEl = document.getElementById(panel);
     
-    if (!handleEl || !panelEl) {
-      console.warn(`❌ Drag: не найден ${panel} или ${handle}`);
-      return;
-    }
+    if (!handleEl || !panelEl) return;
 
     let isDragging = false;
     let startX, startY, startLeft, startTop;
@@ -10198,71 +10322,31 @@ gateColor.addEventListener('input', syncColor);
     handleEl.addEventListener('pointerdown', (e) => {
       isDragging = true;
       handleEl.style.cursor = 'grabbing';
-      
       startX = e.clientX;
       startY = e.clientY;
       startLeft = panelEl.offsetLeft;
       startTop = panelEl.offsetTop;
-      
       handleEl.setPointerCapture(e.pointerId);
       e.preventDefault();
     });
 
     handleEl.addEventListener('pointermove', (e) => {
       if (!isDragging) return;
-      
-      const dx = e.clientX - startX;
-      const dy = e.clientY - startY;
-      
-      panelEl.style.left = `${startLeft + dx}px`;
-      panelEl.style.top = `${startTop + dy}px`;
+      panelEl.style.left = `${startLeft + (e.clientX - startX)}px`;
+      panelEl.style.top = `${startTop + (e.clientY - startY)}px`;
     });
 
     handleEl.addEventListener('pointerup', () => {
       isDragging = false;
       handleEl.style.cursor = 'grab';
     });
-
-    console.log(`✅ Drag: ${panel} готов к перетаскиванию`);
   }
 
-  // Запускаем drag после загрузки
+  initMusicModule();
+  
   document.addEventListener('DOMContentLoaded', () => {
     makeDraggable('musicSearchPanel', 'searchDragHandle');
     makeDraggable('musicQueuePanel', 'queueDragHandle');
-  });
-  // ========== СТАТУС ПЛЕЕРА ==========
-  onValue(ref(music_db, `${musicPath}/status`), (snap) => {
-    const status = snap.val();
-    const nowPlaying = document.getElementById('now-playing');
-    
-    if (!status || !status.track_name) {
-      if (nowPlaying) nowPlaying.style.display = 'none';
-      return;
-    }
-
-    // Показываем плашку
-    if (nowPlaying) nowPlaying.style.display = 'flex';
-
-    // Обновляем данные
-    const song = document.getElementById('nowPlayingSong');
-    const artist = document.getElementById('nowPlayingArtist');
-    const cover = document.getElementById('nowPlayingCover');
-    const icon = document.getElementById('nowPlayingIcon');
-    const timeline = document.getElementById('musicTimeline');
-    const playBtn = document.getElementById('hostPlayPause');
-
-    if (song) song.textContent = status.song || status.track_name;
-    if (artist) artist.textContent = status.artist || '';
-    if (cover && status.cover) cover.src = status.cover;
-    if (icon) icon.textContent = status.is_playing ? '▶️' : '⏸️';
-    if (playBtn) playBtn.textContent = status.is_playing ? '⏸️' : '▶️';
-    
-    if (timeline && status.duration) {
-      timeline.value = Math.round((status.progress / status.duration) * 100);
-    }
-
-    console.log(`🎵 Статус: ${status.track_name} | ${status.is_playing ? '▶️' : '⏸️'}`);
   });
 </script>
 </body>
