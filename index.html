@@ -2088,8 +2088,8 @@ input[type="range"]{
       <div class="overlay-toast" id="overlayToast" aria-live="polite"></div>
       <!-- Плашка с текущим треком - добавь внутрь videoWrap -->
       <div id="now-playing" style="
-        position: absolute;
-        bottom: 190px;
+        position: fixed;
+        bottom: 210px;
         left: 50%;
         transform: translateX(-50%);
         background: rgba(0,0,0,0.85);
@@ -2098,7 +2098,7 @@ input[type="range"]{
         padding: 10px 16px;
         align-items: center;
         gap: 12px;
-        z-index: 60;
+        z-index: 1200;
         min-width: 280px;
         max-width: 480px;
         display: none;
@@ -2698,6 +2698,50 @@ input[type="range"]{
     currentStroke: null, // текущая рисуемая линия
   };
 
+  const HOST_IDENTITY = {
+    uid: 'host_leha',
+    name: '\u041b\u0451\u0445\u0430',
+    color: '#1e40af',
+    emoji: '\uD83D\uDC3B'
+  };
+
+  function __ccNormalizeName(name){
+    return String(name || '').trim().toLowerCase().replaceAll('\u0451', '\u0435');
+  }
+
+  function __ccIsHostName(name){
+    const n = __ccNormalizeName(name);
+    return n === '\u043b\u0435\u0445\u0430' || n === 'host';
+  }
+
+  function __ccApplyHostIdentity(){
+    state.id = HOST_IDENTITY.uid;
+    state.name = HOST_IDENTITY.name;
+    state.color = HOST_IDENTITY.color;
+    state.emoji = HOST_IDENTITY.emoji;
+    localStorage.setItem('cc_id', HOST_IDENTITY.uid);
+    localStorage.setItem('cc_name', HOST_IDENTITY.name);
+    localStorage.setItem('cc_color', HOST_IDENTITY.color);
+    localStorage.setItem('cc_emoji', HOST_IDENTITY.emoji);
+    if (window.__neoApplyAccent) window.__neoApplyAccent(HOST_IDENTITY.color);
+  }
+
+  function __ccCanonicalUid(fallback){
+    const raw = fallback || auth?.currentUser?.uid || state.id;
+    return __ccIsHostName(state.name || localStorage.getItem('cc_name')) ? HOST_IDENTITY.uid : raw;
+  }
+
+  function __ccCanonicalName(fallback){
+    return __ccIsHostName(fallback || state.name || localStorage.getItem('cc_name'))
+      ? HOST_IDENTITY.name
+      : (fallback || state.name || localStorage.getItem('cc_name') || '');
+  }
+
+  window.__ccCanonicalUid = __ccCanonicalUid;
+  window.__ccCanonicalName = __ccCanonicalName;
+  window.__ccIsHostName = __ccIsHostName;
+  window.HOST_IDENTITY = HOST_IDENTITY;
+
   // Делаем state доступным из других модулей (например, музыкального — для детекции голосования через позицию морды)
   window.state = state;
 
@@ -2710,7 +2754,7 @@ window.addEventListener('cc_emoji_changed', async (e) => {
 
     // If already authed, update profile + my point immediately
     if (state.authed) {
-      const uid = auth?.currentUser?.uid || state.id;
+      const uid = __ccCanonicalUid();
 
       // update my point
       const p = state.points.get(uid);
@@ -2847,6 +2891,52 @@ window.addEventListener('cc_emoji_changed', async (e) => {
   const tgLinksRoot = ref(db, `${basePath}/telegram_links`);
   // Подписка на telegram_links единая — ниже в блоке TELEGRAM LINKS INDEX
 
+  async function __ccMergeHostProfiles(authUid){
+    try{
+      const hostUid = HOST_IDENTITY.uid;
+      const usersRef = ref(db, `${basePath}/users`);
+      const usersSnap = await get(usersRef);
+      const users = usersSnap.val() || {};
+      const keep = users[hostUid] || {};
+      const mergedActivity = { ...(keep.activity || {}) };
+      let createdAt = Number(keep.createdAt || Date.now());
+      let savedEmojiSettings = keep.settings?.emojis || null;
+
+      for (const [uid, data0] of Object.entries(users)){
+        const data = data0 || {};
+        const isHostRecord = uid === hostUid || uid === authUid || __ccIsHostName(data.name || data.displayName);
+        if (!isHostRecord) continue;
+        Object.assign(mergedActivity, data.activity || {});
+        createdAt = Math.min(createdAt, Number(data.createdAt || createdAt || Date.now()));
+        if (!savedEmojiSettings && data.settings?.emojis) savedEmojiSettings = data.settings.emojis;
+        if (uid !== hostUid){
+          try { await remove(ref(db, `${basePath}/users/${uid}`)); } catch {}
+          try { await remove(ref(db, `${basePath}/points/${uid}`)); } catch {}
+          try { await remove(ref(db, `${basePath}/presence/${uid}`)); } catch {}
+          state.points.delete(uid);
+          state.presence.delete(uid);
+        }
+      }
+
+      const hostProfile = {
+        ...keep,
+        name: HOST_IDENTITY.name,
+        color: HOST_IDENTITY.color,
+        emoji: HOST_IDENTITY.emoji,
+        activity: mergedActivity,
+        createdAt,
+        lastSeen: serverTimestamp(),
+        mergedAt: Date.now()
+      };
+      if (savedEmojiSettings) {
+        hostProfile.settings = { ...(keep.settings || {}), emojis: savedEmojiSettings };
+      }
+      await update(ref(db, `${basePath}/users/${hostUid}`), hostProfile);
+    }catch(e){
+      console.warn('host profile merge failed', e);
+    }
+  }
+
   /* ======= PRESENCE ======= */
 // lastActive должен отражать РЕАЛЬНУЮ активность (клики/клавиши), а не heartbeat.
 // heartbeat нужен только чтобы держать "онлайн" и ts свежим.
@@ -2859,13 +2949,13 @@ function __ccIsHidden(){ return document.hidden || document.visibilityState === 
 
 async function __ccWritePresence(partial){
   if (!auth.currentUser) return;
-  const uid = auth.currentUser.uid;
+  const uid = __ccCanonicalUid();
   try{ await update(ref(db, `${basePath}/presence/${uid}`), partial); }catch{}
 }
 
 async function __ccWritePoint(partial){
   if (!auth.currentUser) return;
-  const uid = auth.currentUser.uid;
+  const uid = __ccCanonicalUid();
   try{ await update(ref(db, `${basePath}/points/${uid}`), partial); }catch{}
 }
 
@@ -2878,6 +2968,7 @@ async function __ccMarkActive(force=false){
   await __ccWritePresence({ state: 'online', lastActive: now });
   await __ccWritePoint({ state: 'online', lastActive: now });
 }
+window.__ccMarkActive = __ccMarkActive;
 
 // Activity signals
 ['pointerdown','pointermove','keydown','wheel','touchstart'].forEach(evt=>{
@@ -2895,27 +2986,31 @@ document.addEventListener('visibilitychange', ()=>{
 
 async function heartbeat(){
   if (!auth.currentUser) return;
-  const uid = auth.currentUser.uid;
+  const uid = __ccCanonicalUid();
   const nowTs = Date.now();
-  const nm = getDisplayName(state) || 'Гость';
+  const nm = __ccCanonicalName(getDisplayName(state)) || 'Гость';
   // heartbeat НЕ трогает lastActive
   await __ccWritePresence({
     id: uid,
     name: nm,
-    color: state.color,
-    emoji: (state.emoji||''),
+    color: __ccIsHostName(nm) ? HOST_IDENTITY.color : state.color,
+    emoji: __ccIsHostName(nm) ? HOST_IDENTITY.emoji : (state.emoji||''),
     ts: nowTs,
     state: __ccIsHidden() ? 'away' : 'online'
   });
   // точки обновляем минимально, чтобы цвет/имя/эмодзи синхрились, но lastActive не трогаем
-  await __ccWritePoint({ color: state.color, name: nm, emoji: (state.emoji||'') });
+  await __ccWritePoint({
+    color: __ccIsHostName(nm) ? HOST_IDENTITY.color : state.color,
+    name: nm,
+    emoji: __ccIsHostName(nm) ? HOST_IDENTITY.emoji : (state.emoji||'')
+  });
 }
 setInterval(heartbeat, 8000);
 
 // onDisconnect: помечаем оффлайн (насколько это возможно в RTDB)
 (async ()=>{
   try{
-    const uid = auth.currentUser?.uid;
+    const uid = auth.currentUser ? __ccCanonicalUid() : null;
     if (!uid) return;
     const pRef = ref(db, `${basePath}/presence/${uid}`);
     onDisconnect(pRef).update({ state:'offline', ts: Date.now() });
@@ -3168,7 +3263,7 @@ state.presence.clear();
       userEmojis[i] = '';
     }
     if (!auth.currentUser) return;
-    const emojiRef = ref(db, `${basePath}/users/${auth.currentUser.uid}/settings/emojis`);
+    const emojiRef = ref(db, `${basePath}/users/${__ccCanonicalUid()}/settings/emojis`);
     set(emojiRef, userEmojis).then(()=>applyUserEmojis()).catch(()=>{});
   }
 
@@ -3263,7 +3358,7 @@ state.presence.clear();
         // Проставляем именно в позицию next
         while (userEmojis.length < next) userEmojis.push('');
         userEmojis[next] = value;
-        const emojiRef = ref(db, `${basePath}/users/${auth.currentUser.uid}/settings/emojis`);
+        const emojiRef = ref(db, `${basePath}/users/${__ccCanonicalUid()}/settings/emojis`);
         set(emojiRef, userEmojis).then(()=>applyUserEmojis()).catch(()=>{});
       };
       bar.appendChild(plus);
@@ -3321,7 +3416,7 @@ const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со ста
     msgs.sort((a,b)=> getT(a) - getT(b) || (a.key < b.key ? -1 : 1));
 
     // бейджик "непрочитанных" — только сообщения от других и новее порога
-    const isForeign = (m.uid !== (auth.currentUser?.uid || state.id));
+    const isForeign = (m.uid !== __ccCanonicalUid());
     if (isForeign && getT(m) > lastReadT){
       if (chatCollapsed) state.unreadCount += 1;
       lastReadT = getT(m);
@@ -3386,9 +3481,11 @@ async function sendReaction(reaction) {
     _lastReactionAt = now;
 
     // 2) данные под правила
-    const color = (state?.color && String(state.color).trim()) || '#16c7b7';
+    const isHostSelf = __ccIsHostName(state?.name || localStorage.getItem('cc_name'));
+    const color = isHostSelf ? HOST_IDENTITY.color : ((state?.color && String(state.color).trim()) || '#16c7b7');
     const item = {
-      uid: auth.currentUser.uid,
+      uid: __ccCanonicalUid(),
+      name: isHostSelf ? HOST_IDENTITY.name : (getDisplayName(state) || state.name || ''),
       color,                 // обязателен и не пустой
       t: serverTimestamp(),  // сортировка по серверному времени
       id: crypto.randomUUID()
@@ -3440,7 +3537,7 @@ if (!window.__reactionsBound) {
       return;
     }
 
-    const isOurReaction = (it.uid === (auth.currentUser?.uid || state.id));
+    const isOurReaction = (it.uid === __ccCanonicalUid());
     const shouldShow = isOverlayMode() || !isOurReaction;
     if (shouldShow && typeof spawnEmoji === 'function') {
       spawnEmoji(it);
@@ -3527,6 +3624,7 @@ if (!window.__reactionsBound) {
       // Теперь база будет знать, что мы "свои", и даст прочитать список банов
       await signInAnonymously(auth);
       const uid = auth.currentUser.uid;
+      const profileUid = __ccIsHostName(inputName) ? HOST_IDENTITY.uid : uid;
       console.log("LOG: Авторизация успешна, UID:", uid);
 
       // 2. ПОЛУЧАЕМ IP
@@ -3558,12 +3656,16 @@ if (!window.__reactionsBound) {
       }
 
       // 4. ПОЛУЧЕНИЕ ДАННЫХ ПРОФИЛЯ
-      const userRef = ref(db, `${basePath}/users/${uid}`);
+      const userRef = ref(db, `${basePath}/users/${profileUid}`);
       const userSnap = await get(userRef);
       const userData = userSnap.val();
 
       // Синхронизируем состояние
-      if (userData) {
+      if (__ccIsHostName(inputName)) {
+        __ccApplyHostIdentity();
+        state.createdAt = userData?.createdAt || Date.now();
+        state.activity = userData?.activity || {};
+      } else if (userData) {
         state.name = (inputName !== 'Чужой') ? inputName : (userData.name || 'Чужой');
         state.createdAt = userData.createdAt;
         state.activity = userData.activity || {};
@@ -3612,6 +3714,13 @@ if (!window.__reactionsBound) {
       if (!userData || !userData.createdAt) updates.createdAt = serverTimestamp();
 
       await update(userRef, updates);
+      if (__ccIsHostName(state.name)) {
+        await __ccMergeHostProfiles(uid);
+        __ccApplyHostIdentity();
+      } else {
+        state.id = profileUid;
+        localStorage.setItem('cc_id', profileUid);
+      }
 
       // 7. ФИНАЛИЗАЦИЯ
       saveState();
@@ -3645,7 +3754,7 @@ if (!window.__reactionsBound) {
     console.log('Logging out and clearing session...');
     // Удаляем свою морду (кластер) сразу, чтобы не висела как зомби
     try{
-      const uid = auth.currentUser?.uid || state.id;
+      const uid = __ccCanonicalUid();
       if (uid) {
         await remove(ref(db, `${basePath}/points/${uid}`));
         await remove(ref(db, `${basePath}/presence/${uid}`));
@@ -4264,10 +4373,10 @@ if (txt === '/random') {
 
   // СООБЩЕНИЕ ТОЛЬКО НА СЕРВЕРНОМ ВРЕМЕНИ
   const msg = {
-    uid: auth.currentUser?.uid || state.id,
-    name: getDisplayName(state), // Вот здесь магия! || 'Чужой',
-    color: state.color,
-    emoji: (state.emoji || localStorage.getItem('cc_emoji') || ''),
+    uid: __ccCanonicalUid(),
+    name: __ccCanonicalName(getDisplayName(state)), // Вот здесь магия! || 'Чужой',
+    color: __ccIsHostName(state.name) ? HOST_IDENTITY.color : state.color,
+    emoji: __ccIsHostName(state.name) ? HOST_IDENTITY.emoji : (state.emoji || localStorage.getItem('cc_emoji') || ''),
     text: txt,
     t: serverTimestamp()        // <-- главное: серверный таймстемп
   };
@@ -4334,10 +4443,10 @@ if (txt === '/random') {
 
 
   const msg = {
-    uid: auth.currentUser?.uid || state.id,
-    name: getDisplayName(state) || 'Чужой',
-    color: state.color,
-    emoji: (state.emoji || localStorage.getItem('cc_emoji') || ''),
+    uid: __ccCanonicalUid(),
+    name: __ccCanonicalName(getDisplayName(state)) || 'Чужой',
+    color: __ccIsHostName(state.name) ? HOST_IDENTITY.color : state.color,
+    emoji: __ccIsHostName(state.name) ? HOST_IDENTITY.emoji : (state.emoji || localStorage.getItem('cc_emoji') || ''),
     text: txt,
     t: serverTimestamp()
   };
@@ -5718,6 +5827,23 @@ document.head.appendChild(ratAnimStyle);
       body.sniper-active #player,
       body.sniper-active canvas {
         pointer-events: none !important;
+      }
+      html.overlay-live #sniperOverlay,
+      html.overlay-mode #sniperOverlay {
+        display: block !important;
+        position: fixed !important;
+        inset: 0 !important;
+        z-index: 2147482900 !important;
+        pointer-events: none !important;
+      }
+      html.overlay-live #sniperBall,
+      html.overlay-live #sniperCard,
+      html.overlay-mode #sniperBall,
+      html.overlay-mode #sniperCard {
+        display: block !important;
+        visibility: visible !important;
+        opacity: 1 !important;
+        z-index: 2147483000 !important;
       }
       #sniperCard {
         position: fixed; left: 50%; top: 12px;
@@ -9273,7 +9399,7 @@ ctx.restore();
     }
     if (state.tool==='vote'){
       e.preventDefault();
-      const uid = auth.currentUser?.uid || state.id;
+      const uid = __ccCanonicalUid();
       const pos=normFromEvent(e);
 
       // === ДУЭЛЬ: проверяем клик по чужой морде (копим триггер инициации) ===
@@ -9292,14 +9418,15 @@ ctx.restore();
         if (hit) tryRegisterDuelClick(bestUid, bestP);
       } catch(err){ console.warn('[duel] click detect err', err); }
 
-      const p={ id:uid, name: getDisplayName(state)||'Чужой', x:pos.x, y:pos.y, ts:Date.now(), lastActive: Date.now(), color:state.color, emoji: state.emoji || '' };
+      const isHostSelf = __ccIsHostName(state.name);
+      const p={ id:uid, name: __ccCanonicalName(getDisplayName(state))||'Чужой', x:pos.x, y:pos.y, ts:Date.now(), lastActive: Date.now(), color:isHostSelf ? HOST_IDENTITY.color : state.color, emoji: isHostSelf ? HOST_IDENTITY.emoji : (state.emoji || '') };
       state.points.set(uid, p);
       try { await set(ref(db, `${basePath}/points/${uid}`), p); } catch {}
       return;
     }
     if (state.tool==='fill'){
       e.preventDefault();
-      const uid = auth.currentUser?.uid || state.id;
+      const uid = __ccCanonicalUid();
       const pos = normFromEvent(e);
       const fillStroke = { uid, fill:true, x:pos.x, y:pos.y, color: state.color, ts:Date.now() };
       try{
@@ -9355,9 +9482,10 @@ ctx.restore();
   function beginStroke(e, erase=false){
     drawing=true;
     const p=normFromEvent(e);
-    const uid=(auth.currentUser&&auth.currentUser.uid)||state.id;
+    const uid=__ccCanonicalUid();
     const width = erase ? ERASE_WIDTH : PEN_WIDTH; // Используем текущий размер
-    currStroke={ uid, name: getDisplayName(state)||'Чужой', color:state.color, erase, w: width, points:[p], ts:Date.now(), _smooth:p, _lastRaw:p };
+    const isHostSelf = __ccIsHostName(state.name);
+    currStroke={ uid, name: __ccCanonicalName(getDisplayName(state))||'Чужой', color:isHostSelf ? HOST_IDENTITY.color : state.color, erase, w: width, points:[p], ts:Date.now(), _smooth:p, _lastRaw:p };
     state.currentStroke = currStroke; // Сохраняем в state для отрисовки
   }
   
@@ -10066,7 +10194,7 @@ window.closeLinkModal = function() {
 
       // Подписка на свои сохранённые эмодзи (была определена, но не вызывалась —
       // именно поэтому при перезагрузке у всех был дефолтный набор).
-      try { setupEmojiListener(user.uid); } catch(e){ console.warn('emoji listener fail', e); }
+      try { setupEmojiListener(__ccCanonicalUid(user.uid)); } catch(e){ console.warn('emoji listener fail', e); }
     }
   });
   
@@ -10112,7 +10240,7 @@ window.closeLinkModal = function() {
     userEmojis[index] = newValue;
 
     // RTDB лучше хранить как массив через set на child-путь, а читать уметь и объектом тоже
-    const emojiRef = ref(db, `${basePath}/users/${auth.currentUser.uid}/settings/emojis`);
+    const emojiRef = ref(db, `${basePath}/users/${__ccCanonicalUid()}/settings/emojis`);
     set(emojiRef, userEmojis).then(()=>{ try{ applyUserEmojis(); }catch{} }).catch((err)=>{
       console.warn('emoji save failed', err);
       // Если PNG слишком большой — Firebase может отвергнуть; покажем юзеру
@@ -10578,6 +10706,50 @@ gateColor.addEventListener('input', syncColor);
 
     const musicPath = 'sessions/DepressivePasties/music';
     const musicRef = ref(music_db, musicPath);
+    const musicPresencePath = 'sessions/DepressivePasties/presence';
+    const musicPointsPath = 'sessions/DepressivePasties/points';
+
+    function _musicClientUid(){
+      return window.__ccCanonicalUid?.()
+        || (window.auth && window.auth.currentUser?.uid)
+        || (window.state && window.state.id)
+        || localStorage.getItem('cc_uid') || 'guest';
+    }
+
+    function _musicClientName(){
+      const raw = localStorage.getItem('cc_name') || window.state?.name || '';
+      return window.__ccCanonicalName?.(raw) || raw || 'Гость';
+    }
+
+    function _musicIsHostName(name){
+      return !!(window.__ccIsHostName?.(name));
+    }
+
+    function _waitForMusicAuth(timeoutMs = 8000){
+      if (window.state?.authed && window.auth?.currentUser) return Promise.resolve(true);
+      const started = Date.now();
+      return new Promise(resolve => {
+        const timer = setInterval(() => {
+          if (window.state?.authed && window.auth?.currentUser) {
+            clearInterval(timer);
+            resolve(true);
+          } else if (Date.now() - started >= timeoutMs) {
+            clearInterval(timer);
+            resolve(false);
+          }
+        }, 100);
+      });
+    }
+
+    async function _writeMusicVote(name, vote){
+      const ready = await _waitForMusicAuth();
+      if (!ready) {
+        console.warn('music vote skipped: auth not ready');
+        return false;
+      }
+      await set(ref(music_db, `${musicPath}/votes/${name}`), vote);
+      return true;
+    }
 
     // Прямая установка флага (вызывается из ghost.py при Alt+F6 / кнопке 🎵)
     window.setMusicActive = function(active) {
@@ -10587,9 +10759,10 @@ gateColor.addEventListener('input', syncColor);
     // Единственная подписка – реагируем на изменение флага
     let _musicActive = false;
     let _lastMusicActive = null;
-    onValue(ref(music_db, `${musicPath}/active`), (snap) => {
+    onValue(ref(music_db, `${musicPath}/active`), async (snap) => {
       const isActive = !!(snap.val());
       if (_lastMusicActive === isActive) return;
+      const wasActive = _musicActive;
       _lastMusicActive = isActive;
       _musicActive = isActive;
 
@@ -10598,8 +10771,21 @@ gateColor.addEventListener('input', syncColor);
         window.isOverlayHotkeys ||
         document.documentElement.classList.contains('overlay-mode');
       const isMusicHost = isOverlayHost ||
-        localStorage.getItem('cc_name') === 'Лёха' ||
-        window.state?.name === 'Лёха';
+        _musicIsHostName(localStorage.getItem('cc_name')) ||
+        _musicIsHostName(window.state?.name);
+
+      if (isActive && !wasActive && isOverlayHost && !window.overlayComponent) {
+        try {
+          const ready = await _waitForMusicAuth();
+          if (!ready) return;
+          await remove(ref(music_db, `${musicPath}/votes`));
+          await remove(ref(music_db, musicPresencePath));
+          await remove(ref(music_db, `${musicPath}/vote_result`));
+          await remove(ref(music_db, `${musicPath}/decisions`));
+        } catch(e) {
+          console.warn('clear music session state fail', e);
+        }
+      }
 
       if (!isOverlayHost) {
         // Для зрителей показываем/скрываем стандартные панели
@@ -10623,9 +10809,7 @@ gateColor.addEventListener('input', syncColor);
       clearTimeout(searchTimer);
       
       // Per-user поиск: пишем в search_queries/<myUid>, читаем оттуда же
-      const myUid = (window.auth && window.auth.currentUser?.uid)
-        || (window.state && window.state.id)
-        || localStorage.getItem('cc_uid') || 'guest';
+      const myUid = _musicClientUid();
 
       if (q.length > 1) {
         searchTimer = setTimeout(() => {
@@ -10644,9 +10828,7 @@ gateColor.addEventListener('input', syncColor);
     // подпишемся на 'guest' и не получим свои результаты.
     let _searchResultsUnsubscribe = null;
     function _subscribeToSearchResults(){
-      const uid = (window.auth && window.auth.currentUser?.uid)
-        || (window.state && window.state.id)
-        || localStorage.getItem('cc_uid') || 'guest';
+      const uid = _musicClientUid();
       // Отписываемся от прошлой подписки (если была) и подписываемся заново
       if (_searchResultsUnsubscribe){
         try { _searchResultsUnsubscribe(); } catch{}
@@ -10712,9 +10894,7 @@ gateColor.addEventListener('input', syncColor);
       });
 
       // Сброс своих результатов поиска
-      const myUid = (window.auth && window.auth.currentUser?.uid)
-        || (window.state && window.state.id)
-        || localStorage.getItem('cc_uid') || 'guest';
+      const myUid = _musicClientUid();
       if (spotifyInp) spotifyInp.value = '';
       set(ref(music_db, `${musicPath}/search_queries/${myUid}`), null);
       set(ref(music_db, `${musicPath}/search_results_per_user/${myUid}`), null);
@@ -10763,10 +10943,12 @@ gateColor.addEventListener('input', syncColor);
     // CSS гарантирует что обычным юзерам зоны не кликабельны.
     document.querySelectorAll('.vote-zone').forEach(zone => {
       zone.addEventListener('click', () => {
-        const name = localStorage.getItem('cc_name') || 'Лёха';
+        const name = _musicClientName() || 'Лёха';
         const vote = zone.id.replace('zone_', '');
-        set(ref(music_db, `${musicPath}/votes/${name}`), vote);
-        console.log(`🗳️ ${name} (клик) → ${vote}`);
+        try { window.__ccMarkActive?.(true); } catch {}
+        _writeMusicVote(name, vote).then(ok => {
+          if (ok) console.log(`🗳️ ${name} (клик) → ${vote}`);
+        }).catch(e => console.warn('music click vote fail', e));
       });
     });
 
@@ -10928,9 +11110,11 @@ gateColor.addEventListener('input', syncColor);
       if (Date.now() < _voteDetectorPausedUntil) return;
 
       const now = Date.now();
+      const selfUid = window.__ccCanonicalUid?.() || window.auth?.currentUser?.uid || window.state?.id;
 
       for (const [uid, p] of window.state.points.entries()){
         if (!p) continue;
+        if (uid !== selfUid) continue;
         const zone = _detectZone(p);
 
         if (!zone){
@@ -10963,9 +11147,9 @@ gateColor.addEventListener('input', syncColor);
         if (last && last.zone === zone && (now - last.t) < 30000) continue;
 
         // Засчитываем!
-        const voterName = p.name || uid.slice(0, 6);
+        const voterName = window.__ccCanonicalName?.(p.name) || p.name || uid.slice(0, 6);
         try {
-          await set(ref(music_db, `${musicPath}/votes/${voterName}`), zone);
+          await _writeMusicVote(voterName, zone);
           _voteCommitted.set(uid, { zone, t: now });
           console.log(`🗳️ ${voterName} → ${zone}`);
         } catch(e){ console.warn('vote write fail', e); }
@@ -10982,8 +11166,78 @@ gateColor.addEventListener('input', syncColor);
     // === 1. Лучики и счётчики ===
     // Слушаем votes в реальном времени и обновляем UI каждой зоны
     let currentVotes = {};
+    let currentMusicStatus = {};
+    let _lastDecisionKey = '';
+    onValue(ref(music_db, `${musicPath}/status`), (snap) => {
+      currentMusicStatus = snap.val() || {};
+    });
+
+    function _trackDecisionId(){
+      const raw = currentMusicStatus.track_id || currentMusicStatus.track_uri || currentMusicStatus.uri || currentMusicStatus.track_name || currentMusicStatus.song || 'current';
+      return String(raw).replace(/[.#$\[\]/]/g, '_').slice(0, 140) || 'current';
+    }
+
+    async function _evaluateMusicVotes(){
+      if (window.overlayComponent) return;
+      if (!window.state?.authed || !window.auth?.currentUser) return;
+      const entries = Object.entries(currentVotes).filter(([, zone]) => ['da', 'da_no', 'no'].includes(zone));
+      const activeNames = new Set();
+      const now = Date.now();
+      try {
+        for (const [, p] of (window.state?.points || new Map()).entries()){
+          if (!p) continue;
+          const name = window.__ccCanonicalName?.(p.name) || p.name;
+          if (!name) continue;
+          const inactiveFor = now - Number(p.lastActive || p.ts || 0);
+          if (inactiveFor >= GONE_AFTER_MS) continue;
+          if (p.state === 'gone' || p.state === 'offline') continue;
+          activeNames.add(name);
+        }
+      } catch {}
+      for (const [name] of entries) activeNames.add(name);
+      const total = Math.max(entries.length, activeNames.size);
+      if (!total) {
+        try { await remove(ref(music_db, `${musicPath}/vote_result`)); } catch {}
+        _lastDecisionKey = '';
+        return;
+      }
+
+      const playlistVoters = entries.filter(([, zone]) => zone === 'da' || zone === 'da_no').map(([name]) => name);
+      const skipVoters = entries.filter(([, zone]) => zone === 'no' || zone === 'da_no').map(([name]) => name);
+      const needed = Math.floor(total / 2) + 1;
+      const playlistPassed = playlistVoters.length >= needed;
+      const skipPassed = skipVoters.length >= needed;
+      const trackId = _trackDecisionId();
+      const result = {
+        trackId,
+        total,
+        needed,
+        playlist: { count: playlistVoters.length, voters: playlistVoters, passed: playlistPassed },
+        skip: { count: skipVoters.length, voters: skipVoters, passed: skipPassed },
+        updatedAt: Date.now()
+      };
+      try { await set(ref(music_db, `${musicPath}/vote_result`), result); } catch {}
+
+      const decisionKey = `${trackId}:${playlistPassed ? 'P' : '-'}:${skipPassed ? 'S' : '-'}`;
+      if ((playlistPassed || skipPassed) && decisionKey !== _lastDecisionKey) {
+        _lastDecisionKey = decisionKey;
+        try {
+          await update(ref(music_db, `${musicPath}/decisions/${trackId}`), {
+            playlist: playlistPassed,
+            skip: skipPassed,
+            playlistVoters,
+            skipVoters,
+            total,
+            needed,
+            decidedAt: Date.now()
+          });
+        } catch(e) { console.warn('music decision write fail', e); }
+      }
+    }
+
     onValue(ref(music_db, `${musicPath}/votes`), (snap) => {
       currentVotes = snap.val() || {};
+      _evaluateMusicVotes();
     });
 
     const _lostNotified = new Set();
@@ -10993,8 +11247,8 @@ gateColor.addEventListener('input', syncColor);
       const now = Date.now();
       for (const [uid, p] of window.state.points.entries()) {
         if (!p) continue;
-        const name = p.name || uid.slice(0, 6);
-        if (name === 'Лёха' || name === 'Р›С‘С…Р°') continue;
+        const name = window.__ccCanonicalName?.(p.name) || p.name || uid.slice(0, 6);
+        if (window.__ccIsHostName?.(name)) continue;
         const lastActive = Number(p.lastActive || p.ts || 0);
         if (!lastActive) continue;
         const inactiveFor = now - lastActive;
@@ -11010,6 +11264,10 @@ gateColor.addEventListener('input', syncColor);
         if (inactiveFor >= GONE_AFTER_MS && !_goneNotified.has(uid)) {
           _goneNotified.add(uid);
           try { await remove(ref(music_db, `${musicPath}/votes/${name}`)); } catch {}
+          try { await remove(ref(music_db, `${musicPointsPath}/${uid}`)); } catch {}
+          try { await remove(ref(music_db, `${musicPresencePath}/${uid}`)); } catch {}
+          try { window.state.points.delete(uid); } catch {}
+          try { window.state.presence?.delete?.(uid); } catch {}
           try { window.showOverlayToast?.({ text: `${name} ушёл`, color: p.color || '#999999', emoji: p.emoji || '○' }); } catch {}
         }
       }
@@ -11020,7 +11278,7 @@ gateColor.addEventListener('input', syncColor);
 
     // Карта имя голосующего → цвет (берём из state.points)
     function _colorForVoter(voterName){
-      if (voterName === 'Лёха' || voterName === 'Хост') return '#1e40af';
+      if (window.__ccIsHostName?.(voterName) || voterName === 'Хост') return '#1e40af';
       if (!window.state || !window.state.points) return '#16c7b7';
       for (const p of window.state.points.values()){
         if (p && p.name === voterName) return p.color || '#16c7b7';
@@ -11095,16 +11353,7 @@ gateColor.addEventListener('input', syncColor);
         path.dataset.startOffset = String(startOffset);
         path.dataset.pathLength = String(PL);
         path.dataset.duration = String(Math.max(2.4, 5.5 - N * 0.35));
-        path.style.setProperty('--zone-ring-start', String(startOffset));
-        path.style.animation = `zoneRingOrbit ${Math.max(2.4, 5.5 - N * 0.35)}s linear infinite`;
         path.style.filter = `drop-shadow(0 0 6px ${color})`;
-        const anim = document.createElementNS('http://www.w3.org/2000/svg', 'animate');
-        anim.setAttribute('attributeName', 'stroke-dashoffset');
-        anim.setAttribute('from', String(startOffset));
-        anim.setAttribute('to', String(startOffset - PL));
-        anim.setAttribute('dur', `${Math.max(2.4, 5.5 - N * 0.35)}s`);
-        anim.setAttribute('repeatCount', 'indefinite');
-        path.appendChild(anim);
         g.appendChild(path);
       }
 
@@ -11199,6 +11448,7 @@ gateColor.addEventListener('input', syncColor);
           try {
             currentVotes = {};
             await remove(ref(music_db, `${musicPath}/votes`));
+            await remove(ref(music_db, `${musicPath}/vote_result`));
           } catch(e) { console.warn('clear music votes fail', e); }
         }
         if (clockZone){
@@ -11218,7 +11468,7 @@ gateColor.addEventListener('input', syncColor);
     async function _yankMyPointToCenter(){
       try {
         if (!window.auth || !window.auth.currentUser) return;
-        const uid = window.auth.currentUser.uid;
+        const uid = window.__ccCanonicalUid?.() || window.auth.currentUser.uid;
         if (!window.state || !window.state.points) return;
         const my = window.state.points.get(uid);
         if (!my) return;
@@ -11317,10 +11567,13 @@ gateColor.addEventListener('input', syncColor);
       const container = document.getElementById('vote-zones-container');
       if (!container || container.classList.contains('hidden')) return;
       if (!window.state || !window.state.points) return;
+      if (_isHostHere()) return;
 
       const now = Date.now();
+      const selfUid = window.__ccCanonicalUid?.() || window.auth?.currentUser?.uid || window.state?.id;
       for (const [uid, p] of window.state.points.entries()){
         if (!p) continue;
+        if (uid !== selfUid) continue;
 
         // Если морда в любой зоне — пропускаем (она уже голосует или вот-вот)
         const inZone = _detectZone(p);
@@ -11348,13 +11601,13 @@ gateColor.addEventListener('input', syncColor);
           continue;
         }
         // Не переносим хоста (Лёха) в исключения
-        if (p.name === 'Лёха' || p.name === HOST_NAME) continue;
+        if (window.__ccIsHostName?.(p.name)) continue;
         if (now - track.sinceT < 10000) continue;
       
         // 10+ сек без движения вне зон — отправляем в Исключение
-        const voterName = p.name || uid.slice(0, 6);
+        const voterName = window.__ccCanonicalName?.(p.name) || p.name || uid.slice(0, 6);
         try {
-          await set(ref(music_db, `${musicPath}/votes/${voterName}`), 'exc');
+          await _writeMusicVote(voterName, 'exc');
           _voteCommitted.set(uid, { zone: 'exc', t: now });
           _inactiveTracker.delete(uid);
           console.log(`💤 ${voterName} → exc (неактивен)`);
