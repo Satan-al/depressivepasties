@@ -2331,14 +2331,14 @@ input[type="range"]{
           zoneEl.style.overflow = 'visible';
           zoneEl.style.transform = 'none';
 
-          // Убираем всё, что может мигать
-          zoneEl.style.background = '#0f1722';                // сплошной тёмный фон
-          zoneEl.style.backdropFilter = 'none';
-          zoneEl.style.webkitBackdropFilter = 'none';
+          // Держим кнопки в оверлее полупрозрачными, как на обычном сайте.
+          zoneEl.style.background = 'rgba(15, 23, 34, 0.46)';
+          zoneEl.style.backdropFilter = 'blur(4px)';
+          zoneEl.style.webkitBackdropFilter = 'blur(4px)';
           zoneEl.style.animation = 'none';
           zoneEl.style.transition = 'none';
-          zoneEl.style.border = '2px solid rgba(255,255,255,0.5)';
-          zoneEl.style.boxShadow = '0 0 20px rgba(0,0,0,0.7)';
+          zoneEl.style.border = '2px solid rgba(22,199,183,0.42)';
+          zoneEl.style.boxShadow = '0 0 18px rgba(22,199,183,0.18), 0 10px 28px rgba(0,0,0,0.28)';
           zoneEl.style.color = 'white';
           zoneEl.style.fontWeight = '800';
         }
@@ -2960,6 +2960,10 @@ async function __ccWritePresence(partial){
 async function __ccWritePoint(partial){
   if (!auth.currentUser) return;
   const uid = __ccCanonicalUid();
+  try {
+    const prev = state.points.get(uid);
+    if (prev) state.points.set(uid, { ...prev, ...partial });
+  } catch {}
   try{ await update(ref(db, `${basePath}/points/${uid}`), partial); }catch{}
 }
 
@@ -2982,6 +2986,7 @@ window.__ccMarkActive = __ccMarkActive;
 document.addEventListener('visibilitychange', ()=>{
   if (__ccIsHidden()){
     __ccWritePresence({ state:'away', ts: Date.now() });
+    __ccWritePoint({ state:'away' });
   }else{
     __ccMarkActive(true);
     __ccWritePresence({ state:'online', ts: Date.now() });
@@ -4957,6 +4962,7 @@ document.head.appendChild(ratAnimStyle);
 
   // === Подписка на активную дуэль ===
   onValue(duelActiveRef, (snap)=>{
+    if (window.overlayComponent) return;
     // Хелпер: есть ли признаки хост-режима (любой подходит)
     const _isHostHere = () => (
       isOverlayMode()
@@ -5578,6 +5584,7 @@ document.head.appendChild(ratAnimStyle);
 
   // === Подписка на состояние ===
   onValue(sniperRootRef, (snap)=>{
+    if (window.overlayComponent) return;
     if (!snap.exists()){
       if (currentSniper){
         console.log('[sniper] очищено');
@@ -6899,6 +6906,7 @@ document.head.appendChild(ratAnimStyle);
 
   // Подписка на состояние
   onValue(raceRootRef, (snap) => {
+    if (window.overlayComponent) return;
     if (!snap.exists()){
       if (currentRace){
         console.log('[race] очищено');
@@ -8603,7 +8611,7 @@ if (!glyph) {
   // Рисуем перекрашенный эмодзи без фона/квадрата
   const inactiveSince = p && p.lastActive ? (Date.now() - p.lastActive) : 0;
   const inactive = !!(
-    (p && p.state === 'lost') ||
+    (p && (p.state === 'lost' || p.state === 'away')) ||
     (p && p.lastActive && inactiveSince > LOST_AFTER_MS)
   );
   if (inactive) {
@@ -10728,7 +10736,6 @@ gateColor.addEventListener('input', syncColor);
     const musicPath = 'sessions/DepressivePasties/music';
     const musicRef = ref(music_db, musicPath);
     const musicPresencePath = 'sessions/DepressivePasties/presence';
-    const musicPointsPath = 'sessions/DepressivePasties/points';
 
     function _musicClientUid(){
       return window.__ccCanonicalUid?.()
@@ -10768,7 +10775,22 @@ gateColor.addEventListener('input', syncColor);
         console.warn('music vote skipped: auth not ready');
         return false;
       }
-      await set(ref(music_db, `${musicPath}/votes/${name}`), vote);
+      const voterName = window.__ccCanonicalName?.(name) || name || _musicClientName();
+      let voterColor = localStorage.getItem('cc_color') || window.state?.color || '#16c7b7';
+      try {
+        for (const p of (window.state?.points || new Map()).values()) {
+          const pointName = window.__ccCanonicalName?.(p?.name) || p?.name;
+          if (pointName === voterName) {
+            voterColor = p.color || voterColor;
+            break;
+          }
+        }
+      } catch {}
+      if (_musicIsHostName(voterName)) voterColor = '#1e40af';
+      await update(ref(music_db), {
+        [`${musicPath}/votes/${voterName}`]: vote,
+        [`${musicPath}/vote_colors/${voterName}`]: voterColor
+      });
       return true;
     }
 
@@ -10801,6 +10823,7 @@ gateColor.addEventListener('input', syncColor);
           const ready = await _waitForMusicAuth();
           if (!ready) return;
           await remove(ref(music_db, `${musicPath}/votes`));
+          await remove(ref(music_db, `${musicPath}/vote_colors`));
           await remove(ref(music_db, musicPresencePath));
           await remove(ref(music_db, `${musicPath}/vote_result`));
           await remove(ref(music_db, `${musicPath}/decisions`));
@@ -10975,7 +10998,7 @@ gateColor.addEventListener('input', syncColor);
     });
 
     // Детекция голосования через позицию морды (для обычных юзеров)
-    _setupZoneVoteDetection(music_db, musicPath);
+    _setupZoneVoteDetection(music_db, musicPath, _writeMusicVote);
 
     // ========== КОНТРОЛИ ==========
     document.getElementById('hostPlayPause')?.addEventListener('click', () => {
@@ -11073,7 +11096,7 @@ gateColor.addEventListener('input', syncColor);
     });
 
     // === Визуальные индикаторы голосования + таймер часов + автотранспорт ===
-    _setupVoteVisuals(music_db, musicPath);
+    _setupVoteVisuals(music_db, musicPath, _writeMusicVote);
   }
 
   // ============ ДЕТЕКЦИЯ ГОЛОСОВАНИЯ ЧЕРЕЗ ПОЗИЦИЮ МОРДЫ ============
@@ -11121,12 +11144,14 @@ gateColor.addEventListener('input', syncColor);
     return null;
   }
 
-  function _setupZoneVoteDetection(music_db, musicPath){
+  function _setupZoneVoteDetection(music_db, musicPath, writeMusicVote){
     // Каждые 500мс проходим по всем мордам и проверяем
     setInterval(async () => {
       // Активна ли вечеринка?
-      const container = document.getElementById('vote-zones-container');
-      if (!container || container.classList.contains('hidden')) return;
+      if (!document.body.classList.contains('music-active')) {
+        _voteHoldStart.clear();
+        return;
+      }
       if (!window.state || !window.state.points) return;
       if (_isHostHere()) return;
       if (Date.now() < _voteDetectorPausedUntil) return;
@@ -11171,7 +11196,7 @@ gateColor.addEventListener('input', syncColor);
         // Засчитываем!
         const voterName = window.__ccCanonicalName?.(p.name) || p.name || uid.slice(0, 6);
         try {
-          await _writeMusicVote(voterName, zone);
+          await writeMusicVote(voterName, zone);
           _voteCommitted.set(uid, { zone, t: now });
           console.log(`🗳️ ${voterName} → ${zone}`);
         } catch(e){ console.warn('vote write fail', e); }
@@ -11184,10 +11209,13 @@ gateColor.addEventListener('input', syncColor);
   // - Счётчик количества голосов в углу зоны
   // - Таймер на часах: круг постепенно заполняется за 30 сек, потом часы исчезают
   // - Автотранспорт: морда не движется 10 сек и не в зоне → попадает в "Исключение"
-  function _setupVoteVisuals(music_db, musicPath){
+  function _setupVoteVisuals(music_db, musicPath, writeMusicVote){
     // === 1. Лучики и счётчики ===
     // Слушаем votes в реальном времени и обновляем UI каждой зоны
+    const pointsPath = 'sessions/DepressivePasties/points';
+    const presencePath = 'sessions/DepressivePasties/presence';
     let currentVotes = {};
+    let currentVoteColors = {};
     let currentMusicStatus = {};
     let _lastDecisionKey = '';
     onValue(ref(music_db, `${musicPath}/status`), (snap) => {
@@ -11261,6 +11289,9 @@ gateColor.addEventListener('input', syncColor);
       currentVotes = snap.val() || {};
       _evaluateMusicVotes();
     });
+    onValue(ref(music_db, `${musicPath}/vote_colors`), (snap) => {
+      currentVoteColors = snap.val() || {};
+    });
 
     const _lostNotified = new Set();
     const _goneNotified = new Set();
@@ -11276,18 +11307,21 @@ gateColor.addEventListener('input', syncColor);
         const inactiveFor = now - lastActive;
         if (inactiveFor >= LOST_AFTER_MS && !_lostNotified.has(uid)) {
           _lostNotified.add(uid);
-          try { await update(ref(music_db, `sessions/DepressivePasties/points/${uid}`), { state: 'lost' }); } catch {}
+          try { p.state = 'lost'; window.state.points.set(uid, p); } catch {}
+          try { await update(ref(music_db, `${pointsPath}/${uid}`), { state: 'lost' }); } catch {}
           try { window.showOverlayToast?.({ text: `${name} потерялся`, color: p.color || '#999999', emoji: p.emoji || '○' }); } catch {}
         }
         if (inactiveFor < LOST_AFTER_MS && _lostNotified.has(uid)) {
           _lostNotified.delete(uid);
-          try { await update(ref(music_db, `sessions/DepressivePasties/points/${uid}`), { state: 'online' }); } catch {}
+          try { p.state = 'online'; window.state.points.set(uid, p); } catch {}
+          try { await update(ref(music_db, `${pointsPath}/${uid}`), { state: 'online' }); } catch {}
         }
         if (inactiveFor >= GONE_AFTER_MS && !_goneNotified.has(uid)) {
           _goneNotified.add(uid);
           try { await remove(ref(music_db, `${musicPath}/votes/${name}`)); } catch {}
-          try { await remove(ref(music_db, `${musicPointsPath}/${uid}`)); } catch {}
-          try { await remove(ref(music_db, `${musicPresencePath}/${uid}`)); } catch {}
+          try { await remove(ref(music_db, `${musicPath}/vote_colors/${name}`)); } catch {}
+          try { await remove(ref(music_db, `${pointsPath}/${uid}`)); } catch {}
+          try { await remove(ref(music_db, `${presencePath}/${uid}`)); } catch {}
           try { window.state.points.delete(uid); } catch {}
           try { window.state.presence?.delete?.(uid); } catch {}
           try { window.showOverlayToast?.({ text: `${name} ушёл`, color: p.color || '#999999', emoji: p.emoji || '○' }); } catch {}
@@ -11301,9 +11335,14 @@ gateColor.addEventListener('input', syncColor);
     // Карта имя голосующего → цвет (берём из state.points)
     function _colorForVoter(voterName){
       if (window.__ccIsHostName?.(voterName) || voterName === 'Хост') return '#1e40af';
+      if (currentVoteColors[voterName]) return currentVoteColors[voterName];
       if (!window.state || !window.state.points) return '#16c7b7';
       for (const p of window.state.points.values()){
-        if (p && p.name === voterName) return p.color || '#16c7b7';
+        const pointName = window.__ccCanonicalName?.(p?.name) || p?.name;
+        if (p && pointName === voterName) {
+          if (p.color) currentVoteColors[voterName] = p.color;
+          return p.color || '#16c7b7';
+        }
       }
       return '#16c7b7';
     }
@@ -11375,6 +11414,8 @@ gateColor.addEventListener('input', syncColor);
         path.dataset.startOffset = String(startOffset);
         path.dataset.pathLength = String(PL);
         path.dataset.duration = String(Math.max(2.4, 5.5 - N * 0.35));
+        path.style.setProperty('--zone-ring-start', String(startOffset));
+        path.style.animation = `zoneRingOrbit ${path.dataset.duration}s linear infinite`;
         path.style.filter = `drop-shadow(0 0 6px ${color})`;
         g.appendChild(path);
       }
@@ -11470,6 +11511,7 @@ gateColor.addEventListener('input', syncColor);
           try {
             currentVotes = {};
             await remove(ref(music_db, `${musicPath}/votes`));
+            await remove(ref(music_db, `${musicPath}/vote_colors`));
             await remove(ref(music_db, `${musicPath}/vote_result`));
           } catch(e) { console.warn('clear music votes fail', e); }
         }
@@ -11586,8 +11628,14 @@ gateColor.addEventListener('input', syncColor);
     // Если морда стоит вне зон 10+ секунд и не двигается — пишем ей голос "exc"
     const _inactiveTracker = new Map(); // uid → { x, y, sinceT }
     setInterval(async () => {
-      const container = document.getElementById('vote-zones-container');
-      if (!container || container.classList.contains('hidden')) return;
+      if (!document.body.classList.contains('music-active')) {
+        _inactiveTracker.clear();
+        return;
+      }
+      if (!_clockHidden) {
+        _inactiveTracker.clear();
+        return;
+      }
       if (!window.state || !window.state.points) return;
       if (_isHostHere()) return;
 
@@ -11629,9 +11677,12 @@ gateColor.addEventListener('input', syncColor);
         // 10+ сек без движения вне зон — отправляем в Исключение
         const voterName = window.__ccCanonicalName?.(p.name) || p.name || uid.slice(0, 6);
         try {
-          await _writeMusicVote(voterName, 'exc');
+          await writeMusicVote(voterName, 'exc');
           _voteCommitted.set(uid, { zone: 'exc', t: now });
           _inactiveTracker.delete(uid);
+          try { await update(ref(music_db, `${pointsPath}/${uid}`), { state: 'lost' }); } catch {}
+          try { await remove(ref(music_db, `${pointsPath}/${uid}`)); } catch {}
+          try { window.state.points.delete(uid); } catch {}
           console.log(`💤 ${voterName} → exc (неактивен)`);
         } catch(e){ console.warn('auto-exc fail', e); }
       }
