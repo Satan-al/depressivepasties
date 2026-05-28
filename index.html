@@ -1848,6 +1848,9 @@ input[type="range"]{
   body.hide-vote-ui:not(.overlay-mode):not(.overlay-live) #now-playing {
     display: none !important;
   }
+  body:not(.music-active) #now-playing {
+    display: none !important;
+  }
   #headerEmojis {
   flex-wrap: wrap;
   justify-content: flex-start; /* выровнять влево */
@@ -2740,6 +2743,7 @@ input[type="range"]{
   window.__ccCanonicalUid = __ccCanonicalUid;
   window.__ccCanonicalName = __ccCanonicalName;
   window.__ccIsHostName = __ccIsHostName;
+  window.__ccApplyHostIdentity = __ccApplyHostIdentity;
   window.HOST_IDENTITY = HOST_IDENTITY;
 
   // Делаем state доступным из других модулей (например, музыкального — для детекции голосования через позицию морды)
@@ -3584,9 +3588,14 @@ if (!window.__reactionsBound) {
     
     state.name = savedName;
     state.color = localStorage.getItem('cc_color') || '#16c7b7';
+    state.emoji = localStorage.getItem('cc_emoji') || state.emoji || '';
+    if (__ccIsHostName(savedName)) __ccApplyHostIdentity();
     if (window.__neoApplyAccent) window.__neoApplyAccent(state.color);
     
     setTimeout(() => {
+      const gateNameEl = document.getElementById('gateName');
+      if (gateNameEl) gateNameEl.value = state.name;
+      if (gateColor) gateColor.value = state.color;
       // Подставляем ПИН только для системного входа
       gatePin.value = '1111'; 
       doGateLogin();
@@ -3598,7 +3607,8 @@ if (!window.__reactionsBound) {
 
   async function doGateLogin() {
     const pin = gatePin.value.trim();
-    const inputName = document.getElementById('gateName').value.trim() || 'Чужой';
+    const storedName = localStorage.getItem('cc_name') || '';
+    const inputName = document.getElementById('gateName').value.trim() || storedName || 'Чужой';
     const inputColor = gateColor.value;
 
     if (pin !== '1111') {
@@ -3811,12 +3821,8 @@ if (!window.__reactionsBound) {
       return;
     }
     
-    // Собираем URL руками, чтобы флаги без "=" были корректными
-    let src = 'https://vdo.ninja/?view=DepressivePasties';
-    src += '&cleanoutput';
-    src += '&codec=h264';
-    src += '&quality=2';
-    src += '&stats=0';
+    // Use the same high-quality VDO URL everywhere so the site does not fall back to a soft/laggy default.
+    let src = FIXED_VIEW;
     
     $player.src = src;
     console.log('[VDO] iframe src:', src);
@@ -4980,7 +4986,8 @@ document.head.appendChild(ratAnimStyle);
       // Хост-дуэль: если я хост (initiator) — СРАЗУ просим Python включить интерактив,
       // не дожидаясь fighting. Полторы секунды starting нам не лишние —
       // лучше иметь интерактив заранее, чем пропустить начало кликов.
-      if (v.hostDuel && _isHostHere() && auth.currentUser && v.challenger === auth.currentUser.uid){
+      const hostIsParticipant = auth.currentUser && (v.challenger === auth.currentUser.uid || v.victim === auth.currentUser.uid);
+      if (_isHostHere() && hostIsParticipant){
         console.log('[DUEL_INTERACTIVE_ON]');
       }
     }
@@ -4996,7 +5003,8 @@ document.head.appendChild(ratAnimStyle);
     if (v.state === 'ended' && prevState !== 'ended'){
       _stopDuelSound('loop');
       // Хост-дуэль: возвращаем click-through обратно
-      if (v.hostDuel && _isHostHere() && auth.currentUser && v.challenger === auth.currentUser.uid){
+      const hostWasParticipant = auth.currentUser && (v.challenger === auth.currentUser.uid || v.victim === auth.currentUser.uid);
+      if (_isHostHere() && hostWasParticipant){
         console.log('[DUEL_INTERACTIVE_OFF]');
       }
     }
@@ -5076,6 +5084,7 @@ document.head.appendChild(ratAnimStyle);
     duelFightStarted = false;
     _stopDuelSound('loop');
     _applyDuelVisuals(false);
+    if (_isHostHere()) console.log('[DUEL_INTERACTIVE_OFF]');
   }
 
   // === Регистрация клика во время боя ===
@@ -5171,7 +5180,7 @@ document.head.appendChild(ratAnimStyle);
       /* iframe vdo.ninja агрессивно ловит клики — отключаем его на время дуэли,
          чтобы наш click-catcher гарантированно их получал */
       body.duel-active #player {
-        pointer-events: none !important;
+        pointer-events: auto !important;
       }
       /* canvas тоже отдаём катчеру, чтобы pointerdown на канвасе не запускал голос/рисование */
       body.duel-active canvas {
@@ -5622,10 +5631,16 @@ document.head.appendChild(ratAnimStyle);
     }
 
     // Победитель определён? — закрываемся
-    if (v.state === 'ended' && !sniperCleanupScheduled && isInitiator){
+    if (v.state === 'ended' && !sniperCleanupScheduled && (isInitiator || _isHostHere())){
       sniperCleanupScheduled = true;
       setTimeout(()=>{
         remove(sniperRootRef).catch(()=>{});
+        if (currentSniper && currentSniper.state === 'ended') {
+          currentSniper = null;
+          _onSniperEnd();
+          _updateSniperUI();
+          _updateSniperOverlay();
+        }
         sniperCleanupScheduled = false;
       }, 4000);
     }
@@ -6903,6 +6918,9 @@ document.head.appendChild(ratAnimStyle);
     if (!wasActive){
       _onRaceStart();
     }
+    if (_isHostHere() && ['lobby', 'starting', 'racing'].includes(v.state) && prevState !== v.state){
+      console.log('[DUEL_INTERACTIVE_ON]');
+    }
 
     // Хост двигает фазы:
     const isHost = (auth.currentUser && v.host === auth.currentUser.uid);
@@ -7089,6 +7107,7 @@ document.head.appendChild(ratAnimStyle);
 
   function _onRaceEnd(){
     document.body.classList.remove('race-active');
+    if (_isHostHere()) console.log('[DUEL_INTERACTIVE_OFF]');
     if (_raceMainRAF){ cancelAnimationFrame(_raceMainRAF); _raceMainRAF = null; }
     _raceTrack = null;
     _raceMyCarState = null;
@@ -9354,7 +9373,9 @@ ctx.restore();
     drawFrame();
     requestAnimationFrame(loop);
   }
-  requestAnimationFrame(loop);
+  if (!window.overlayComponent) {
+    requestAnimationFrame(loop);
+  }
 
 
   /* ======= INPUT (vote/draw/erase) - ОТКЛЮЧЕНО ДЛЯ OVERLAY РЕЖИМА ======= */
@@ -10765,6 +10786,7 @@ gateColor.addEventListener('input', syncColor);
       const wasActive = _musicActive;
       _lastMusicActive = isActive;
       _musicActive = isActive;
+      document.body.classList.toggle('music-active', isActive);
 
       const isOverlayHost =
         document.documentElement.classList.contains('overlay-live') ||
@@ -10990,7 +11012,7 @@ gateColor.addEventListener('input', syncColor);
       if (!status) return;
 
       const nowPlaying = document.getElementById('now-playing');
-      const musicVisible = _isHostHere() || _musicActive;
+      const musicVisible = _musicActive === true;
       const hiddenByViewer = !_isHostHere() && document.body.classList.contains('hide-vote-ui');
       if (nowPlaying) nowPlaying.style.display = (musicVisible && !hiddenByViewer) ? 'flex' : 'none';
       const song = document.getElementById('nowPlayingSong');
