@@ -2206,6 +2206,56 @@ input[type="range"]{
   // ===== Обработка component-параметра (чат / эмодзибар / музыка) =====
   window.overlayComponent = new URLSearchParams(location.search).get('component');
   if (window.overlayComponent) {
+    document.documentElement.classList.add('component-mode');
+    const componentGuardStyle = document.createElement('style');
+    componentGuardStyle.id = 'componentGameGuardStyle';
+    componentGuardStyle.textContent = `
+      html.component-mode body.duel-active,
+      html.component-mode body.sniper-active,
+      html.component-mode body.race-active { pointer-events: auto !important; }
+      html.component-mode #duelOverlay,
+      html.component-mode #duelClickCatcher,
+      html.component-mode #sniperOverlay,
+      html.component-mode #sniperBall,
+      html.component-mode #sniperCard,
+      html.component-mode #raceCanvas,
+      html.component-mode #raceUI,
+      html.component-mode #raceTestPanel,
+      html.component-mode #raceCarPanel,
+      html.overlay-live.component-mode #duelOverlay,
+      html.overlay-live.component-mode #duelClickCatcher,
+      html.overlay-live.component-mode #sniperOverlay,
+      html.overlay-live.component-mode #sniperBall,
+      html.overlay-live.component-mode #sniperCard,
+      html.overlay-live.component-mode #raceCanvas,
+      html.overlay-live.component-mode #raceUI,
+      html.overlay-live.component-mode #raceTestPanel,
+      html.overlay-live.component-mode #raceCarPanel {
+        display: none !important;
+        visibility: hidden !important;
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
+    `;
+    document.head.appendChild(componentGuardStyle);
+    const suppressComponentGames = () => {
+      document.body.classList.remove('duel-active', 'sniper-active', 'race-active');
+      [
+        'duelOverlay', 'duelClickCatcher',
+        'sniperOverlay', 'sniperBall', 'sniperCard',
+        'raceCanvas', 'raceUI', 'raceTestPanel', 'raceCarPanel'
+      ].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.style.display = 'none';
+          el.style.visibility = 'hidden';
+          el.style.pointerEvents = 'none';
+        }
+      });
+    };
+    window.__ccSuppressComponentGames = suppressComponentGames;
+    suppressComponentGames();
+    setInterval(suppressComponentGames, 250);
     document.body.style.background = 'transparent';
     document.body.style.margin = '0';
     document.body.style.padding = '0';
@@ -4898,6 +4948,32 @@ document.head.appendChild(ratAnimStyle);
   // Сохранённое исходное значение tool — чтобы вернуть после дуэли
   let toolBeforeDuel = null;
 
+  function _myDuelIds(){
+    return [
+      auth.currentUser?.uid,
+      window.__ccCanonicalUid?.()
+    ].filter(Boolean);
+  }
+
+  function _isMeInDuel(v = currentDuel){
+    if (!v) return false;
+    const ids = _myDuelIds();
+    return ids.includes(v.challenger) || ids.includes(v.victim);
+  }
+
+  function _amIDuelChallenger(v = currentDuel){
+    if (!v) return false;
+    return _myDuelIds().includes(v.challenger);
+  }
+
+  function _myDuelParticipantUid(v = currentDuel){
+    if (!v) return null;
+    const ids = _myDuelIds();
+    if (ids.includes(v.challenger)) return v.challenger;
+    if (ids.includes(v.victim)) return v.victim;
+    return null;
+  }
+
   // === Попытка инициировать дуэль после клика по морде соперника ===
   // Вызывается из обычного обработчика pointerdown в режиме vote.
   async function tryRegisterDuelClick(targetUid, targetPoint){
@@ -4992,7 +5068,7 @@ document.head.appendChild(ratAnimStyle);
       // Хост-дуэль: если я хост (initiator) — СРАЗУ просим Python включить интерактив,
       // не дожидаясь fighting. Полторы секунды starting нам не лишние —
       // лучше иметь интерактив заранее, чем пропустить начало кликов.
-      const hostIsParticipant = auth.currentUser && (v.challenger === auth.currentUser.uid || v.victim === auth.currentUser.uid);
+      const hostIsParticipant = auth.currentUser && _isMeInDuel(v);
       if (_isHostHere() && hostIsParticipant){
         console.log('[DUEL_INTERACTIVE_ON]');
       }
@@ -5009,7 +5085,7 @@ document.head.appendChild(ratAnimStyle);
     if (v.state === 'ended' && prevState !== 'ended'){
       _stopDuelSound('loop');
       // Хост-дуэль: возвращаем click-through обратно
-      const hostWasParticipant = auth.currentUser && (v.challenger === auth.currentUser.uid || v.victim === auth.currentUser.uid);
+      const hostWasParticipant = auth.currentUser && _isMeInDuel(v);
       if (_isHostHere() && hostWasParticipant){
         console.log('[DUEL_INTERACTIVE_OFF]');
       }
@@ -5036,7 +5112,7 @@ document.head.appendChild(ratAnimStyle);
   let duelFightStarted = false;
   setInterval(()=>{
     if (!currentDuel || !auth.currentUser) return;
-    if (currentDuel.challenger !== auth.currentUser.uid) return;
+    if (!_amIDuelChallenger(currentDuel)) return;
 
     const now = Date.now();
 
@@ -5051,7 +5127,7 @@ document.head.appendChild(ratAnimStyle);
 
   async function _maybeFinishDuel(){
     if (!currentDuel || !auth.currentUser) return;
-    if (currentDuel.challenger !== auth.currentUser.uid) return;
+    if (!_amIDuelChallenger(currentDuel)) return;
     if (currentDuel.state !== 'fighting') return;
     if (duelCleanupScheduled) return;
 
@@ -5100,8 +5176,8 @@ document.head.appendChild(ratAnimStyle);
   async function registerDuelClick(){
     if (!currentDuel || currentDuel.state !== 'fighting') return false;
     if (!auth.currentUser) return false;
-    const myUid = auth.currentUser.uid;
-    if (myUid !== currentDuel.challenger && myUid !== currentDuel.victim) return false;
+    const myUid = _myDuelParticipantUid(currentDuel);
+    if (!myUid) return false;
 
     // Буферизуем, чтобы не слать 100 update/сек
     _duelClickBuffer += 1;
@@ -5313,8 +5389,8 @@ document.head.appendChild(ratAnimStyle);
       return;
     }
     // Показываем только тем кто участвует
-    const myUid = auth.currentUser?.uid;
-    if (myUid !== currentDuel.challenger && myUid !== currentDuel.victim){
+    const myUid = _myDuelParticipantUid(currentDuel);
+    if (!myUid){
       el.style.display = 'none';
       return;
     }
@@ -5609,7 +5685,7 @@ document.head.appendChild(ratAnimStyle);
     // переход starting → playing делает только инициатор
     // (сравниваем по тому, кто первый в участниках — но проще: первое имя в Object.keys)
     const participants = Object.keys(v.participants || {});
-    const isInitiator = (auth.currentUser && participants[0] === auth.currentUser.uid);
+    const isInitiator = (auth.currentUser && _myDuelIds().includes(participants[0]));
 
     if (v.state === 'starting' && isInitiator){
       const fightAt = (v.startedAt || 0) + SNIPER.STARTING_MS;
@@ -5670,7 +5746,7 @@ document.head.appendChild(ratAnimStyle);
     if (!currentSniper || currentSniper.state !== 'playing') return;
     if (!auth.currentUser) return;
     const participants = Object.keys(currentSniper.participants || {});
-    if (participants[0] !== auth.currentUser.uid) return; // не инициатор
+    if (!_myDuelIds().includes(participants[0])) return; // не инициатор
     _sniperFinishCalled = true;
 
     const scores = currentSniper.scores || {};
@@ -5700,7 +5776,7 @@ document.head.appendChild(ratAnimStyle);
     _sniperFinishCalled = false;
     // Если я хост и в игре — прошу интерактив
     if (auth.currentUser && currentSniper && currentSniper.participants
-        && currentSniper.participants[auth.currentUser.uid]
+        && _myDuelIds().some(uid => currentSniper.participants[uid])
         && _isHostHere()){
       console.log('[DUEL_INTERACTIVE_ON]'); // переиспользуем тот же сигнал ghost_overlay
     }
@@ -5727,8 +5803,8 @@ document.head.appendChild(ratAnimStyle);
   // мы локально проверяем дистанцию до центра и если мы ближе — побеждаем "в окне".
   async function _registerSniperShot(clientX, clientY){
     if (!currentSniper || currentSniper.state !== 'playing') return;
-    const myUid = auth.currentUser?.uid;
-    if (!myUid || !currentSniper.participants?.[myUid]) return;
+    const myUid = _myDuelIds().find(uid => currentSniper.participants?.[uid]);
+    if (!myUid) return;
 
     const tgt = currentSniper.currentTarget;
     if (!tgt) return;
@@ -5915,8 +5991,8 @@ document.head.appendChild(ratAnimStyle);
       ball.style.display = 'none';
       return;
     }
-    const myUid = auth.currentUser?.uid;
-    const isParticipant = !!(myUid && currentSniper.participants?.[myUid]);
+    const myUid = _myDuelIds().find(uid => currentSniper.participants?.[uid]);
+    const isParticipant = !!myUid;
     if (!isParticipant){
       ov.style.display = 'none';
       ball.style.display = 'none';
@@ -11164,7 +11240,7 @@ gateColor.addEventListener('input', syncColor);
         if (uid !== selfUid) continue;
         const zone = _detectZone(p);
 
-        if (!zone){
+        if (!zone || zone === 'time'){
           _voteHoldStart.delete(uid);
           continue;
         }
@@ -11644,10 +11720,16 @@ gateColor.addEventListener('input', syncColor);
       for (const [uid, p] of window.state.points.entries()){
         if (!p) continue;
         if (uid !== selfUid) continue;
+        const voterName = window.__ccCanonicalName?.(p.name) || p.name || uid.slice(0, 6);
+        const alreadyVoted = ['da', 'da_no', 'no', 'exc'].includes(currentVotes[voterName]);
+        if (alreadyVoted){
+          _inactiveTracker.delete(uid);
+          continue;
+        }
 
-        // Если морда в любой зоне — пропускаем (она уже голосует или вот-вот)
+        // После исчезновения часов центр/time уже не защищает искусственную морду от исключения.
         const inZone = _detectZone(p);
-        if (inZone){
+        if (inZone && inZone !== 'time'){
           _inactiveTracker.delete(uid);
           continue;
         }
@@ -11675,7 +11757,6 @@ gateColor.addEventListener('input', syncColor);
         if (now - track.sinceT < 10000) continue;
       
         // 10+ сек без движения вне зон — отправляем в Исключение
-        const voterName = window.__ccCanonicalName?.(p.name) || p.name || uid.slice(0, 6);
         try {
           await writeMusicVote(voterName, 'exc');
           _voteCommitted.set(uid, { zone: 'exc', t: now });
