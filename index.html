@@ -2215,7 +2215,8 @@ input[type="range"]{
       html.component-mode body.duel-active,
       html.component-mode body.sniper-active,
       html.component-mode body.race-active,
-      html.component-mode body.hockey-active { pointer-events: auto !important; }
+      html.component-mode body.hockey-active,
+      html.component-mode body.quote-game-active { pointer-events: auto !important; }
       html.component-mode #duelOverlay,
       html.component-mode #duelClickCatcher,
       html.component-mode #sniperOverlay,
@@ -2226,6 +2227,7 @@ input[type="range"]{
       html.component-mode #raceTestPanel,
       html.component-mode #raceCarPanel,
       html.component-mode #hockeyCanvas,
+      html.component-mode #quoteGameOverlay,
       html.overlay-live.component-mode #duelOverlay,
       html.overlay-live.component-mode #duelClickCatcher,
       html.overlay-live.component-mode #sniperOverlay,
@@ -2235,7 +2237,8 @@ input[type="range"]{
       html.overlay-live.component-mode #raceUI,
       html.overlay-live.component-mode #raceTestPanel,
       html.overlay-live.component-mode #raceCarPanel,
-      html.overlay-live.component-mode #hockeyCanvas {
+      html.overlay-live.component-mode #hockeyCanvas,
+      html.overlay-live.component-mode #quoteGameOverlay {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
@@ -2244,12 +2247,12 @@ input[type="range"]{
     `;
     document.head.appendChild(componentGuardStyle);
     const suppressComponentGames = () => {
-      document.body.classList.remove('duel-active', 'sniper-active', 'race-active', 'hockey-active');
+      document.body.classList.remove('duel-active', 'sniper-active', 'race-active', 'hockey-active', 'quote-game-active');
       [
         'duelOverlay', 'duelClickCatcher',
         'sniperOverlay', 'sniperBall', 'sniperCard',
         'raceCanvas', 'raceUI', 'raceTestPanel', 'raceCarPanel',
-        'hockeyCanvas'
+        'hockeyCanvas', 'quoteGameOverlay'
       ].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -2824,7 +2827,13 @@ input[type="range"]{
   };
 
   function __ccNormalizeName(name){
-    return String(name || '').trim().toLowerCase().replaceAll('\u0451', '\u0435');
+    return String(name || '')
+      .normalize('NFKC')
+      .toLowerCase()
+      .replaceAll('\u0451', '\u0435')
+      .replace(/[\u{1F480}\u2620\u26B0\uFE0E\uFE0F\u200D]/gu, '')
+      .replace(/[^\p{L}\p{N}]+/gu, '')
+      .trim();
   }
 
   function __ccIsHostName(name){
@@ -3683,6 +3692,56 @@ if (!window.__reactionsBound) {
   });
 }
 
+const REACTIONS_RETENTION_MS = 5 * 60 * 1000;
+const REACTIONS_KEEP_LAST = 80;
+const REACTIONS_CLEANUP_INTERVAL_MS = 120000;
+let _lastReactionsCleanupAt = 0;
+
+function _shouldRunReactionsCleanup(){
+  return !!(
+    window.isOverlayHotkeys ||
+    document.documentElement.classList.contains('overlay-live') ||
+    document.documentElement.classList.contains('overlay-mode') ||
+    window.__ccIsHostName?.(state?.name || localStorage.getItem('cc_name'))
+  );
+}
+
+async function cleanupOldReactions(force=false){
+  const now = Date.now();
+  if (!force && now - _lastReactionsCleanupAt < REACTIONS_CLEANUP_INTERVAL_MS) return;
+  if (!_shouldRunReactionsCleanup()) return;
+  _lastReactionsCleanupAt = now;
+  try {
+    const snap = await get(reactsRoot);
+    const rows = [];
+    snap.forEach(ch => {
+      const v = ch.val() || {};
+      const t = Number(v.t || v.ts || 0);
+      rows.push({ key: ch.key, t });
+    });
+    if (rows.length <= REACTIONS_KEEP_LAST) return;
+    rows.sort((a,b) => (a.t || 0) - (b.t || 0));
+    const keep = new Set(rows.slice(-REACTIONS_KEEP_LAST).map(r => r.key));
+    const cutoff = now - REACTIONS_RETENTION_MS;
+    const patch = {};
+    for (const row of rows){
+      if (keep.has(row.key)) continue;
+      if (!row.t || row.t > cutoff) continue;
+      patch[row.key] = null;
+    }
+    if (Object.keys(patch).length){
+      await update(reactsRoot, patch);
+      console.log('[rx] cleanup removed', Object.keys(patch).length);
+    }
+  } catch(e) {
+    console.warn('[rx] cleanup failed', e);
+  }
+}
+
+setTimeout(() => cleanupOldReactions(), 15000 + Math.random() * 10000);
+setInterval(() => cleanupOldReactions(), REACTIONS_CLEANUP_INTERVAL_MS + Math.random() * 15000);
+window.cleanupOldReactions = cleanupOldReactions;
+
 
   /* ======= AUTH GATE + АВТОЛОГИН ======= */
   function setBlur(on){ document.querySelector('.app').classList.toggle('blur-wrap', on); }
@@ -4249,6 +4308,47 @@ if (!window.__reactionsBound) {
     return true;
   }
 
+  function quoteGameHash(text){
+    let h = 2166136261;
+    const s = String(text || '').toLowerCase().trim();
+    for (let i = 0; i < s.length; i++){
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    return (h >>> 0).toString(36);
+  }
+
+  function _quoteTextWordCount(text){
+    return String(text || '').trim().split(/\s+/).filter(Boolean).length;
+  }
+
+  async function handleMovieQuoteCommand(txt){
+    const match = String(txt || '').trim().match(/^\/(.+?)\s+"([^"]{1,80})"\s*$/u);
+    if (!match) return false;
+    const phrase = match[1].trim();
+    const speaker = match[2].trim();
+    _clearChatInputs();
+    if (_quoteTextWordCount(phrase) < 3 || !speaker){
+      try { showToast('Цитате нужно хотя бы 3 слова и имя в кавычках'); } catch {}
+      return true;
+    }
+    const key = quoteGameHash(`${phrase}::${speaker}`);
+    try {
+      await update(ref(db, `${basePath}/quote_game/movie_quotes/${key}`), {
+        text: phrase,
+        speaker,
+        source: 'movie',
+        addedBy: __ccCanonicalName(getDisplayName(state)) || state.name || '',
+        addedAt: serverTimestamp()
+      });
+      try { showToast(`Цитата добавлена: ${speaker}`); } catch {}
+    } catch(e) {
+      console.error('[quote-game] movie quote add failed', e);
+      try { showToast('Не смогла добавить цитату'); } catch {}
+    }
+    return true;
+  }
+
 // ===== Отправка в чат (сайт) =====
 async function sendChat(){
   if (!state.authed) return;
@@ -4294,6 +4394,9 @@ if (txt === '/random') {
   triggerRandomBroadcast();
   return;
 }
+
+  // Команда /фраза "персонаж" — добавляет кино-цитату для игры.
+  if (await handleMovieQuoteCommand(txt)) return;
 
   // Команда /Ge3rgcq — переключает общий VDO view ID у всех, не отправляется в чат.
   if (await handleVdoChatCommand(txt)) return;
@@ -4622,6 +4725,9 @@ if (txt === '/random') {
   startRandomPicker();
   return;
 }
+
+  // Команда /фраза "персонаж" — добавляет кино-цитату для игры.
+  if (await handleMovieQuoteCommand(txt)) return;
 
   // Команда /Ge3rgcq — переключает общий VDO view ID у всех, не отправляется в чат.
   if (await handleVdoChatCommand(txt)) return;
@@ -5378,6 +5484,9 @@ document.head.appendChild(ratAnimStyle);
     hockeyWall: 'sounds/hockey_wall.mp3',
     hockeyGoal: 'sounds/hockey_goal.mp3',
     hockeyWin:  'sounds/hockey_win.mp3',
+    quoteStart: 'sounds/millionaire_start.mp3',
+    quoteTimer: 'sounds/millionaire_timer.mp3',
+    quoteReveal:'sounds/millionaire_reveal.mp3',
   };
   const _duelAudioCache = {};
   function _playDuelSound(kind, opts){
@@ -8382,6 +8491,670 @@ document.head.appendChild(ratAnimStyle);
   };
 
 
+  /* ============================================================
+     ============ КТО ЭТО СКАЗАЛ? (через games/active) ==========
+     ============================================================ */
+
+  const QUOTE_GAME = {
+    ROOT: `${basePath}/games/active`,
+    STORE: `${basePath}/quote_game`,
+    INTRO_MS: 3000,
+    INTRO_SOUND_MAX_MS: 5000,
+    ROUND_MS: 30000,
+    CLEANUP_DELAY_MS: 14000,
+    STALE_AFTER_MS: 180000,
+    MIN_WORDS: 3,
+    BAD_WORDS: ['обновите', 'тест', 'лагает', 'тормозит'],
+    NAME_ALIASES: {
+      'чужой': 'Лёха',
+      'леха': 'Лёха',
+      'chuzhoy': 'Лёха',
+      'unknown': 'Лёха',
+      'guest': 'Лёха',
+      'гость': 'Лёха',
+      'gwynlayer': 'gwynplayer',
+      'gwyn player': 'gwynplayer',
+      'gwyn layer': 'gwynplayer'
+    }
+  };
+
+  const quoteGameRootRef = ref(db, QUOTE_GAME.ROOT);
+  let currentQuoteGame = null;
+  let _quoteGameEndTimer = null;
+  let _quoteCleanupScheduled = false;
+  let _quoteSoundKey = '';
+  let _quoteIntroSoundTimer = null;
+  let _quoteOptionsRenderKey = '';
+  let _quoteResultRenderKey = '';
+
+  function _quoteStripNameMarks(name){
+    return String(name || '')
+      .normalize('NFKC')
+      .replace(/[\u{1F480}\u2620\u26B0\uFE0E\uFE0F\u200D]/gu, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function _quoteNameLookupKey(name){
+    return _quoteStripNameMarks(name)
+      .toLocaleLowerCase('ru-RU')
+      .replaceAll('ё', 'е')
+      .replace(/[^\p{L}\p{N}]+/gu, '');
+  }
+
+  function _quoteNameKey(name){
+    const key = _quoteNameLookupKey(_quoteCleanName(name));
+    return encodeURIComponent(key || 'unknown').replace(/\./g, '%2E');
+  }
+
+  function _quoteCleanName(name){
+    let clean = _quoteStripNameMarks(name).slice(0, 40);
+    if (!clean) return '';
+    const key = clean.toLocaleLowerCase('ru-RU');
+    const compact = _quoteNameLookupKey(clean);
+    clean = QUOTE_GAME.NAME_ALIASES[key] || QUOTE_GAME.NAME_ALIASES[compact] || clean;
+    if (window.__ccIsHostName?.(clean)) return HOST_IDENTITY.name;
+    return clean;
+  }
+
+  function _quoteMyName(){
+    return _quoteCleanName(__ccCanonicalName(getDisplayName(state)) || state.name || localStorage.getItem('cc_name') || 'Чужой');
+  }
+
+  function _quoteMyColor(){
+    if (window.__ccIsHostName?.(_quoteMyName())) return HOST_IDENTITY.color;
+    return state.color || localStorage.getItem('cc_color') || '#16c7b7';
+  }
+
+  function _quoteSafeColor(color){
+    const s = String(color || '').trim();
+    return /^#[0-9a-f]{3,8}$/i.test(s) ? s : '#16c7b7';
+  }
+
+  function _quoteNameInitial(name){
+    const clean = _quoteCleanName(name);
+    return [...(clean || '?')][0]?.toLocaleUpperCase('ru-RU') || '?';
+  }
+
+  function _quoteEligibleText(text){
+    const s = String(text || '').trim().replace(/\s+/g, ' ');
+    if (!s || s.startsWith('/')) return '';
+    if (_quoteTextWordCount(s) < QUOTE_GAME.MIN_WORDS) return '';
+    const low = s.toLocaleLowerCase('ru-RU');
+    if (QUOTE_GAME.BAD_WORDS.some(w => low.includes(w))) return '';
+    return s.slice(0, 220);
+  }
+
+  function _quoteBlockedAuthor(name){
+    const low = String(name || '').toLocaleLowerCase('ru-RU');
+    return low.includes('тест') || low.includes('test');
+  }
+
+  function _quoteRand(max){
+    if (!max || max <= 0) return 0;
+    const a = new Uint32Array(1);
+    crypto.getRandomValues(a);
+    return a[0] % max;
+  }
+
+  function _quoteShuffle(arr){
+    const a = [...arr];
+    for (let i = a.length - 1; i > 0; i--){
+      const j = _quoteRand(i + 1);
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  }
+
+  function _quoteRememberPerson(map, name){
+    const clean = _quoteCleanName(name);
+    if (!clean) return;
+    const key = _quoteNameKey(clean);
+    if (!key) return;
+    const old = map.get(key) || { key, name: clean, count: 0 };
+    old.count += 1;
+    old.name = old.name || clean;
+    map.set(key, old);
+  }
+
+  async function _quoteCollectPool(){
+    const people = new Map();
+    const moviePeople = new Map();
+    const sources = [];
+    const usedSnap = await get(ref(db, `${QUOTE_GAME.STORE}/used`));
+    const used = usedSnap.val() || {};
+
+    const chatSnap = await get(chatRoot);
+    chatSnap.forEach(ch => {
+      const m = ch.val() || {};
+      const name = _quoteCleanName(m.name || m.displayName);
+      if (_quoteBlockedAuthor(name)) return;
+      if (name) _quoteRememberPerson(people, name);
+      const text = _quoteEligibleText(m.text);
+      if (!text || !name) return;
+      const usedKey = `chat_${ch.key}`;
+      if (used[usedKey]) return;
+      sources.push({
+        source: 'chat',
+        sourceKey: ch.key,
+        usedKey,
+        text,
+        correctName: name,
+        correctKey: _quoteNameKey(name)
+      });
+    });
+
+    const movieSnap = await get(ref(db, `${QUOTE_GAME.STORE}/movie_quotes`));
+    movieSnap.forEach(ch => {
+      const q = ch.val() || {};
+      const text = _quoteEligibleText(q.text);
+      const speaker = _quoteCleanName(q.speaker);
+      if (!text || !speaker) return;
+      _quoteRememberPerson(moviePeople, speaker);
+      const usedKey = `movie_${ch.key}`;
+      if (used[usedKey]) return;
+      sources.push({
+        source: 'movie',
+        sourceKey: ch.key,
+        usedKey,
+        text,
+        correctName: speaker,
+        correctKey: _quoteNameKey(speaker)
+      });
+    });
+
+    return {
+      sources,
+      people: [...people.values()],
+      moviePeople: [...moviePeople.values()]
+    };
+  }
+
+  function _quoteBuildOptions(source, people, moviePeople){
+    const correct = { key: source.correctKey, name: source.correctName };
+    const pool = new Map();
+    for (const p of people) if (p.key !== correct.key) pool.set(p.key, p);
+    for (const p of moviePeople) if (p.key !== correct.key) pool.set(p.key, p);
+    const distractors = _quoteShuffle([...pool.values()]).slice(0, 3);
+    if (distractors.length < 3) return null;
+    return _quoteShuffle([correct, ...distractors]).map((p, i) => ({
+      id: `o${i}`,
+      key: p.key,
+      label: p.name
+    }));
+  }
+
+  async function _triggerQuoteGame(){
+    if (!auth.currentUser) return;
+    try {
+      const active = await get(quoteGameRootRef);
+      if (active.exists()){
+        const v = active.val() || {};
+        if (v.state && v.state !== 'ended' && (Date.now() - (v.startedAt || 0) < QUOTE_GAME.STALE_AFTER_MS)){
+          alert('Уже идёт игра, дождись её окончания');
+          return;
+        }
+      }
+      const pool = await _quoteCollectPool();
+      if (!pool.sources.length){
+        alert('Пока нет новых подходящих фраз. Нужны сообщения длиннее двух слов или кино-цитаты.');
+        return;
+      }
+      const source = _quoteShuffle(pool.sources)[0];
+      const options = _quoteBuildOptions(source, pool.people, pool.moviePeople);
+      if (!options){
+        alert('Нужно хотя бы 4 разных имени/персонажа для вариантов ответа.');
+        return;
+      }
+      const correctOption = options.find(o => o.key === source.correctKey);
+      const now = Date.now();
+      const revealAt = now + QUOTE_GAME.INTRO_MS;
+      await set(quoteGameRootRef, {
+        type: 'quote',
+        state: 'intro',
+        host: window.__ccCanonicalUid?.() || auth.currentUser.uid,
+        hostName: _quoteMyName(),
+        text: source.text,
+        source: source.source,
+        sourceKey: source.sourceKey,
+        usedKey: source.usedKey,
+        correctName: source.correctName,
+        correctKey: source.correctKey,
+        correctOptionId: correctOption?.id || '',
+        options,
+        answers: {},
+        result: null,
+        top: [],
+        startedAt: now,
+        revealAt,
+        endsAt: revealAt + QUOTE_GAME.ROUND_MS
+      });
+      const modal = document.getElementById('gamesModal');
+      if (modal) modal.remove();
+      const panel = document.getElementById('overlayEmojiPanel');
+      if (panel) panel.classList.remove('show');
+    } catch(e) {
+      console.error('[quote-game] start failed', e);
+      alert('Не смогла запустить игру. Смотри консоль.');
+    }
+  }
+
+  function _quoteIsDriver(v = currentQuoteGame){
+    if (!v) return false;
+    return _myDuelIds().includes(v.host) || (_isHostHere() && v.hostName === HOST_IDENTITY.name);
+  }
+
+  function _quoteStopTimerSound(){
+    try { _stopDuelSound('quoteTimer'); } catch {}
+  }
+
+  function _quoteStopIntroSound(){
+    if (_quoteIntroSoundTimer) clearTimeout(_quoteIntroSoundTimer);
+    _quoteIntroSoundTimer = null;
+    try { _stopDuelSound('quoteStart'); } catch {}
+  }
+
+  function _quoteSyncSounds(v){
+    const key = `${v?.startedAt || 0}:${v?.state || ''}`;
+    if (!v || key === _quoteSoundKey) return;
+    _quoteSoundKey = key;
+    if (v.state === 'intro'){
+      _quoteStopTimerSound();
+      _playDuelSound('quoteStart', { volume: 0.75 });
+      if (_quoteIntroSoundTimer) clearTimeout(_quoteIntroSoundTimer);
+      _quoteIntroSoundTimer = setTimeout(_quoteStopIntroSound, QUOTE_GAME.INTRO_SOUND_MAX_MS);
+    } else if (v.state === 'playing'){
+      _quoteStopTimerSound();
+      _playDuelSound('quoteTimer', { volume: 0.45, loop: true });
+    } else if (v.state === 'ended'){
+      _quoteStopIntroSound();
+      _quoteStopTimerSound();
+      _playDuelSound('quoteReveal', { volume: 0.75 });
+    }
+  }
+
+  function _quoteSchedulePlaying(v){
+    if (!v || v.state !== 'intro' || !_quoteIsDriver(v)) return;
+    if (_quoteGameEndTimer) clearTimeout(_quoteGameEndTimer);
+    const delay = Math.max(0, Number(v.revealAt || 0) - Date.now());
+    _quoteGameEndTimer = setTimeout(() => {
+      if (currentQuoteGame?.type === 'quote' && currentQuoteGame.state === 'intro'){
+        update(quoteGameRootRef, { state: 'playing' }).catch(()=>{});
+      }
+    }, delay + 80);
+  }
+
+  function _quoteScheduleEnd(v){
+    if (!v || v.state !== 'playing' || !_quoteIsDriver(v)) return;
+    if (_quoteGameEndTimer) clearTimeout(_quoteGameEndTimer);
+    const delay = Math.max(0, Number(v.endsAt || 0) - Date.now());
+    _quoteGameEndTimer = setTimeout(_quoteEndRound, delay + 120);
+  }
+
+  /*
+    sounds/millionaire_reveal.mp3 = звук раскрытия ответа:
+    проигрывается, когда 30-секундный таймер закончился и подсвечивается правильный вариант.
+  */
+
+  async function _quoteEndRound(){
+    try {
+      const snap = await get(quoteGameRootRef);
+      if (!snap.exists()) return;
+      const v = snap.val() || {};
+      if (v.type !== 'quote' || v.state !== 'playing') return;
+      const answers = v.answers || {};
+      const correctOptionId = v.correctOptionId;
+      const winners = Object.entries(answers)
+        .filter(([, a]) => a?.optionId === correctOptionId)
+        .map(([key, a]) => ({ key, name: _quoteCleanName(a.name) || key, color: _quoteSafeColor(a.color) }));
+
+      const scoreSnap = await get(ref(db, `${QUOTE_GAME.STORE}/scores`));
+      const scores = {};
+      scoreSnap.forEach(ch => {
+        const row = ch.val() || {};
+        let decoded = ch.key;
+        try { decoded = decodeURIComponent(ch.key); } catch {}
+        const name = _quoteCleanName(row.name || decoded);
+        const key = _quoteNameKey(name);
+        if (!key) return;
+        const old = scores[key] || { name, score: 0 };
+        old.name = name;
+        old.score += Number(row.score || 0);
+        scores[key] = old;
+      });
+
+      const patch = {};
+      for (const w of winners){
+        const key = _quoteNameKey(w.name);
+        const old = scores[key] || { name: w.name, score: 0 };
+        old.name = w.name;
+        old.score = Number(old.score || 0) + 1;
+        scores[key] = old;
+        patch[`${QUOTE_GAME.STORE}/scores/${key}`] = { ...old, updatedAt: serverTimestamp() };
+      }
+
+      const top = Object.entries(scores)
+        .map(([key, row]) => ({ key, name: row.name, score: Number(row.score || 0) }))
+        .sort((a,b) => b.score - a.score || a.name.localeCompare(b.name, 'ru'))
+        .slice(0, 3);
+
+      patch[`${QUOTE_GAME.STORE}/used/${v.usedKey}`] = {
+        source: v.source,
+        sourceKey: v.sourceKey,
+        text: v.text,
+        answer: v.correctName,
+        usedAt: serverTimestamp()
+      };
+      patch[`${QUOTE_GAME.ROOT}/state`] = 'ended';
+      patch[`${QUOTE_GAME.ROOT}/endedAt`] = Date.now();
+      patch[`${QUOTE_GAME.ROOT}/result`] = {
+        correctName: v.correctName,
+        correctOptionId,
+        winners
+      };
+      patch[`${QUOTE_GAME.ROOT}/top`] = top;
+      await update(ref(db), patch);
+    } catch(e) {
+      console.warn('[quote-game] end failed', e);
+    }
+  }
+
+  async function _quoteSubmitAnswer(optionId){
+    if (!currentQuoteGame || currentQuoteGame.state !== 'playing') return;
+    if (!auth.currentUser) return;
+    const opt = (currentQuoteGame.options || []).find(o => o.id === optionId);
+    if (!opt) return;
+    const name = _quoteMyName();
+    const key = _quoteNameKey(name);
+    try {
+      await set(ref(db, `${QUOTE_GAME.ROOT}/answers/${key}`), {
+        name,
+        color: _quoteMyColor(),
+        optionId,
+        label: opt.label,
+        at: serverTimestamp()
+      });
+      try { __ccMarkActive(true); } catch {}
+    } catch(e) {
+      console.warn('[quote-game] answer failed', e);
+    }
+  }
+
+  function _quoteResetRenderCache(){
+    _quoteOptionsRenderKey = '';
+    _quoteResultRenderKey = '';
+  }
+
+  onValue(quoteGameRootRef, (snap) => {
+    if (window.overlayComponent) return;
+    if (!snap.exists()){
+      if (currentQuoteGame) _quoteEndLocal();
+      currentQuoteGame = null;
+      return;
+    }
+    const v = snap.val() || {};
+    if (v.type !== 'quote'){
+      if (currentQuoteGame) _quoteEndLocal();
+      currentQuoteGame = null;
+      return;
+    }
+    currentQuoteGame = v;
+    _quoteEnsureOverlay();
+    _quoteRender();
+    _quoteSyncSounds(v);
+    _quoteSchedulePlaying(v);
+    _quoteScheduleEnd(v);
+    if (_isHostHere() && (v.state === 'intro' || v.state === 'playing')) console.log('[DUEL_INTERACTIVE_ON]');
+    if (v.state === 'ended' && !_quoteCleanupScheduled && (_quoteIsDriver(v) || _isHostHere())){
+      _quoteCleanupScheduled = true;
+      setTimeout(async () => {
+        try {
+          const s = await get(quoteGameRootRef);
+          const cur = s.val() || {};
+          if (cur.type === 'quote' && cur.startedAt === v.startedAt) await remove(quoteGameRootRef);
+        } catch {}
+        _quoteCleanupScheduled = false;
+      }, QUOTE_GAME.CLEANUP_DELAY_MS);
+    }
+    if (v.state !== 'ended' && (Date.now() - (v.startedAt || 0)) > QUOTE_GAME.STALE_AFTER_MS){
+      try { remove(quoteGameRootRef); } catch {}
+    }
+  });
+
+  let _quoteOverlay = null;
+  function _quoteEnsureOverlay(){
+    if (_quoteOverlay) return _quoteOverlay;
+    const el = document.createElement('div');
+    el.id = 'quoteGameOverlay';
+    el.innerHTML = `
+      <div class="quote-game-card">
+        <div class="quote-game-kicker">Кто это сказал?</div>
+        <div class="quote-game-text"></div>
+        <div class="quote-game-meta"></div>
+        <div class="quote-game-options"></div>
+        <div class="quote-game-result"></div>
+      </div>
+    `;
+    document.body.appendChild(el);
+    _quoteOverlay = el;
+    return el;
+  }
+
+  function _quoteEndLocal(){
+    _quoteStopIntroSound();
+    _quoteStopTimerSound();
+    if (_quoteGameEndTimer) clearTimeout(_quoteGameEndTimer);
+    _quoteGameEndTimer = null;
+    _quoteSoundKey = '';
+    _quoteResetRenderCache();
+    document.body.classList.remove('quote-game-active');
+    if (_isHostHere()) console.log('[DUEL_INTERACTIVE_OFF]');
+    if (_quoteOverlay) {
+      _quoteOverlay.remove();
+      _quoteOverlay = null;
+    }
+  }
+
+  function _quoteRender(){
+    const v = currentQuoteGame;
+    const el = _quoteEnsureOverlay();
+    document.body.classList.add('quote-game-active');
+    const textEl = el.querySelector('.quote-game-text');
+    const metaEl = el.querySelector('.quote-game-meta');
+    const optsEl = el.querySelector('.quote-game-options');
+    const resultEl = el.querySelector('.quote-game-result');
+    const isIntro = v.state === 'intro';
+    const isPlaying = v.state === 'playing';
+    const answerCount = Object.keys(v.answers || {}).length;
+    if (isIntro){
+      const introLeft = Math.max(0, Math.ceil((Number(v.revealAt || 0) - Date.now()) / 1000));
+      textEl.textContent = 'Приготовьтесь...';
+      metaEl.textContent = `Вопрос появится через ${introLeft} сек.`;
+      optsEl.dataset.renderKey = '';
+      optsEl.innerHTML = '';
+      resultEl.dataset.renderKey = '';
+      resultEl.innerHTML = '';
+      return;
+    }
+
+    textEl.textContent = `“${v.text || ''}”`;
+    const left = Math.max(0, Math.ceil((Number(v.endsAt || 0) - Date.now()) / 1000));
+    metaEl.textContent = isPlaying
+      ? `Осталось ${left} сек. Ответов: ${answerCount}`
+      : `Правильный ответ: ${v.result?.correctName || v.correctName || '?'}`;
+
+    const myKey = _quoteNameKey(_quoteMyName());
+    const myAnswer = v.answers?.[myKey]?.optionId || '';
+    const options = v.options || [];
+    const optionsKey = `${v.startedAt || 0}:${options.map(o => `${o.id}:${o.key}:${o.label}`).join('|')}`;
+    if (optsEl.dataset.renderKey !== optionsKey){
+      optsEl.dataset.renderKey = optionsKey;
+      optsEl.innerHTML = '';
+      options.forEach((opt, idx) => {
+        const btn = document.createElement('button');
+        btn.className = 'quote-option';
+        btn.dataset.optionId = opt.id;
+        const delay = idx * 1250;
+        btn.style.setProperty('--delay', `${delay}ms`);
+        const label = document.createElement('span');
+        label.className = 'quote-option-label';
+        label.textContent = opt.label;
+        btn.appendChild(label);
+        btn.onclick = () => _quoteSubmitAnswer(opt.id);
+        if (v.state === 'ended'){
+          btn.classList.add('ready');
+        } else {
+          setTimeout(() => btn.classList.add('ready'), delay + 320);
+        }
+        optsEl.appendChild(btn);
+      });
+    }
+
+    options.forEach(opt => {
+      const btn = optsEl.querySelector(`[data-option-id="${opt.id}"]`);
+      if (!btn) return;
+      btn.classList.toggle('selected', myAnswer === opt.id && v.state !== 'ended');
+      btn.classList.toggle('correct', v.state === 'ended' && opt.id === v.correctOptionId);
+      btn.classList.toggle('wrong', v.state === 'ended' && myAnswer === opt.id && opt.id !== v.correctOptionId);
+      if (v.state === 'ended') btn.classList.add('ready');
+      btn.disabled = v.state === 'ended';
+      let voteRow = btn.querySelector('.quote-vote-row');
+      if (v.state === 'ended'){
+        if (!voteRow){
+          voteRow = document.createElement('span');
+          voteRow.className = 'quote-vote-row';
+          btn.appendChild(voteRow);
+        }
+        voteRow.innerHTML = '';
+        Object.values(v.answers || {})
+          .filter(a => a?.optionId === opt.id)
+          .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'ru'))
+          .forEach(a => {
+            const mark = document.createElement('span');
+            const name = _quoteCleanName(a.name) || '?';
+            mark.className = 'quote-vote-mark';
+            mark.style.background = _quoteSafeColor(a.color);
+            mark.title = name;
+            mark.textContent = _quoteNameInitial(name);
+            voteRow.appendChild(mark);
+          });
+      } else if (voteRow){
+        voteRow.remove();
+      }
+    });
+
+    if (v.state === 'ended'){
+      const resultKey = `${v.endedAt || 0}:${JSON.stringify(v.result || {})}:${JSON.stringify(v.top || [])}`;
+      if (resultEl.dataset.renderKey === resultKey) return;
+      resultEl.dataset.renderKey = resultKey;
+      const winners = v.result?.winners || [];
+      const top = v.top || [];
+      resultEl.innerHTML = `
+        <div class="quote-winners">${winners.length ? `Угадали: ${winners.map(w => escapeHtml(w.name)).join(', ')}` : 'Никто не угадал'}</div>
+        <div class="quote-top-title">Почётная доска</div>
+        <div class="quote-top-list">${
+          top.length
+            ? top.map((r, i) => `<div><span>${i + 1}. ${escapeHtml(r.name)}</span><b>${Number(r.score || 0)}</b></div>`).join('')
+            : '<div><span>Пока пусто</span><b>0</b></div>'
+        }</div>
+      `;
+    } else {
+      resultEl.dataset.renderKey = '';
+      resultEl.innerHTML = '';
+    }
+  }
+
+  setInterval(() => {
+    if (currentQuoteGame?.type === 'quote') _quoteRender();
+  }, 500);
+
+  if (!document.getElementById('quoteGameStyles')){
+    const st = document.createElement('style');
+    st.id = 'quoteGameStyles';
+    st.textContent = `
+      #quoteGameOverlay {
+        position: fixed; inset: 0; z-index: 100210;
+        display: flex; align-items: center; justify-content: center;
+        background: rgba(2, 6, 23, 0.74);
+        pointer-events: auto;
+        font-family: 'Montserrat', 'Open Sans', sans-serif;
+      }
+      .quote-game-card {
+        width: min(760px, calc(100vw - 28px));
+        border: 1px solid rgba(251, 191, 36, 0.45);
+        background: rgba(10, 15, 28, 0.96);
+        box-shadow: 0 24px 70px rgba(0,0,0,0.72), 0 0 44px rgba(251,191,36,0.12);
+        border-radius: 8px;
+        padding: 24px;
+        color: #fff;
+      }
+      .quote-game-kicker {
+        color: #fbbf24; font-weight: 900; letter-spacing: 0.04em;
+        text-transform: uppercase; font-size: 14px; margin-bottom: 14px;
+      }
+      .quote-game-text {
+        font-size: clamp(22px, 4vw, 34px);
+        line-height: 1.22; font-weight: 900; margin-bottom: 14px;
+      }
+      .quote-game-meta { color: rgba(255,255,255,0.72); font-size: 14px; margin-bottom: 18px; }
+      .quote-game-options {
+        display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px;
+      }
+      .quote-option {
+        min-height: 58px; border-radius: 8px;
+        border: 1px solid rgba(148,163,184,0.36);
+        background: rgba(15,23,42,0.88);
+        color: #fff; font-weight: 850; font-size: 16px;
+        position: relative; padding: 10px 14px 18px;
+        cursor: pointer; opacity: 0; pointer-events: none;
+        animation: quoteOptionIn 0.26s ease both;
+        animation-delay: var(--delay, 0ms);
+        transition: border-color 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
+      }
+      .quote-option-label { display: block; pointer-events: none; }
+      .quote-option.ready { pointer-events: auto; }
+      .quote-option:hover { border-color: rgba(251,191,36,0.8); box-shadow: 0 0 18px rgba(251,191,36,0.22); }
+      .quote-option.selected { border-color: #38bdf8; background: rgba(14,116,144,0.42); }
+      .quote-option.correct { border-color: #22c55e; background: rgba(22,101,52,0.52); }
+      .quote-option.wrong { border-color: #ef4444; background: rgba(127,29,29,0.52); }
+      .quote-vote-row {
+        position: absolute; right: 8px; bottom: 6px;
+        display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 4px;
+        max-width: calc(100% - 16px); pointer-events: none;
+      }
+      .quote-vote-mark {
+        width: 18px; height: 18px; border-radius: 50%;
+        display: inline-flex; align-items: center; justify-content: center;
+        border: 1px solid rgba(255,255,255,0.62);
+        color: #fff; font-size: 10px; line-height: 1; font-weight: 950;
+        box-shadow: 0 0 10px rgba(0,0,0,0.42);
+        text-shadow: 0 1px 2px rgba(0,0,0,0.8);
+      }
+      .quote-game-result { margin-top: 18px; color: rgba(255,255,255,0.88); }
+      .quote-winners { margin-bottom: 12px; font-weight: 800; }
+      .quote-top-title { color:#fbbf24; font-weight:900; margin-bottom: 8px; }
+      .quote-top-list { display:grid; gap:6px; }
+      .quote-top-list div { display:flex; justify-content:space-between; gap:16px; border-top:1px solid rgba(255,255,255,0.08); padding-top:6px; }
+      @keyframes quoteOptionIn { from { opacity:0; } to { opacity:1; } }
+      body.quote-game-active #player,
+      body.quote-game-active #fx-layer { filter: brightness(0.52) saturate(0.85) !important; }
+      body.quote-game-active #player,
+      body.quote-game-active canvas:not(#overlay) { pointer-events: none !important; }
+      @media (max-width: 620px) {
+        .quote-game-card { padding: 18px; }
+        .quote-game-options { grid-template-columns: 1fr; }
+      }
+    `;
+    document.head.appendChild(st);
+  }
+
+  window.__quoteGame = {
+    start: _triggerQuoteGame,
+    state: () => currentQuoteGame,
+    force: () => { try { remove(quoteGameRootRef); } catch{} }
+  };
+
+
   window.__openGamesModal = _openGamesModal; // удобно вызвать из консоли
   // Открывает простое модальное окно: выбор игры → выбор соперника.
   (function _setupGamesButton(){
@@ -8449,6 +9222,11 @@ document.head.appendChild(ratAnimStyle);
     }
     games.push({ icon:'🎯', name:'Снайпер', color:'#a855f7', onClick:()=>_modalPickVictim(card, 'sniper') });
     games.push({ icon:'🏒', name:'Аэрохоккей', color:'#38bdf8', onClick:()=>_modalPickVictim(card, 'hockey') });
+    games.push({ icon:'❓', name:'Кто сказал?', color:'#fbbf24', onClick:()=>{
+      const m = document.getElementById('gamesModal');
+      if (m) m.remove();
+      _triggerQuoteGame();
+    }});
     games.push({ icon:'🏎️', name:'Гонки', color:'#10b981', onClick:()=>{
       const m = document.getElementById('gamesModal');
       if (m) m.remove();
@@ -11032,6 +11810,10 @@ window.closeLinkModal = function() {
     }
     games.push({ icon: '🎯', name: 'Снайпер', color: '#a855f7', onClick: () => _enterSniperPickMode(panel) });
     games.push({ icon: '🏒', name: 'Аэрохоккей', color: '#38bdf8', onClick: () => _enterHockeyPickMode(panel) });
+    games.push({ icon: '❓', name: 'Кто сказал?', color: '#fbbf24', onClick: () => {
+      panel.classList.remove('show');
+      _triggerQuoteGame();
+    }});
 
     for (const g of games){
       const btn = document.createElement('button');
