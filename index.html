@@ -2513,7 +2513,8 @@ input[type="range"]{
   import { getAuth, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
   const SESSION_KEY = "DepressivePasties";
-  const VDO_VIEW_ID = "DepressivePasties";
+  const VDO_DEFAULT_VIEW_ID = "DepressivePasties";
+  let _currentVdoViewId = normalizeVdoViewId(localStorage.getItem('cc_vdo_view_id')) || VDO_DEFAULT_VIEW_ID;
   const VDO_DEFAULTS = {
     bitrate: 9000,
     width: 1920,
@@ -2523,10 +2524,16 @@ input[type="range"]{
     scale: 100
   };
 
-  function buildVdoViewUrl(){
+  function normalizeVdoViewId(value){
+    const raw = String(value || '').trim();
+    const m = raw.match(/^[A-Za-z0-9_]{3,64}$/);
+    return m ? raw : '';
+  }
+
+  function buildVdoViewUrl(viewId = _currentVdoViewId){
     const params = new URLSearchParams(location.search);
     const url = new URL('https://vdo.ninja/');
-    url.searchParams.set('view', VDO_VIEW_ID);
+    url.searchParams.set('view', normalizeVdoViewId(viewId) || VDO_DEFAULT_VIEW_ID);
 
     const bitrate = Number(params.get('vdoBitrate') || localStorage.getItem('cc_vdo_bitrate') || VDO_DEFAULTS.bitrate);
     const width = Number(params.get('vdoWidth') || localStorage.getItem('cc_vdo_width') || VDO_DEFAULTS.width);
@@ -2550,6 +2557,21 @@ input[type="range"]{
     url.searchParams.set('noheader', '');
     url.searchParams.set('stats', '0');
     return url.toString();
+  }
+
+  function applyVdoViewId(viewId, opts = {}){
+    const clean = normalizeVdoViewId(viewId) || VDO_DEFAULT_VIEW_ID;
+    const changed = clean !== _currentVdoViewId;
+    _currentVdoViewId = clean;
+    localStorage.setItem('cc_vdo_view_id', clean);
+    const player = document.getElementById('player');
+    if (!player || isOverlayMode()) return changed;
+    const src = buildVdoViewUrl(clean);
+    if (changed || !player.src || player.src === 'about:blank' || opts.force){
+      player.src = src;
+      console.log('[VDO] switched view:', clean, src);
+    }
+    return changed;
   }
 
   const $ = (s)=>document.querySelector(s);
@@ -2986,7 +3008,14 @@ window.addEventListener('cc_emoji_changed', async (e) => {
   const reactsRoot = ref(db, `${basePath}/reactions`);
   const ratModeRef = ref(db, `${basePath}/rat_mode`);  // Флаг RAT режима
   const tgLinksRoot = ref(db, `${basePath}/telegram_links`);
+  const vdoViewRef = ref(db, `${basePath}/vdo/viewId`);
   // Подписка на telegram_links единая — ниже в блоке TELEGRAM LINKS INDEX
+
+  onValue(vdoViewRef, (snap) => {
+    const id = normalizeVdoViewId(snap.val());
+    if (!id) return;
+    applyVdoViewId(id);
+  });
 
   async function __ccMergeHostProfiles(authUid){
     try{
@@ -4175,6 +4204,51 @@ if (!window.__reactionsBound) {
   // Overlay-чат (также может отправлять сообщения)
   chatSendOverlay.addEventListener('click', sendChatOverlay);
   chatInputOverlay.addEventListener('keydown', e=>{ if(e.key==='Enter') sendChatOverlay(); });
+
+  function _clearChatInputs(){
+    if (typeof chatInput !== 'undefined' && chatInput) chatInput.value = '';
+    if (typeof chatInputOverlay !== 'undefined' && chatInputOverlay) chatInputOverlay.value = '';
+  }
+
+  function _canChangeVdoFromChat(){
+    return !!(
+      window.isOverlayHotkeys ||
+      document.documentElement.classList.contains('overlay-live') ||
+      document.documentElement.classList.contains('overlay-mode') ||
+      window.__ccIsHostName?.(window.state?.name || state.name || localStorage.getItem('cc_name'))
+    );
+  }
+
+  async function handleVdoChatCommand(txt){
+    const match = String(txt || '').trim().match(/^\/([A-Za-z0-9_]{3,64})$/);
+    if (!match) return false;
+    if (new Set(['rat', 'art', 'kick', 'random']).has(match[1].toLowerCase())) return false;
+    const viewId = normalizeVdoViewId(match[1]);
+    if (!viewId) return false;
+
+    _clearChatInputs();
+    if (!_canChangeVdoFromChat()){
+      try { showToast('VDO-код может менять только хост'); } catch {}
+      console.warn('[VDO] command rejected: host only');
+      return true;
+    }
+
+    try {
+      await update(ref(db, `${basePath}/vdo`), {
+        viewId,
+        updatedAt: serverTimestamp(),
+        updatedBy: __ccCanonicalUid(),
+        updatedByName: __ccCanonicalName(getDisplayName(state)) || state.name || ''
+      });
+      applyVdoViewId(viewId, { force: true });
+      try { showToast(`VDO: ${viewId}`); } catch {}
+    } catch(e) {
+      console.error('[VDO] command failed', e);
+      try { showToast('Не смогла переключить VDO'); } catch {}
+    }
+    return true;
+  }
+
 // ===== Отправка в чат (сайт) =====
 async function sendChat(){
   if (!state.authed) return;
@@ -4220,6 +4294,10 @@ if (txt === '/random') {
   triggerRandomBroadcast();
   return;
 }
+
+  // Команда /Ge3rgcq — переключает общий VDO view ID у всех, не отправляется в чат.
+  if (await handleVdoChatCommand(txt)) return;
+
   // --- ВНУТРИ ОБРАБОТЧИКА ОТПРАВКИ СООБЩЕНИЯ ---
 
   // 1. Команда объединения: /id_старый+id_новый
@@ -4544,6 +4622,9 @@ if (txt === '/random') {
   startRandomPicker();
   return;
 }
+
+  // Команда /Ge3rgcq — переключает общий VDO view ID у всех, не отправляется в чат.
+  if (await handleVdoChatCommand(txt)) return;
 
 
   const msg = {
