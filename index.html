@@ -2830,6 +2830,7 @@ input[type="range"]{
     return String(name || '')
       .normalize('NFKC')
       .toLowerCase()
+      .replace(/\[(?:tg|тг)\]/giu, '')
       .replaceAll('\u0451', '\u0435')
       .replace(/[\u{1F480}\u2620\u26B0\uFE0E\uFE0F\u200D]/gu, '')
       .replace(/[^\p{L}\p{N}]+/gu, '')
@@ -4349,6 +4350,25 @@ window.cleanupOldReactions = cleanupOldReactions;
     return true;
   }
 
+  async function archiveRatQuoteMessage(messageKey, msg){
+    if (!messageKey || !msg || !msg.text) return;
+    try {
+      await update(ref(db, `${basePath}/quote_game/rat_archive/${messageKey}`), {
+        uid: msg.uid || '',
+        name: msg.name || msg.displayName || '',
+        displayName: msg.displayName || msg.name || '',
+        color: msg.color || '',
+        emoji: msg.emoji || '',
+        text: msg.text,
+        source: 'rat_chat',
+        archivedAt: serverTimestamp(),
+        t: serverTimestamp()
+      });
+    } catch(e) {
+      console.warn('[quote-game] RAT archive failed', e);
+    }
+  }
+
 // ===== Отправка в чат (сайт) =====
 async function sendChat(){
   if (!state.authed) return;
@@ -4682,6 +4702,7 @@ if (txt === '/random') {
     const ratSnapshot = await get(ratModeRef);
     const ratActive = ratSnapshot.exists() && ratSnapshot.val().active;
     if (ratActive) {
+      await archiveRatQuoteMessage(key, msg);
       scheduleMessageDeletion(key, 5 * 60 * 1000); // 5 минут
     }
   }catch(e){
@@ -4758,6 +4779,7 @@ if (txt === '/random') {
     const ratSnapshot = await get(ratModeRef);
     const ratActive = ratSnapshot.exists() && ratSnapshot.val().active;
     if (ratActive) {
+      await archiveRatQuoteMessage(key, msg);
       scheduleMessageDeletion(key, 5 * 60 * 1000); // 5 минут
     }
   }catch(e){
@@ -8500,8 +8522,8 @@ document.head.appendChild(ratAnimStyle);
     STORE: `${basePath}/quote_game`,
     INTRO_MS: 3000,
     INTRO_SOUND_MAX_MS: 5000,
-    ROUND_MS: 30000,
-    CLEANUP_DELAY_MS: 14000,
+    ROUND_MS: 16000,
+    CLEANUP_DELAY_MS: 7000,
     STALE_AFTER_MS: 180000,
     MIN_WORDS: 3,
     BAD_WORDS: ['обновите', 'тест', 'лагает', 'тормозит'],
@@ -8512,10 +8534,22 @@ document.head.appendChild(ratAnimStyle);
       'unknown': 'Лёха',
       'guest': 'Лёха',
       'гость': 'Лёха',
-      'gwynlayer': 'gwynplayer',
-      'gwyn player': 'gwynplayer',
-      'gwyn layer': 'gwynplayer'
-    }
+      'gwynlayer': 'Gwynlayer',
+      'gwynplaine': 'Gwynlayer',
+      'gwynplainer': 'Gwynlayer',
+      'gwynplayer': 'Gwynlayer',
+      'gwyn player': 'Gwynlayer',
+      'gwyn layer': 'Gwynlayer',
+      'vadya': 'Вадимка',
+      'vadimka': 'Вадимка',
+      'вадимка': 'Вадимка',
+      'александр': 'Александр',
+      'енот': 'Александр',
+      't': 'Tdurieux',
+      'tdurieux': 'Tdurieux',
+      'виталик': 'Виталик'
+    },
+    DISTRACTOR_EXCLUDE_NAMES: ['Вадимка', 'Александр', 'Виталик']
   };
 
   const quoteGameRootRef = ref(db, QUOTE_GAME.ROOT);
@@ -8530,6 +8564,7 @@ document.head.appendChild(ratAnimStyle);
   function _quoteStripNameMarks(name){
     return String(name || '')
       .normalize('NFKC')
+      .replace(/\[(?:tg|тг)\]/giu, ' ')
       .replace(/[\u{1F480}\u2620\u26B0\uFE0E\uFE0F\u200D]/gu, ' ')
       .replace(/\s+/g, ' ')
       .trim();
@@ -8545,6 +8580,11 @@ document.head.appendChild(ratAnimStyle);
   function _quoteNameKey(name){
     const key = _quoteNameLookupKey(_quoteCleanName(name));
     return encodeURIComponent(key || 'unknown').replace(/\./g, '%2E');
+  }
+
+  function _quoteLookupFromKey(key){
+    try { return decodeURIComponent(String(key || '')); }
+    catch { return String(key || ''); }
   }
 
   function _quoteCleanName(name){
@@ -8613,7 +8653,7 @@ document.head.appendChild(ratAnimStyle);
     if (!key) return;
     const old = map.get(key) || { key, name: clean, count: 0 };
     old.count += 1;
-    old.name = old.name || clean;
+    old.name = clean || old.name;
     map.set(key, old);
   }
 
@@ -8623,6 +8663,7 @@ document.head.appendChild(ratAnimStyle);
     const sources = [];
     const usedSnap = await get(ref(db, `${QUOTE_GAME.STORE}/used`));
     const used = usedSnap.val() || {};
+    const seenUsedKeys = new Set();
 
     const chatSnap = await get(chatRoot);
     chatSnap.forEach(ch => {
@@ -8633,9 +8674,31 @@ document.head.appendChild(ratAnimStyle);
       const text = _quoteEligibleText(m.text);
       if (!text || !name) return;
       const usedKey = `chat_${ch.key}`;
-      if (used[usedKey]) return;
+      if (used[usedKey] || seenUsedKeys.has(usedKey)) return;
+      seenUsedKeys.add(usedKey);
       sources.push({
         source: 'chat',
+        sourceKey: ch.key,
+        usedKey,
+        text,
+        correctName: name,
+        correctKey: _quoteNameKey(name)
+      });
+    });
+
+    const ratArchiveSnap = await get(ref(db, `${QUOTE_GAME.STORE}/rat_archive`));
+    ratArchiveSnap.forEach(ch => {
+      const m = ch.val() || {};
+      const name = _quoteCleanName(m.name || m.displayName);
+      if (_quoteBlockedAuthor(name)) return;
+      if (name) _quoteRememberPerson(people, name);
+      const text = _quoteEligibleText(m.text);
+      if (!text || !name) return;
+      const usedKey = `chat_${ch.key}`;
+      if (used[usedKey] || seenUsedKeys.has(usedKey)) return;
+      seenUsedKeys.add(usedKey);
+      sources.push({
+        source: 'rat_chat',
         sourceKey: ch.key,
         usedKey,
         text,
@@ -8652,7 +8715,8 @@ document.head.appendChild(ratAnimStyle);
       if (!text || !speaker) return;
       _quoteRememberPerson(moviePeople, speaker);
       const usedKey = `movie_${ch.key}`;
-      if (used[usedKey]) return;
+      if (used[usedKey] || seenUsedKeys.has(usedKey)) return;
+      seenUsedKeys.add(usedKey);
       sources.push({
         source: 'movie',
         sourceKey: ch.key,
@@ -8673,8 +8737,10 @@ document.head.appendChild(ratAnimStyle);
   function _quoteBuildOptions(source, people, moviePeople){
     const correct = { key: source.correctKey, name: source.correctName };
     const pool = new Map();
-    for (const p of people) if (p.key !== correct.key) pool.set(p.key, p);
-    for (const p of moviePeople) if (p.key !== correct.key) pool.set(p.key, p);
+    const noDistractorKeys = new Set(QUOTE_GAME.DISTRACTOR_EXCLUDE_NAMES.map(_quoteNameLookupKey));
+    const canUseDistractor = (p) => p.key !== correct.key && !noDistractorKeys.has(_quoteLookupFromKey(p.key));
+    for (const p of people) if (canUseDistractor(p)) pool.set(p.key, p);
+    for (const p of moviePeople) if (canUseDistractor(p)) pool.set(p.key, p);
     const distractors = _quoteShuffle([...pool.values()]).slice(0, 3);
     if (distractors.length < 3) return null;
     return _quoteShuffle([correct, ...distractors]).map((p, i) => ({
@@ -8793,7 +8859,7 @@ document.head.appendChild(ratAnimStyle);
 
   /*
     sounds/millionaire_reveal.mp3 = звук раскрытия ответа:
-    проигрывается, когда 30-секундный таймер закончился и подсвечивается правильный вариант.
+    проигрывается, когда таймер закончился и подсвечивается правильный вариант.
   */
 
   async function _quoteEndRound(){
@@ -9051,7 +9117,7 @@ document.head.appendChild(ratAnimStyle);
       const top = v.top || [];
       resultEl.innerHTML = `
         <div class="quote-winners">${winners.length ? `Угадали: ${winners.map(w => escapeHtml(w.name)).join(', ')}` : 'Никто не угадал'}</div>
-        <div class="quote-top-title">Почётная доска</div>
+        <div class="quote-top-title">Лидеры</div>
         <div class="quote-top-list">${
           top.length
             ? top.map((r, i) => `<div><span>${i + 1}. ${escapeHtml(r.name)}</span><b>${Number(r.score || 0)}</b></div>`).join('')
