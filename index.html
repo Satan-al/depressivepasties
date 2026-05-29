@@ -1851,6 +1851,9 @@ input[type="range"]{
   body:not(.music-active) #now-playing {
     display: none !important;
   }
+  #now-playing[hidden] {
+    display: none !important;
+  }
   #headerEmojis {
   flex-wrap: wrap;
   justify-content: flex-start; /* выровнять влево */
@@ -4947,12 +4950,17 @@ document.head.appendChild(ratAnimStyle);
   let duelCleanupScheduled = false;
   // Сохранённое исходное значение tool — чтобы вернуть после дуэли
   let toolBeforeDuel = null;
+  let _duelInteractiveSignalAt = 0;
 
   function _myDuelIds(){
-    return [
+    const ids = [
       auth.currentUser?.uid,
       window.__ccCanonicalUid?.()
     ].filter(Boolean);
+    if (_isHostHere() || window.__ccIsHostName?.(window.state?.name || localStorage.getItem('cc_name'))) {
+      ids.push(HOST_IDENTITY.uid);
+    }
+    return [...new Set(ids)];
   }
 
   function _isMeInDuel(v = currentDuel){
@@ -4972,6 +4980,15 @@ document.head.appendChild(ratAnimStyle);
     if (ids.includes(v.challenger)) return v.challenger;
     if (ids.includes(v.victim)) return v.victim;
     return null;
+  }
+
+  function _requestDuelInteractiveIfNeeded(v = currentDuel){
+    if (!v || !['starting', 'fighting'].includes(v.state)) return;
+    if (!_isHostHere() || !auth.currentUser || !_isMeInDuel(v)) return;
+    const now = Date.now();
+    if (now - _duelInteractiveSignalAt < 1000) return;
+    _duelInteractiveSignalAt = now;
+    console.log('[DUEL_INTERACTIVE_ON]');
   }
 
   // === Попытка инициировать дуэль после клика по морде соперника ===
@@ -5070,8 +5087,11 @@ document.head.appendChild(ratAnimStyle);
       // лучше иметь интерактив заранее, чем пропустить начало кликов.
       const hostIsParticipant = auth.currentUser && _isMeInDuel(v);
       if (_isHostHere() && hostIsParticipant){
-        console.log('[DUEL_INTERACTIVE_ON]');
+        _requestDuelInteractiveIfNeeded(v);
       }
+    }
+    if (wasActive && _isHostHere() && auth.currentUser && _isMeInDuel(v) && ['starting', 'fighting'].includes(v.state) && prevState !== v.state){
+      _requestDuelInteractiveIfNeeded(v);
     }
 
     // Хелпер: есть ли признаки хост-режима (любой подходит)
@@ -5262,7 +5282,7 @@ document.head.appendChild(ratAnimStyle);
       /* iframe vdo.ninja агрессивно ловит клики — отключаем его на время дуэли,
          чтобы наш click-catcher гарантированно их получал */
       body.duel-active #player {
-        pointer-events: auto !important;
+        pointer-events: none !important;
       }
       /* canvas тоже отдаём катчеру, чтобы pointerdown на канвасе не запускал голос/рисование */
       body.duel-active canvas {
@@ -5437,6 +5457,7 @@ document.head.appendChild(ratAnimStyle);
   }
 
   function _updateDuelUI(){
+    _requestDuelInteractiveIfNeeded();
     _updateDuelClickCatcher();
     const wrap = _ensureDuelBanner();
     if (!currentDuel){ wrap.style.display = 'none'; return; }
@@ -10104,9 +10125,9 @@ window.closeLinkModal = function() {
     header.textContent = '🗡️ Выбери соперника:';
     panel.appendChild(header);
 
-    const hostUid = auth.currentUser?.uid;
+    const hostIds = new Set(_myDuelIds());
     // Берём всех кто сейчас в points, кроме хоста
-    const candidates = [...state.points.entries()].filter(([uid,_]) => uid !== hostUid);
+    const candidates = [...state.points.entries()].filter(([uid,_]) => !hostIds.has(uid));
 
     if (candidates.length === 0){
       const empty = document.createElement('div');
@@ -10144,7 +10165,7 @@ window.closeLinkModal = function() {
   // Отличие от обычной: challenger подменяется на "🐻 Медведь" с синим цветом.
   async function _triggerHostDuel(targetUid, targetPoint){
     if (!auth.currentUser) return;
-    const hostUid = auth.currentUser.uid;
+    const hostUid = window.__ccCanonicalUid?.() || HOST_IDENTITY.uid || auth.currentUser.uid;
     if (targetUid === hostUid) return;
 
     // Проверяем что нет активной
@@ -10878,13 +10899,25 @@ gateColor.addEventListener('input', syncColor);
     // Единственная подписка – реагируем на изменение флага
     let _musicActive = false;
     let _lastMusicActive = null;
+    let _hasNowPlayingTrack = false;
+    function _syncNowPlayingVisibility(){
+      const nowPlaying = document.getElementById('now-playing');
+      if (!nowPlaying) return;
+      const hiddenByViewer = !_isHostHere() && document.body.classList.contains('hide-vote-ui');
+      const visible = (_musicActive === true) && _hasNowPlayingTrack && !hiddenByViewer;
+      nowPlaying.toggleAttribute('hidden', !visible);
+      nowPlaying.style.setProperty('display', visible ? 'flex' : 'none', visible ? '' : 'important');
+    }
+    setInterval(_syncNowPlayingVisibility, 500);
+
     onValue(ref(music_db, `${musicPath}/active`), async (snap) => {
       const isActive = !!(snap.val());
-      if (_lastMusicActive === isActive) return;
       const wasActive = _musicActive;
       _lastMusicActive = isActive;
       _musicActive = isActive;
       document.body.classList.toggle('music-active', isActive);
+      _syncNowPlayingVisibility();
+      if (_lastMusicActive === isActive && wasActive === isActive) return;
 
       const isOverlayHost =
         document.documentElement.classList.contains('overlay-live') ||
@@ -10914,11 +10947,7 @@ gateColor.addEventListener('input', syncColor);
         document.getElementById('vote-zones-container')?.classList.toggle('hidden', !isActive);
         document.getElementById('host-music-controls')?.classList.toggle('hidden', !(isMusicHost && isActive));
       }
-      const nowPlaying = document.getElementById('now-playing');
-      if (nowPlaying) {
-        const hiddenByViewer = !isOverlayHost && document.body.classList.contains('hide-vote-ui');
-        nowPlaying.style.display = (isActive && !hiddenByViewer) ? 'flex' : 'none';
-      }
+      _syncNowPlayingVisibility();
       // Хост управляет окнами сам, через Alt+F6 / кнопку 🎵
     });
     // ========== ПОИСК ==========
@@ -11111,9 +11140,6 @@ gateColor.addEventListener('input', syncColor);
       if (!status) return;
 
       const nowPlaying = document.getElementById('now-playing');
-      const musicVisible = _musicActive === true;
-      const hiddenByViewer = !_isHostHere() && document.body.classList.contains('hide-vote-ui');
-      if (nowPlaying) nowPlaying.style.display = (musicVisible && !hiddenByViewer) ? 'flex' : 'none';
       const song = document.getElementById('nowPlayingSong');
       const artist = document.getElementById('nowPlayingArtist');
       const cover = document.getElementById('nowPlayingCover');
@@ -11121,7 +11147,8 @@ gateColor.addEventListener('input', syncColor);
       const playBtn = document.getElementById('hostPlayPause');
 
       if (status.track_name) {
-        if (nowPlaying) nowPlaying.style.display = (musicVisible && !hiddenByViewer) ? 'flex' : 'none';
+        _hasNowPlayingTrack = true;
+        _syncNowPlayingVisibility();
         if (song) song.textContent = status.song || status.track_name;
         if (artist) artist.textContent = status.artist || '';
         if (cover && status.cover) cover.src = status.cover;
@@ -11132,7 +11159,8 @@ gateColor.addEventListener('input', syncColor);
           timeline.value = Math.round((status.progress / status.duration) * 100);
         }
       } else {
-        if (nowPlaying) nowPlaying.style.display = 'none';
+        _hasNowPlayingTrack = false;
+        _syncNowPlayingVisibility();
       }
     });
 
