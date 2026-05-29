@@ -4965,17 +4965,20 @@ document.head.appendChild(ratAnimStyle);
 
   function _isMeInDuel(v = currentDuel){
     if (!v) return false;
+    if (v.hostDuel && _isHostHere()) return true;
     const ids = _myDuelIds();
     return ids.includes(v.challenger) || ids.includes(v.victim);
   }
 
   function _amIDuelChallenger(v = currentDuel){
     if (!v) return false;
+    if (v.hostDuel && _isHostHere()) return true;
     return _myDuelIds().includes(v.challenger);
   }
 
   function _myDuelParticipantUid(v = currentDuel){
     if (!v) return null;
+    if (v.hostDuel && _isHostHere()) return v.challenger;
     const ids = _myDuelIds();
     if (ids.includes(v.challenger)) return v.challenger;
     if (ids.includes(v.victim)) return v.victim;
@@ -5160,7 +5163,7 @@ document.head.appendChild(ratAnimStyle);
 
     duelCleanupScheduled = true;
     try {
-      await update(ref(db, DUEL.ROOT), { state: 'ended', winner });
+      await update(ref(db, DUEL.ROOT), { state: 'ended', winner, endedAt: Date.now() });
       setTimeout(()=>{
         remove(duelActiveRef).catch(()=>{});
         duelCleanupScheduled = false;
@@ -5177,7 +5180,10 @@ document.head.appendChild(ratAnimStyle);
     console.log('[duel] началась');
     _playDuelSound('start');
     _applyDuelVisuals(true);
-    if (_duelBanner) _duelBanner.__endSoundPlayed = false;
+    if (_duelBanner) {
+      _duelBanner.__endSoundPlayed = false;
+      _duelBanner.__localEndCleanupScheduled = false;
+    }
   }
 
   function _onDuelEnd(){
@@ -5515,6 +5521,16 @@ document.head.appendChild(ratAnimStyle);
         } else {
           _playDuelSound('win', { volume: 0.55 }); // ничья — тихо
         }
+      }
+      if (!wrap.__localEndCleanupScheduled){
+        wrap.__localEndCleanupScheduled = true;
+        setTimeout(() => {
+          if (!currentDuel || currentDuel.state !== 'ended') return;
+          try { remove(duelActiveRef); } catch {}
+          currentDuel = null;
+          _onDuelEnd();
+          _updateDuelBanner();
+        }, DUEL.CLEANUP_DELAY_MS + 700);
       }
     }
   }
@@ -11335,22 +11351,31 @@ gateColor.addEventListener('input', syncColor);
       if (window.overlayComponent) return;
       if (!window.state?.authed || !window.auth?.currentUser) return;
       const entries = Object.entries(currentVotes).filter(([, zone]) => ['da', 'da_no', 'no'].includes(zone));
+      const allVoteNames = new Set(Object.keys(currentVotes).filter(Boolean));
       const activeNames = new Set();
       const now = Date.now();
+      const addActiveName = (rawName, item = {}) => {
+        const name = window.__ccCanonicalName?.(rawName) || rawName;
+        if (!name) return;
+        const state = item.state || 'online';
+        if (state === 'gone' || state === 'offline') return;
+        const lastSeen = Number(item.lastActive || item.ts || 0);
+        if (lastSeen && (now - lastSeen) >= GONE_AFTER_MS) return;
+        activeNames.add(name);
+      };
       try {
         for (const [, p] of (window.state?.points || new Map()).entries()){
           if (!p) continue;
-          const name = window.__ccCanonicalName?.(p.name) || p.name;
-          if (!name) continue;
-          const inactiveFor = now - Number(p.lastActive || p.ts || 0);
-          if (inactiveFor >= GONE_AFTER_MS) continue;
-          if (p.state === 'gone' || p.state === 'offline') continue;
-          activeNames.add(name);
+          addActiveName(p.name, p);
+        }
+        for (const [, p] of (window.state?.presence || new Map()).entries()){
+          if (!p) continue;
+          addActiveName(p.name, p);
         }
       } catch {}
-      for (const [name] of entries) activeNames.add(name);
-      const total = Math.max(entries.length, activeNames.size);
-      if (!total) {
+      for (const name of allVoteNames) activeNames.add(window.__ccCanonicalName?.(name) || name);
+      const total = Math.max(allVoteNames.size, activeNames.size);
+      if (!total || total < 2) {
         try { await remove(ref(music_db, `${musicPath}/vote_result`)); } catch {}
         _lastDecisionKey = '';
         return;
