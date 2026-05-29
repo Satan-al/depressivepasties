@@ -365,11 +365,12 @@
       height:100%;
       border:0;
       display:block;
-      /* Запрещаем браузеру "оптимизировать" iframe */
-      will-change: contents;
-      /* Изолируем слой — GPU не будет мержить с canvas */
+      /* Видео не форсируем в transform-layer: на части ноутбуков Chrome мылит iframe при ресемплинге GPU. */
+      will-change: auto;
       isolation: isolate;
-      transform: translateZ(0);
+      transform: none;
+      backface-visibility: visible;
+      image-rendering: auto;
       /* Запрещаем сжатие */
       min-width: 0;
       min-height: 0;
@@ -1859,8 +1860,6 @@ input[type="range"]{
   justify-content: flex-start; /* выровнять влево */
   }
   /* Убирает миллисекундное мигание при перерисовке canvas в оверлее */
-  html.overlay-live .stage,
-  html.overlay-live .videoWrap,
   html.overlay-live #overlay {
     backface-visibility: hidden;
     transform: translateZ(0);
@@ -2215,7 +2214,8 @@ input[type="range"]{
     componentGuardStyle.textContent = `
       html.component-mode body.duel-active,
       html.component-mode body.sniper-active,
-      html.component-mode body.race-active { pointer-events: auto !important; }
+      html.component-mode body.race-active,
+      html.component-mode body.hockey-active { pointer-events: auto !important; }
       html.component-mode #duelOverlay,
       html.component-mode #duelClickCatcher,
       html.component-mode #sniperOverlay,
@@ -2225,6 +2225,7 @@ input[type="range"]{
       html.component-mode #raceUI,
       html.component-mode #raceTestPanel,
       html.component-mode #raceCarPanel,
+      html.component-mode #hockeyCanvas,
       html.overlay-live.component-mode #duelOverlay,
       html.overlay-live.component-mode #duelClickCatcher,
       html.overlay-live.component-mode #sniperOverlay,
@@ -2233,7 +2234,8 @@ input[type="range"]{
       html.overlay-live.component-mode #raceCanvas,
       html.overlay-live.component-mode #raceUI,
       html.overlay-live.component-mode #raceTestPanel,
-      html.overlay-live.component-mode #raceCarPanel {
+      html.overlay-live.component-mode #raceCarPanel,
+      html.overlay-live.component-mode #hockeyCanvas {
         display: none !important;
         visibility: hidden !important;
         opacity: 0 !important;
@@ -2242,11 +2244,12 @@ input[type="range"]{
     `;
     document.head.appendChild(componentGuardStyle);
     const suppressComponentGames = () => {
-      document.body.classList.remove('duel-active', 'sniper-active', 'race-active');
+      document.body.classList.remove('duel-active', 'sniper-active', 'race-active', 'hockey-active');
       [
         'duelOverlay', 'duelClickCatcher',
         'sniperOverlay', 'sniperBall', 'sniperCard',
-        'raceCanvas', 'raceUI', 'raceTestPanel', 'raceCarPanel'
+        'raceCanvas', 'raceUI', 'raceTestPanel', 'raceCarPanel',
+        'hockeyCanvas'
       ].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
@@ -2509,8 +2512,45 @@ input[type="range"]{
   import { getDatabase, ref, onValue, set, remove, push, update, child, query, orderByChild, limitToLast, serverTimestamp, onChildAdded, onChildChanged, onChildRemoved, get, goOffline, goOnline } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
   import { getAuth, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
-  const FIXED_VIEW = "https://vdo.ninja/?view=DepressivePasties&codec=h264&quality=2&height=1080&framerate=30&buffer=0&noaudio=0&autohide&cleanoutput&noheader&stats=0";
   const SESSION_KEY = "DepressivePasties";
+  const VDO_VIEW_ID = "DepressivePasties";
+  const VDO_DEFAULTS = {
+    bitrate: 9000,
+    width: 1920,
+    height: 1080,
+    framerate: 30,
+    buffer: 0,
+    scale: 100
+  };
+
+  function buildVdoViewUrl(){
+    const params = new URLSearchParams(location.search);
+    const url = new URL('https://vdo.ninja/');
+    url.searchParams.set('view', VDO_VIEW_ID);
+
+    const bitrate = Number(params.get('vdoBitrate') || localStorage.getItem('cc_vdo_bitrate') || VDO_DEFAULTS.bitrate);
+    const width = Number(params.get('vdoWidth') || localStorage.getItem('cc_vdo_width') || VDO_DEFAULTS.width);
+    const height = Number(params.get('vdoHeight') || localStorage.getItem('cc_vdo_height') || VDO_DEFAULTS.height);
+    const fps = Number(params.get('vdoFps') || localStorage.getItem('cc_vdo_fps') || VDO_DEFAULTS.framerate);
+    const buffer = Number(params.get('vdoBuffer') ?? localStorage.getItem('cc_vdo_buffer') ?? VDO_DEFAULTS.buffer);
+    const scale = Number(params.get('vdoScale') || localStorage.getItem('cc_vdo_scale') || VDO_DEFAULTS.scale);
+    const codec = params.get('vdoCodec') || localStorage.getItem('cc_vdo_codec') || '';
+
+    if (Number.isFinite(bitrate) && bitrate > 0) url.searchParams.set('bitrate', String(Math.round(bitrate)));
+    if (Number.isFinite(width) && width > 0) url.searchParams.set('width', String(Math.round(width)));
+    if (Number.isFinite(height) && height > 0) url.searchParams.set('height', String(Math.round(height)));
+    if (Number.isFinite(fps) && fps > 0) url.searchParams.set('framerate', String(Math.round(fps)));
+    if (Number.isFinite(buffer) && buffer >= 0) url.searchParams.set('buffer', String(Math.round(buffer)));
+    if (Number.isFinite(scale) && scale > 0) url.searchParams.set('scale', String(Math.round(scale)));
+    if (codec) url.searchParams.set('codec', codec);
+
+    url.searchParams.set('noaudio', '0');
+    url.searchParams.set('autohide', '');
+    url.searchParams.set('cleanoutput', '');
+    url.searchParams.set('noheader', '');
+    url.searchParams.set('stats', '0');
+    return url.toString();
+  }
 
   const $ = (s)=>document.querySelector(s);
 
@@ -3879,8 +3919,8 @@ if (!window.__reactionsBound) {
       return;
     }
     
-    // Use the same high-quality VDO URL everywhere so the site does not fall back to a soft/laggy default.
-    let src = FIXED_VIEW;
+    // High-quality viewer URL. Do not pass quality=2 here: in VDO it is a low 360p preset.
+    let src = buildVdoViewUrl();
     
     $player.src = src;
     console.log('[VDO] iframe src:', src);
@@ -5199,6 +5239,7 @@ document.head.appendChild(ratAnimStyle);
   // Клик во время fighting идёт именно в счётчик; обычное голосование не срабатывает.
   let _duelClickBuffer = 0;
   let _duelClickFlushTimer = null;
+  let _duelLastCapturedAt = 0;
   async function registerDuelClick(){
     if (!currentDuel || currentDuel.state !== 'fighting') return false;
     if (!auth.currentUser) return false;
@@ -5227,6 +5268,23 @@ document.head.appendChild(ratAnimStyle);
     return true;
   }
 
+  function _captureDuelPointer(e){
+    if (!currentDuel || currentDuel.state !== 'fighting') return;
+    if (!_isMeInDuel(currentDuel)) return;
+    const now = performance.now();
+    if (now - _duelLastCapturedAt < 80) return;
+    _duelLastCapturedAt = now;
+    e.preventDefault();
+    e.stopPropagation();
+    e.stopImmediatePropagation?.();
+    registerDuelClick().then(r => console.log('[duel] capture click:', r));
+    _spawnHitFlash(e.clientX || window.innerWidth / 2, e.clientY || window.innerHeight / 2);
+  }
+
+  window.addEventListener('pointerdown', _captureDuelPointer, true);
+  document.addEventListener('pointerdown', _captureDuelPointer, true);
+  window.addEventListener('mousedown', _captureDuelPointer, true);
+
   // === ЗВУКИ ДУЭЛИ ===
   // Файлы лежат в sounds/: duel_start.mp3, duel_win.mp3, duel_lose.mp3, duel.mp3 (фон)
   // Если у тебя другие имена — поменяй DUEL_SOUNDS.
@@ -5235,6 +5293,10 @@ document.head.appendChild(ratAnimStyle);
     win:   'sounds/duel_win.mp3',
     lose:  'sounds/duel_lose.mp3',
     loop:  'sounds/duel.mp3',   // фон на время fighting
+    hockeyHit:  'sounds/hockey_hit.mp3',
+    hockeyWall: 'sounds/hockey_wall.mp3',
+    hockeyGoal: 'sounds/hockey_goal.mp3',
+    hockeyWin:  'sounds/hockey_win.mp3',
   };
   const _duelAudioCache = {};
   function _playDuelSound(kind, opts){
@@ -5596,8 +5658,8 @@ document.head.appendChild(ratAnimStyle);
     header.textContent = '🎯 Выбери соперника:';
     panel.appendChild(header);
 
-    const myUid = auth.currentUser?.uid;
-    const candidates = [...state.points.entries()].filter(([uid,_]) => uid !== myUid);
+    const myIds = new Set(_myDuelIds());
+    const candidates = [...state.points.entries()].filter(([uid,_]) => !myIds.has(uid));
 
     if (candidates.length === 0){
       const empty = document.createElement('div');
@@ -6126,7 +6188,19 @@ document.head.appendChild(ratAnimStyle);
         const y = currentSniper.currentTarget.y * H;
         _registerSniperShot(x, y);
         e.preventDefault();
+        return;
       }
+      if ((currentRace && currentRace.state === 'racing') || _raceTestActive) {
+        if (!_raceAutoDriveHeld) _raceAutoDriveNeedsSnap = true;
+        _raceAutoDriveHeld = true;
+        e.preventDefault();
+      }
+    }
+  });
+  window.addEventListener('keyup', (e) => {
+    if (e.code === 'Backquote' || e.key === '`' || e.key === 'ё' || e.key === 'Ё') {
+      _raceAutoDriveHeld = false;
+      _raceAutoDriveNeedsSnap = true;
     }
   });
 
@@ -6153,8 +6227,8 @@ document.head.appendChild(ratAnimStyle);
     TRACK_WIDTH_MOBILE: 75,
     SUBDIVISIONS: 8,           // на каждый сегмент сколько микро-точек (для гладкости/шума)
     JITTER: 0.012,             // мелкий шум на каждой микро-точке (норм. координаты)
-    LAPS_TO_WIN: 3,            // сколько кругов для победы
-    TIME_LIMIT_MS: 90000,      // 90 секунд на гонку, потом ничья
+    LAPS_TO_WIN: 2,            // сколько кругов для победы
+    TIME_LIMIT_MS: 45000,      // 45 секунд на гонку, потом ничья
   };
 
   // Генератор замкнутой ломаной "бублик".
@@ -6439,14 +6513,16 @@ document.head.appendChild(ratAnimStyle);
   */
 
   const RACE_CAR = {
-    SPEED: 22,             // максимальная скорость (была 12) - x2 ещё раз
-    ACCEL: 0.7,            // ускорение к целевой скорости (было 0.45) - быстрее набирает
-    BRAKE: 0.85,           // коэф замедления когда курсор поднят / далеко
-    TURN_LERP: 0.16,       // насколько резко руль поворачивает (было 0.12)
+    SPEED: 24,             // скорость в px/кадр при 60fps
+    ACCEL: 0.74,           // ускорение к целевой скорости
+    BRAKE: 0.78,           // коэф замедления когда курсор поднят / далеко
+    TURN_LERP: 0.34,       // насколько резко руль поворачивает
     STOP_DIST_PX: 12,      // если курсор ближе чем это - почти стоим
-    BRAKE_DIST_PX: 50,     // зона торможения (было 80) - меньше дистанция, дольше едем на полной
-    MOUSE_SPEED_DECAY: 0.92, // память о скорости движения мыши (было 0.85) - дольше помнит
-    MOUSE_SPEED_NORM: 12,    // px/кадр после которых считаем "макс активность" (было 30) - проще достичь
+    BRAKE_DIST_PX: 34,     // зона торможения
+    MOUSE_SPEED_DECAY: 0.88, // память о скорости движения мыши
+    MOUSE_SPEED_NORM: 5,     // px/кадр после которых считаем "макс активность"
+    INPUT_MIN_THROTTLE: 0.52,
+    AUTO_POINTS_PER_FRAME: 2.4,
     SIZE_W: 22,
     SIZE_L: 36,
     HIT_COOLDOWN_MS: 400,
@@ -6477,9 +6553,78 @@ document.head.appendChild(ratAnimStyle);
     return false;
   }
 
+  function _carFitsOnTrack(x_norm, y_norm, angle, track, halfWidthNorm){
+    const W = window.innerWidth, H = window.innerHeight;
+    const cos_a = Math.cos(angle), sin_a = Math.sin(angle);
+    const halfL = (RACE_CAR.SIZE_L / 2) / W;
+    const halfWNorm = (RACE_CAR.SIZE_W / 2) / H;
+    const corners = [
+      [+halfL, +halfWNorm],
+      [+halfL, -halfWNorm],
+      [-halfL, +halfWNorm],
+      [-halfL, -halfWNorm],
+      [0, 0],
+    ];
+    for (const [lx, ly] of corners){
+      const wx = x_norm + lx * cos_a - ly * sin_a;
+      const wy = y_norm + lx * sin_a + ly * cos_a;
+      if (!_isOnTrack(wx, wy, track, halfWidthNorm)) return false;
+    }
+    return true;
+  }
+
+  function _nearestRaceCenterIdx(track, x, y){
+    let best = 0, bestD = Infinity;
+    const cl = track.centerline || [];
+    for (let i = 0; i < cl.length; i++){
+      const p = cl[i];
+      const d = (p.x - x) * (p.x - x) + (p.y - y) * (p.y - y);
+      if (d < bestD){ bestD = d; best = i; }
+    }
+    return best;
+  }
+
+  function _autoDriveCarAlongTrack(track, dtScale){
+    const car = _carState;
+    const cl = track?.centerline || [];
+    if (!car || cl.length < 2) return;
+    if (_raceAutoDriveNeedsSnap || !Number.isFinite(car.autoIdx)){
+      car.autoIdx = _nearestRaceCenterIdx(track, car.x_norm, car.y_norm);
+      car.autoSnapPending = true;
+      _raceAutoDriveNeedsSnap = false;
+    }
+    const prevIdx = car.autoIdx;
+    const step = car.autoSnapPending ? 1 : Math.max(1, Math.round(RACE_CAR.AUTO_POINTS_PER_FRAME * dtScale));
+    const nextIdx = (prevIdx + step) % cl.length;
+    const a = car.autoSnapPending ? { x: car.x_norm, y: car.y_norm } : cl[prevIdx];
+    const b = cl[nextIdx];
+    car.autoSnapPending = false;
+    if (nextIdx < prevIdx) {
+      car.laps = (car.laps || 0) + 1;
+      if (car.laps >= RACE.LAPS_TO_WIN) {
+        car.finished = true;
+        car.finishedAt = Date.now();
+      }
+    }
+    car.autoIdx = nextIdx;
+    car.x_norm = b.x;
+    car.y_norm = b.y;
+    car.vx = (b.x - a.x) * window.innerWidth;
+    car.vy = (b.y - a.y) * window.innerHeight;
+    car.angle = Math.atan2(b.y - a.y, b.x - a.x);
+    const cps = track.checkpoints || [];
+    if (cps.length) {
+      let nextCp = 1;
+      while (nextCp < cps.length && nextIdx >= cps[nextCp]) nextCp++;
+      car.nextCheckpointIdx = nextCp >= cps.length ? cps.length : nextCp;
+    }
+  }
+
   // Локальное состояние машинки (для теста)
   let _carState = null; // { x_norm, y_norm, vx, vy, angle, lastHitAt }
   let _mouseClient = { x: 0, y: 0, hasInput: false, lastX: 0, lastY: 0, speed: 0, lastT: 0 };
+  let _raceAutoDriveHeld = false;
+  let _raceAutoDriveNeedsSnap = true;
 
   function _initCarOnTrack(track){
     // Ставим машинку на startA, направление — к startB
@@ -6517,6 +6662,8 @@ document.head.appendChild(ratAnimStyle);
 
     const car = _carState;
     const now = Date.now();
+    const dtScale = Math.max(0.5, Math.min(2.0, (now - (car.lastStepAt || now)) / 16.67 || 1));
+    car.lastStepAt = now;
 
     // Если в штрафной паузе — машинка стоит парализованная, реагирует только на таймер
     if (car.penaltyUntil > now){
@@ -6527,6 +6674,11 @@ document.head.appendChild(ratAnimStyle);
     // Если закончила гонку — стоит на месте
     if (car.finished){
       car.vx *= 0.7; car.vy *= 0.7;
+      return;
+    }
+
+    if (_raceAutoDriveHeld){
+      _autoDriveCarAlongTrack(track, dtScale);
       return;
     }
 
@@ -6565,7 +6717,8 @@ document.head.appendChild(ratAnimStyle);
           ? (dist / RACE_CAR.BRAKE_DIST_PX)
           : 1;
 
-        const targetSpeed = RACE_CAR.SPEED * mouseActivity * distFactor;
+        const inputThrottle = Math.max(RACE_CAR.INPUT_MIN_THROTTLE, mouseActivity);
+        const targetSpeed = RACE_CAR.SPEED * inputThrottle * distFactor;
         const targetVx = Math.cos(car.angle) * targetSpeed;
         const targetVy = Math.sin(car.angle) * targetSpeed;
         car.vx += (targetVx - car.vx) * RACE_CAR.ACCEL;
@@ -6586,33 +6739,27 @@ document.head.appendChild(ratAnimStyle);
       car.vy *= RACE_CAR.BRAKE;
       _mouseClient.speed = 0;
     }
+    if (!_raceAutoDriveHeld) {
+      car.autoIdx = undefined;
+      car.autoSnapPending = true;
+    }
 
-    // Движение
-    const nextX_px = cx_px + car.vx;
-    const nextY_px = cy_px + car.vy;
-    const nextX_norm = nextX_px / W;
-    const nextY_norm = nextY_px / H;
-
-    // Коллизия: проверяем 4 угла машинки в новой позиции
-    const ang = car.angle;
-    const cos_a = Math.cos(ang), sin_a = Math.sin(ang);
-    const halfL = (RACE_CAR.SIZE_L / 2) / W;  // нормированная полудлина
-    const halfWNorm = (RACE_CAR.SIZE_W / 2) / H;
-    // Углы локальной системы, повёрнутые на angle
-    const corners = [
-      [+halfL, +halfWNorm],
-      [+halfL, -halfWNorm],
-      [-halfL, +halfWNorm],
-      [-halfL, -halfWNorm],
-    ];
+    // Движение с подшагами: так машина не "туннелит" сквозь стену на быстрых ПК.
+    const moveX = car.vx * dtScale;
+    const moveY = car.vy * dtScale;
+    const steps = Math.max(1, Math.min(10, Math.ceil(Math.hypot(moveX, moveY) / Math.max(8, widthPx * 0.18))));
+    let nextX_norm = car.x_norm;
+    let nextY_norm = car.y_norm;
     let hitWall = false;
-    for (const [lx, ly] of corners){
-      const wx = nextX_norm + lx * cos_a - ly * sin_a;
-      const wy = nextY_norm + lx * sin_a + ly * cos_a;
-      if (!_isOnTrack(wx, wy, track, halfWidthNorm)){
+    for (let step = 1; step <= steps; step++){
+      const nx = (cx_px + moveX * (step / steps)) / W;
+      const ny = (cy_px + moveY * (step / steps)) / H;
+      if (!_carFitsOnTrack(nx, ny, car.angle, track, halfWidthNorm)){
         hitWall = true;
         break;
       }
+      nextX_norm = nx;
+      nextY_norm = ny;
     }
 
     const now2 = Date.now();
@@ -6624,8 +6771,8 @@ document.head.appendChild(ratAnimStyle);
         car.hits = (car.hits || 0) + 1;
         car.hitFlashUntil = now2 + 350;
 
-        // Штраф: всегда 5 сек (иначе слишком долго ждать)
-        const penaltySec = 5;
+        // Штраф короткий: ошибку видно, но гонка не превращается в ожидание.
+        const penaltySec = 2.5;
         car.penaltyUntil = now2 + penaltySec * 1000;
         // Телепортируем на старт + сбрасываем скорость и направление
         const a = track.verts[0];
@@ -7463,6 +7610,697 @@ document.head.appendChild(ratAnimStyle);
   };
 
 
+  /* ============================================================
+     ============ АЭРОХОККЕЙ (через games/active) ================
+     ============================================================ */
+
+  const HOCKEY = {
+    ROOT: `${basePath}/games/active`,
+    STARTING_MS: 1500,
+    WIN_SCORE: 3,
+    STALE_AFTER_MS: 180000,
+    CLEANUP_DELAY_MS: 4500,
+    PADDLE_R: 0.055,
+    PUCK_R: 0.018,
+    FIELD_L: 0.08,
+    FIELD_R: 0.92,
+    FIELD_T: 0.05,
+    FIELD_B: 0.95,
+    GOAL_W: 0.34,
+    PUCK_HZ: 24,
+    PADDLE_HZ: 36,
+    VISUAL_DEADZONE: 0.045,
+    VISUAL_SNAP_DIST: 0.20,
+    VISUAL_CORRECTION: 0.08,
+    MAX_SPEED: 3.0,
+  };
+
+  const hockeyRootRef = ref(db, HOCKEY.ROOT);
+  let currentHockey = null;
+  let _hockeyCanvas = null;
+  let _hockeyCtx = null;
+  let _hockeyRAF = null;
+  let _hockeyLastRAF = 0;
+  let _hockeyLastPuckWrite = 0;
+  let _hockeyLastPaddleWrite = 0;
+  let _hockeyMouseHandlers = null;
+  let _hockeyCleanupScheduled = false;
+  let _hockeyLastHitAt = 0;
+  let _hockeyLastWallAt = 0;
+  let _hockeyLastGoalAt = 0;
+  let _hockeyPendingHitAt = 0;
+  let _hockeyPendingWallAt = 0;
+  let _hockeyLastScoreKey = '';
+  let _hockeyLastWinKey = '';
+  let _hockeyPuckVisual = null;
+  let _hockeyPuckRenderKey = '';
+
+  function _hockeyMyUid(v = currentHockey){
+    if (!v?.participants) return null;
+    return _myDuelIds().find(uid => v.participants[uid]) || null;
+  }
+
+  function _hockeyIsDriver(v = currentHockey){
+    if (!v) return false;
+    return _myDuelIds().includes(v.challenger);
+  }
+
+  function _hockeyPaddleY(uid, v = currentHockey){
+    if (!v) return 0.5;
+    return uid === v.challenger ? 0.86 : 0.14;
+  }
+
+  function _hockeyDefaultPaddle(uid, v = currentHockey){
+    return { x: 0.5, y: _hockeyPaddleY(uid, v), vx: 0, vy: 0, updatedAt: Date.now() };
+  }
+
+  function _hockeyResetPuck(towardsUid, v = currentHockey){
+    const down = !v || towardsUid === v.challenger;
+    const angle = (down ? Math.PI / 2 : -Math.PI / 2) + (Math.random() - 0.5) * 0.7;
+    const speed = 1.05;
+    return {
+      x: 0.5,
+      y: 0.5,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      updatedAt: Date.now()
+    };
+  }
+
+  function _hockeyPuckKey(p){
+    if (!p) return '';
+    return [
+      Number(p.updatedAt || 0),
+      Number(p.x || 0).toFixed(4),
+      Number(p.y || 0).toFixed(4),
+      Number(p.vx || 0).toFixed(4),
+      Number(p.vy || 0).toFixed(4)
+    ].join(':');
+  }
+
+  function _rememberHockeyPuckSnapshot(v){
+    const p = v?.puck;
+    if (!p) return;
+    const key = _hockeyPuckKey(p);
+    if (!key || key === _hockeyPuckRenderKey) return;
+    _hockeyPuckRenderKey = key;
+
+    const hardSnap = !_hockeyPuckVisual
+      || v.state !== 'playing'
+      || Date.now() < Number(v.goalPauseUntil || 0);
+
+    if (_hockeyIsDriver(v) && !hardSnap) return;
+    if (hardSnap){
+      _hockeyPuckVisual = { ...p };
+      return;
+    }
+
+    const dx = Number(p.x || 0.5) - Number(_hockeyPuckVisual.x || 0.5);
+    const dy = Number(p.y || 0.5) - Number(_hockeyPuckVisual.y || 0.5);
+    const dist = Math.hypot(dx, dy);
+    if (dist > HOCKEY.VISUAL_SNAP_DIST){
+      _hockeyPuckVisual = { ...p };
+      return;
+    }
+
+    if (dist > HOCKEY.VISUAL_DEADZONE){
+      _hockeyPuckVisual.x += dx * HOCKEY.VISUAL_CORRECTION;
+      _hockeyPuckVisual.y += dy * HOCKEY.VISUAL_CORRECTION;
+    }
+    _hockeyPuckVisual.vx = Number(p.vx || 0);
+    _hockeyPuckVisual.vy = Number(p.vy || 0);
+    _hockeyPuckVisual.updatedAt = Number(p.updatedAt || Date.now());
+  }
+
+  function _hockeyProjectPuck(p, dt){
+    const n = (value, fallback) => {
+      const num = Number(value);
+      return Number.isFinite(num) ? num : fallback;
+    };
+    let x = n(p?.x, 0.5);
+    let y = n(p?.y, 0.5);
+    let vx = n(p?.vx, 0);
+    let vy = n(p?.vy, 0);
+    x += vx * dt;
+    y += vy * dt;
+    vx *= 0.998;
+    vy *= 0.998;
+
+    const r = HOCKEY.PUCK_R;
+    const left = HOCKEY.FIELD_L + r;
+    const right = HOCKEY.FIELD_R - r;
+    const top = HOCKEY.FIELD_T + r;
+    const bottom = HOCKEY.FIELD_B - r;
+    if (x < left){ x = left + (left - x); vx = Math.abs(vx); }
+    if (x > right){ x = right - (x - right); vx = -Math.abs(vx); }
+
+    const inGoal = Math.abs(x - 0.5) <= HOCKEY.GOAL_W / 2;
+    if (y < top){
+      if (inGoal) y = Math.max(HOCKEY.FIELD_T - 0.04, y);
+      else { y = top + (top - y); vy = Math.abs(vy); }
+    }
+    if (y > bottom){
+      if (inGoal) y = Math.min(HOCKEY.FIELD_B + 0.04, y);
+      else { y = bottom - (y - bottom); vy = -Math.abs(vy); }
+    }
+
+    return { x, y, vx, vy };
+  }
+
+  function _stepHockeyVisual(dt){
+    if (!currentHockey) return;
+    if (!_hockeyPuckVisual) _hockeyPuckVisual = { ...(currentHockey.puck || _hockeyResetPuck(currentHockey.victim, currentHockey)) };
+    if (currentHockey.state === 'playing' && !_hockeyIsDriver(currentHockey) && Date.now() >= Number(currentHockey.goalPauseUntil || 0)){
+      _hockeyPuckVisual = { ..._hockeyPuckVisual, ..._hockeyProjectPuck(_hockeyPuckVisual, dt) };
+    }
+  }
+
+  function _hockeyVisualPuck(v){
+    const p = v?.puck || { x: 0.5, y: 0.5, vx: 0, vy: 0 };
+    if (!v || v.state !== 'playing') return p;
+    return _hockeyPuckVisual || p;
+  }
+
+  function _ensureHockeyCanvas(){
+    if (_hockeyCanvas) return _hockeyCanvas;
+    const cv = document.createElement('canvas');
+    cv.id = 'hockeyCanvas';
+    cv.style.cssText = `
+      position: fixed; inset: 0;
+      z-index: 100200;
+      pointer-events: none;
+    `;
+    document.body.appendChild(cv);
+    _hockeyCanvas = cv;
+    _hockeyCtx = cv.getContext('2d');
+    _resizeHockeyCanvas();
+    window.addEventListener('resize', _resizeHockeyCanvas);
+    return cv;
+  }
+
+  function _resizeHockeyCanvas(){
+    if (!_hockeyCanvas) return;
+    const dpr = window.devicePixelRatio || 1;
+    _hockeyCanvas.width = window.innerWidth * dpr;
+    _hockeyCanvas.height = window.innerHeight * dpr;
+    _hockeyCanvas.style.width = window.innerWidth + 'px';
+    _hockeyCanvas.style.height = window.innerHeight + 'px';
+  }
+
+  function _hideHockeyCanvas(){
+    if (_hockeyCanvas) {
+      _hockeyCanvas.remove();
+      _hockeyCanvas = null;
+      _hockeyCtx = null;
+      window.removeEventListener('resize', _resizeHockeyCanvas);
+    }
+  }
+
+  async function _triggerHockey(targetUid, targetPoint){
+    if (!auth.currentUser) return;
+    const myUid = window.__ccCanonicalUid?.() || auth.currentUser.uid;
+    if (new Set(_myDuelIds()).has(targetUid)) return;
+    try {
+      const snap = await get(hockeyRootRef);
+      if (snap.exists()){
+        const v = snap.val() || {};
+        if (v.state && v.state !== 'ended' && (Date.now() - (v.startedAt || 0) < HOCKEY.STALE_AFTER_MS)){
+          alert('Уже идёт игра, дождись её окончания');
+          return;
+        }
+      }
+    } catch {}
+
+    const isHost = _isHostHere() || window.__ccIsHostName?.(window.state?.name || localStorage.getItem('cc_name'));
+    const myName = isHost ? DUEL.HOST_NAME : (getDisplayName(state) || 'Игрок');
+    const myColor = isHost ? DUEL.HOST_COLOR : (state.color || '#16c7b7');
+    const startedAt = Date.now();
+    const participants = {
+      [myUid]: { name: myName, color: myColor },
+      [targetUid]: { name: targetPoint?.name || '?', color: targetPoint?.color || '#888' },
+    };
+    const paddles = {
+      [myUid]: { x: 0.5, y: 0.86, vx: 0, vy: 0, updatedAt: startedAt },
+      [targetUid]: { x: 0.5, y: 0.14, vx: 0, vy: 0, updatedAt: startedAt },
+    };
+    try {
+      await set(hockeyRootRef, {
+        type: 'hockey',
+        challenger: myUid,
+        victim: targetUid,
+        hostGame: !!isHost,
+        participants,
+        paddles,
+        puck: _hockeyResetPuck(targetUid, { challenger: myUid, victim: targetUid }),
+        scores: { [myUid]: 0, [targetUid]: 0 },
+        state: 'starting',
+        startedAt,
+        startsAt: startedAt + HOCKEY.STARTING_MS,
+        goalPauseUntil: 0,
+        winner: null,
+        lastHitAt: 0,
+        lastWallAt: 0,
+        lastGoalAt: 0,
+      });
+      const panel = document.getElementById('overlayEmojiPanel');
+      if (panel){
+        panel.dataset.mode = '';
+        panel.innerHTML = '';
+        panel.classList.remove('show');
+      }
+    } catch(e) {
+      console.warn('[hockey] start failed', e);
+    }
+  }
+
+  function _enterHockeyPickMode(panel){
+    panel.dataset.mode = 'hockey-pick';
+    panel.innerHTML = '';
+    const header = document.createElement('div');
+    header.style.cssText = 'width:100%; color:#fff; font-weight:700; padding:4px 10px 8px; font-size:13px; letter-spacing:0.5px;';
+    header.textContent = '🏒 Выбери соперника:';
+    panel.appendChild(header);
+    const myIds = new Set(_myDuelIds());
+    const candidates = [...state.points.entries()].filter(([uid,_]) => !myIds.has(uid));
+    if (candidates.length === 0){
+      const empty = document.createElement('div');
+      empty.style.cssText = 'width:100%; color:#aaa; padding:6px 10px; font-size:12px;';
+      empty.textContent = 'Нет доступных соперников';
+      panel.appendChild(empty);
+      setTimeout(()=>{ if (panel.dataset.mode === 'hockey-pick'){ panel.dataset.mode=''; panel.innerHTML=''; panel.classList.remove('show'); }}, 2000);
+      return;
+    }
+    for (const [uid, p] of candidates){
+      const btn = document.createElement('button');
+      btn.className = 'btn ghost small';
+      const name = (p.name || '?').substring(0, 14);
+      const color = p.color || '#888';
+      const emoji = p.emoji || '';
+      btn.style.cssText = `
+        font-size: 1em; padding: 6px 10px; min-width: 84px;
+        display: flex; flex-direction: column; align-items: center; gap: 2px;
+        border: 2px solid ${color}; color: #fff;
+        box-shadow: 0 0 12px ${color}55;
+      `;
+      btn.innerHTML = `
+        <span style="font-size:1.6em;line-height:1;">${emoji || '●'}</span>
+        <span style="font-size:0.75em;font-weight:700;color:${color};">${escapeHtml(name)}</span>
+      `;
+      btn.title = `Аэрохоккей с ${name}`;
+      btn.onclick = () => _triggerHockey(uid, p);
+      panel.appendChild(btn);
+    }
+  }
+
+  onValue(hockeyRootRef, (snap) => {
+    if (window.overlayComponent) return;
+    if (!snap.exists()){
+      if (currentHockey) _onHockeyEnd();
+      currentHockey = null;
+      return;
+    }
+    const v = snap.val();
+    if (v.type !== 'hockey'){
+      if (currentHockey) _onHockeyEnd();
+      currentHockey = null;
+      return;
+    }
+
+    const wasActive = !!currentHockey;
+    const prevState = currentHockey?.state;
+    currentHockey = v;
+
+    if (!wasActive) _onHockeyStart();
+    _rememberHockeyPuckSnapshot(v);
+
+    const hitAt = Number(v.lastHitAt || 0);
+    if (hitAt && hitAt !== _hockeyLastHitAt){
+      _hockeyLastHitAt = hitAt;
+      _playDuelSound('hockeyHit', { volume: 0.65 });
+    }
+    const wallAt = Number(v.lastWallAt || 0);
+    if (wallAt && wallAt !== _hockeyLastWallAt){
+      _hockeyLastWallAt = wallAt;
+      _playDuelSound('hockeyWall', { volume: 0.52 });
+    }
+    const goalAt = Number(v.lastGoalAt || 0);
+    if (goalAt && goalAt !== _hockeyLastGoalAt){
+      _hockeyLastGoalAt = goalAt;
+      _playDuelSound('hockeyGoal', { volume: 0.8 });
+    }
+    const scoreKey = JSON.stringify(v.scores || {});
+    if (scoreKey !== _hockeyLastScoreKey) _hockeyLastScoreKey = scoreKey;
+
+    if (v.state === 'starting' && _hockeyIsDriver(v)){
+      const delay = Math.max(0, (v.startsAt || 0) - Date.now());
+      setTimeout(() => {
+        if (currentHockey?.type === 'hockey' && currentHockey.state === 'starting'){
+          update(hockeyRootRef, { state: 'playing' }).catch(()=>{});
+        }
+      }, delay + 50);
+    }
+
+    if (v.state === 'ended' && !_hockeyCleanupScheduled && (_hockeyIsDriver(v) || _isHostHere())){
+      _hockeyCleanupScheduled = true;
+      setTimeout(() => {
+        remove(hockeyRootRef).catch(()=>{});
+        _hockeyCleanupScheduled = false;
+      }, HOCKEY.CLEANUP_DELAY_MS);
+    }
+    if (v.state === 'ended'){
+      const winKey = `${v.endedAt || 0}:${v.winner || ''}`;
+      if (winKey !== _hockeyLastWinKey){
+        _hockeyLastWinKey = winKey;
+        _playDuelSound('hockeyWin', { volume: 0.85 });
+      }
+    }
+
+    if (v.state !== 'ended' && (Date.now() - (v.startedAt || 0)) > HOCKEY.STALE_AFTER_MS){
+      try { remove(hockeyRootRef); } catch {}
+    }
+
+    if (_hockeyMyUid(v) && _isHostHere() && ['starting', 'playing'].includes(v.state)){
+      console.log('[DUEL_INTERACTIVE_ON]');
+    }
+  });
+
+  function _onHockeyStart(){
+    document.body.classList.add('hockey-active');
+    _ensureHockeyCanvas();
+    _hockeyCleanupScheduled = false;
+    _hockeyLastWallAt = 0;
+    _hockeyPendingHitAt = 0;
+    _hockeyPendingWallAt = 0;
+    _hockeyLastWinKey = '';
+    _hockeyPuckVisual = null;
+    _hockeyPuckRenderKey = '';
+    _hockeyLastRAF = performance.now();
+    _setupHockeyInput();
+    if (!_hockeyRAF) _hockeyRAF = requestAnimationFrame(_hockeyTick);
+  }
+
+  function _onHockeyEnd(){
+    document.body.classList.remove('hockey-active');
+    if (_isHostHere()) console.log('[DUEL_INTERACTIVE_OFF]');
+    if (_hockeyRAF) cancelAnimationFrame(_hockeyRAF);
+    _hockeyRAF = null;
+    _hockeyPuckVisual = null;
+    _hockeyPendingHitAt = 0;
+    _hockeyPendingWallAt = 0;
+    _hockeyPuckRenderKey = '';
+    _removeHockeyInput();
+    _hideHockeyCanvas();
+  }
+
+  function _setupHockeyInput(){
+    if (_hockeyMouseHandlers) return;
+    let last = { x: 0.5, y: 0.5, t: Date.now() };
+    const apply = (clientX, clientY) => {
+      if (!currentHockey || !auth.currentUser) return;
+      const myUid = _hockeyMyUid(currentHockey);
+      if (!myUid) return;
+      const now = Date.now();
+      const W = window.innerWidth, H = window.innerHeight;
+      const pad = HOCKEY.PADDLE_R;
+      let x = Math.max(HOCKEY.FIELD_L + pad, Math.min(HOCKEY.FIELD_R - pad, clientX / W));
+      let y = Math.max(HOCKEY.FIELD_T + pad, Math.min(HOCKEY.FIELD_B - pad, clientY / H));
+      if (myUid === currentHockey.challenger) y = Math.max(0.55, Math.min(HOCKEY.FIELD_B - pad, y));
+      else y = Math.max(HOCKEY.FIELD_T + pad, Math.min(0.45, y));
+      const dt = Math.max(0.016, (now - last.t) / 1000);
+      const paddle = {
+        x, y,
+        vx: Math.max(-2.2, Math.min(2.2, (x - last.x) / dt)),
+        vy: Math.max(-2.2, Math.min(2.2, (y - last.y) / dt)),
+        updatedAt: now
+      };
+      last = { x, y, t: now };
+      if (!currentHockey.paddles) currentHockey.paddles = {};
+      currentHockey.paddles[myUid] = paddle;
+      if (now - _hockeyLastPaddleWrite < 1000 / HOCKEY.PADDLE_HZ) return;
+      _hockeyLastPaddleWrite = now;
+      set(ref(db, `${HOCKEY.ROOT}/paddles/${myUid}`), paddle).catch(()=>{});
+    };
+    _hockeyMouseHandlers = {
+      move: e => apply(e.clientX, e.clientY),
+      touch: e => { if (e.touches?.[0]) apply(e.touches[0].clientX, e.touches[0].clientY); },
+    };
+    window.addEventListener('mousemove', _hockeyMouseHandlers.move);
+    window.addEventListener('pointermove', _hockeyMouseHandlers.move);
+    window.addEventListener('touchmove', _hockeyMouseHandlers.touch, { passive: true });
+  }
+
+  function _removeHockeyInput(){
+    if (!_hockeyMouseHandlers) return;
+    window.removeEventListener('mousemove', _hockeyMouseHandlers.move);
+    window.removeEventListener('pointermove', _hockeyMouseHandlers.move);
+    window.removeEventListener('touchmove', _hockeyMouseHandlers.touch);
+    _hockeyMouseHandlers = null;
+  }
+
+  function _hockeyTick(now){
+    _hockeyRAF = requestAnimationFrame(_hockeyTick);
+    if (!currentHockey) return;
+    const dt = Math.max(0.001, Math.min(0.04, (now - (_hockeyLastRAF || now)) / 1000));
+    _hockeyLastRAF = now;
+    if (currentHockey.state === 'playing' && _hockeyIsDriver(currentHockey)){
+      _stepHockeyDriver(dt);
+    } else {
+      _stepHockeyVisual(dt);
+    }
+    _renderHockey();
+  }
+
+  function _stepHockeyDriver(dt){
+    const v = currentHockey;
+    if (!v || Date.now() < Number(v.goalPauseUntil || 0)) return;
+    if (!_hockeyPuckVisual) _hockeyPuckVisual = { ...(_hockeyResetPuck(v.victim, v)), ...(v.puck || {}) };
+    const puck = _hockeyPuckVisual;
+    let { x, y, vx, vy } = puck;
+    x += vx * dt;
+    y += vy * dt;
+    vx *= 0.998;
+    vy *= 0.998;
+
+    const r = HOCKEY.PUCK_R;
+    let paddleHit = false;
+    let wallHit = false;
+    const left = HOCKEY.FIELD_L + r;
+    const right = HOCKEY.FIELD_R - r;
+    const top = HOCKEY.FIELD_T + r;
+    const bottom = HOCKEY.FIELD_B - r;
+    if (x < left){ x = left; vx = Math.abs(vx); wallHit = true; }
+    if (x > right){ x = right; vx = -Math.abs(vx); wallHit = true; }
+
+    const goalHalf = HOCKEY.GOAL_W / 2;
+    const inGoal = Math.abs(x - 0.5) <= goalHalf;
+    if (y < top){
+      if (inGoal) return _hockeyScore(v.challenger);
+      y = top; vy = Math.abs(vy); wallHit = true;
+    }
+    if (y > bottom){
+      if (inGoal) return _hockeyScore(v.victim);
+      y = bottom; vy = -Math.abs(vy); wallHit = true;
+    }
+
+    const paddles = v.paddles || {};
+    for (const uid of [v.challenger, v.victim]){
+      const p = paddles[uid] || _hockeyDefaultPaddle(uid, v);
+      const dx = x - p.x;
+      const dy = y - p.y;
+      const dist = Math.hypot(dx, dy);
+      const minD = HOCKEY.PADDLE_R + r;
+      if (dist > 0 && dist < minD){
+        const nx = dx / dist, ny = dy / dist;
+        x = p.x + nx * minD;
+        y = p.y + ny * minD;
+        const speed = Math.min(HOCKEY.MAX_SPEED, Math.max(1.25, Math.hypot(vx, vy) * 1.16 + 0.18));
+        vx = nx * speed + Number(p.vx || 0) * 0.28;
+        vy = ny * speed + Number(p.vy || 0) * 0.28;
+        paddleHit = true;
+      }
+    }
+
+    if (x < left){ x = left; vx = Math.abs(vx); wallHit = true; }
+    if (x > right){ x = right; vx = -Math.abs(vx); wallHit = true; }
+    if (y < top){
+      if (Math.abs(x - 0.5) <= goalHalf) return _hockeyScore(v.challenger);
+      y = top; vy = Math.abs(vy); wallHit = true;
+    }
+    if (y > bottom){
+      if (Math.abs(x - 0.5) <= goalHalf) return _hockeyScore(v.victim);
+      y = bottom; vy = -Math.abs(vy); wallHit = true;
+    }
+
+    const speed = Math.hypot(vx, vy);
+    if (speed > HOCKEY.MAX_SPEED){
+      vx = vx / speed * HOCKEY.MAX_SPEED;
+      vy = vy / speed * HOCKEY.MAX_SPEED;
+    }
+
+    const now = Date.now();
+    const puckUpdate = { x, y, vx, vy, updatedAt: now };
+    currentHockey.puck = puckUpdate;
+    _hockeyPuckVisual = { ...puckUpdate };
+    if (paddleHit) _hockeyPendingHitAt = now;
+    if (wallHit) _hockeyPendingWallAt = now;
+    if (now - _hockeyLastPuckWrite >= 1000 / HOCKEY.PUCK_HZ){
+      _hockeyLastPuckWrite = now;
+      const updates = { puck: puckUpdate };
+      if (_hockeyPendingHitAt) updates.lastHitAt = _hockeyPendingHitAt;
+      if (_hockeyPendingWallAt) updates.lastWallAt = _hockeyPendingWallAt;
+      _hockeyPendingHitAt = 0;
+      _hockeyPendingWallAt = 0;
+      update(hockeyRootRef, updates).catch(()=>{});
+    }
+  }
+
+  function _hockeyScore(uid){
+    const v = currentHockey;
+    if (!v || !uid) return;
+    const now = Date.now();
+    const scores = { ...(v.scores || {}) };
+    scores[uid] = Number(scores[uid] || 0) + 1;
+    const winner = scores[uid] >= HOCKEY.WIN_SCORE ? uid : null;
+    const updates = {
+      scores,
+      lastGoalAt: now,
+      puck: _hockeyResetPuck(uid === v.challenger ? v.victim : v.challenger, v),
+      goalPauseUntil: now + 900
+    };
+    if (winner) {
+      updates.state = 'ended';
+      updates.winner = winner;
+      updates.endedAt = now;
+    }
+    currentHockey = { ...v, ...updates };
+    _hockeyPuckVisual = { ...updates.puck };
+    update(hockeyRootRef, updates).catch(()=>{});
+  }
+
+  function _renderHockey(){
+    const cv = _ensureHockeyCanvas();
+    const ctx = _hockeyCtx;
+    if (!ctx || !currentHockey) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = cv.width, H = cv.height;
+    ctx.clearRect(0, 0, W, H);
+    ctx.save();
+    ctx.scale(dpr, dpr);
+    const w = window.innerWidth, h = window.innerHeight;
+    const v = currentHockey;
+    const parts = v.participants || {};
+    const scores = v.scores || {};
+    const topUid = v.victim;
+    const bottomUid = v.challenger;
+    const top = parts[topUid] || {};
+    const bottom = parts[bottomUid] || {};
+    const topColor = top.color || '#a855f7';
+    const bottomColor = bottom.color || '#16c7b7';
+
+    ctx.fillStyle = 'rgba(2, 6, 23, 0.72)';
+    ctx.fillRect(0, 0, w, h);
+    const fieldX = w * HOCKEY.FIELD_L;
+    const fieldY = h * HOCKEY.FIELD_T;
+    const fieldW = w * (HOCKEY.FIELD_R - HOCKEY.FIELD_L);
+    const fieldH = h * (HOCKEY.FIELD_B - HOCKEY.FIELD_T);
+    ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+    ctx.lineWidth = 3;
+    ctx.strokeRect(fieldX, fieldY, fieldW, fieldH);
+    ctx.beginPath();
+    ctx.moveTo(fieldX, h * 0.5);
+    ctx.lineTo(fieldX + fieldW, h * 0.5);
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(w * 0.5, h * 0.5, Math.min(w,h) * 0.085, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.strokeStyle = 'rgba(251,191,36,0.75)';
+    ctx.lineWidth = 8;
+    ctx.beginPath();
+    ctx.moveTo(w * (0.5 - HOCKEY.GOAL_W/2), fieldY);
+    ctx.lineTo(w * (0.5 + HOCKEY.GOAL_W/2), fieldY);
+    ctx.moveTo(w * (0.5 - HOCKEY.GOAL_W/2), fieldY + fieldH);
+    ctx.lineTo(w * (0.5 + HOCKEY.GOAL_W/2), fieldY + fieldH);
+    ctx.stroke();
+
+    const drawPaddle = (uid, color) => {
+      const p = (v.paddles || {})[uid] || _hockeyDefaultPaddle(uid, v);
+      const x = p.x * w, y = p.y * h;
+      const r = HOCKEY.PADDLE_R * Math.min(w, h);
+      ctx.save();
+      ctx.shadowColor = color;
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255,255,255,0.85)';
+      ctx.beginPath();
+      ctx.arc(x, y, r * 0.42, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    };
+    drawPaddle(topUid, topColor);
+    drawPaddle(bottomUid, bottomColor);
+
+    const puck = _hockeyVisualPuck(v);
+    const px = puck.x * w, py = puck.y * h;
+    const pr = HOCKEY.PUCK_R * Math.min(w, h);
+    ctx.save();
+    ctx.shadowColor = '#e5e7eb';
+    ctx.shadowBlur = 18;
+    ctx.fillStyle = '#f8fafc';
+    ctx.beginPath();
+    ctx.arc(px, py, pr, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(15,23,42,0.7)';
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = '900 34px Montserrat, Arial';
+    ctx.fillStyle = topColor;
+    ctx.fillText(String(scores[topUid] || 0), w * 0.45, h * 0.10);
+    ctx.fillStyle = bottomColor;
+    ctx.fillText(String(scores[bottomUid] || 0), w * 0.55, h * 0.90);
+    ctx.font = '800 14px Montserrat, Arial';
+    ctx.fillStyle = 'rgba(255,255,255,0.85)';
+    ctx.fillText(`${top.name || '?'}  до ${HOCKEY.WIN_SCORE}`, w * 0.5, h * 0.075);
+    ctx.fillText(`${bottom.name || '?'}  до ${HOCKEY.WIN_SCORE}`, w * 0.5, h * 0.925);
+    if (v.state === 'starting'){
+      const left = Math.max(1, Math.ceil(((v.startsAt || 0) - Date.now()) / 1000));
+      ctx.font = '900 42px Montserrat, Arial';
+      ctx.fillStyle = '#fbbf24';
+      ctx.fillText(`СТАРТ ЧЕРЕЗ ${left}`, w * 0.5, h * 0.5);
+    } else if (v.state === 'ended'){
+      const wp = parts[v.winner] || {};
+      ctx.font = '900 42px Montserrat, Arial';
+      ctx.fillStyle = wp.color || '#fbbf24';
+      ctx.fillText(`ПОБЕДИЛ ${wp.name || '?'}`, w * 0.5, h * 0.5);
+    }
+    ctx.restore();
+  }
+
+  if (!document.getElementById('hockeyStyles')){
+    const st = document.createElement('style');
+    st.id = 'hockeyStyles';
+    st.textContent = `
+      body.hockey-active #player,
+      body.hockey-active #fx-layer { filter: brightness(0.45) saturate(0.8) !important; }
+      body.hockey-active #player,
+      body.hockey-active canvas:not(#hockeyCanvas) { pointer-events: none !important; }
+    `;
+    document.head.appendChild(st);
+  }
+
+  window.__hockey = {
+    state: () => currentHockey,
+    force: () => { try { remove(hockeyRootRef); } catch{} },
+    start: _triggerHockey,
+  };
+
+
   window.__openGamesModal = _openGamesModal; // удобно вызвать из консоли
   // Открывает простое модальное окно: выбор игры → выбор соперника.
   (function _setupGamesButton(){
@@ -7529,6 +8367,7 @@ document.head.appendChild(ratAnimStyle);
       games.push({ icon:'🗡️', name:'Дуэль', color:'#ef4444', onClick:()=>_modalPickVictim(card, 'duel') });
     }
     games.push({ icon:'🎯', name:'Снайпер', color:'#a855f7', onClick:()=>_modalPickVictim(card, 'sniper') });
+    games.push({ icon:'🏒', name:'Аэрохоккей', color:'#38bdf8', onClick:()=>_modalPickVictim(card, 'hockey') });
     games.push({ icon:'🏎️', name:'Гонки', color:'#10b981', onClick:()=>{
       const m = document.getElementById('gamesModal');
       if (m) m.remove();
@@ -7586,14 +8425,15 @@ document.head.appendChild(ratAnimStyle);
     card.innerHTML = '';
 
     const title = document.createElement('div');
-    const accent = gameType === 'duel' ? '#ef4444' : '#a855f7';
-    const icon = gameType === 'duel' ? '🗡️' : '🎯';
+    const accent = gameType === 'duel' ? '#ef4444' : (gameType === 'hockey' ? '#38bdf8' : '#a855f7');
+    const icon = gameType === 'duel' ? '🗡️' : (gameType === 'hockey' ? '🏒' : '🎯');
     title.style.cssText = `font-size:18px;font-weight:800;color:${accent};text-align:center;margin-bottom:14px;letter-spacing:0.5px`;
     title.textContent = `${icon} Выбери соперника`;
     card.appendChild(title);
 
     const myUid = auth.currentUser?.uid;
-    const candidates = [...state.points.entries()].filter(([uid,_]) => uid !== myUid);
+    const myIds = new Set(_myDuelIds());
+    const candidates = [...state.points.entries()].filter(([uid,_]) => !myIds.has(uid));
 
     const list = document.createElement('div');
     list.style.cssText = 'display:flex;flex-wrap:wrap;gap:10px;justify-content:center;max-width:560px';
@@ -7627,6 +8467,7 @@ document.head.appendChild(ratAnimStyle);
           if (modal) modal.remove();
           if (gameType === 'duel') _triggerHostDuel(uid, p);
           else if (gameType === 'sniper') _triggerSniper(uid, p);
+          else if (gameType === 'hockey') _triggerHockey(uid, p);
         };
         list.appendChild(btn);
       }
@@ -10109,6 +10950,7 @@ window.closeLinkModal = function() {
       games.push({ icon: '🗡️', name: 'Дуэль', color: '#ef4444', onClick: () => _enterDuelPickMode(panel) });
     }
     games.push({ icon: '🎯', name: 'Снайпер', color: '#a855f7', onClick: () => _enterSniperPickMode(panel) });
+    games.push({ icon: '🏒', name: 'Аэрохоккей', color: '#38bdf8', onClick: () => _enterHockeyPickMode(panel) });
 
     for (const g of games){
       const btn = document.createElement('button');
@@ -10866,6 +11708,18 @@ gateColor.addEventListener('input', syncColor);
       return !!(window.__ccIsHostName?.(name));
     }
 
+    async function _removeMusicHostPoint(){
+      try {
+        const ids = new Set([window.HOST_IDENTITY?.uid, window.auth?.currentUser?.uid].filter(Boolean));
+        for (const uid of ids) {
+          await remove(ref(music_db, `sessions/DepressivePasties/points/${uid}`)).catch(()=>{});
+          try { window.state?.points?.delete?.(uid); } catch {}
+        }
+      } catch(e) {
+        console.warn('remove music host point fail', e);
+      }
+    }
+
     function _waitForMusicAuth(timeoutMs = 8000){
       if (window.state?.authed && window.auth?.currentUser) return Promise.resolve(true);
       const started = Date.now();
@@ -10904,6 +11758,9 @@ gateColor.addEventListener('input', syncColor);
         [`${musicPath}/votes/${voterName}`]: vote,
         [`${musicPath}/vote_colors/${voterName}`]: voterColor
       });
+      if (_musicIsHostName(voterName)) {
+        await _removeMusicHostPoint();
+      }
       return true;
     }
 
@@ -11216,7 +12073,7 @@ gateColor.addEventListener('input', syncColor);
     });
 
     // === Визуальные индикаторы голосования + таймер часов + автотранспорт ===
-    _setupVoteVisuals(music_db, musicPath, _writeMusicVote);
+    _setupVoteVisuals(music_db, musicPath, _writeMusicVote, _removeMusicHostPoint);
   }
 
   // ============ ДЕТЕКЦИЯ ГОЛОСОВАНИЯ ЧЕРЕЗ ПОЗИЦИЮ МОРДЫ ============
@@ -11329,7 +12186,7 @@ gateColor.addEventListener('input', syncColor);
   // - Счётчик количества голосов в углу зоны
   // - Таймер на часах: круг постепенно заполняется за 30 сек, потом часы исчезают
   // - Автотранспорт: морда не движется 10 сек и не в зоне → попадает в "Исключение"
-  function _setupVoteVisuals(music_db, musicPath, writeMusicVote){
+  function _setupVoteVisuals(music_db, musicPath, writeMusicVote, removeMusicHostPoint){
     // === 1. Лучики и счётчики ===
     // Слушаем votes в реальном времени и обновляем UI каждой зоны
     const pointsPath = 'sessions/DepressivePasties/points';
@@ -11624,6 +12481,7 @@ gateColor.addEventListener('input', syncColor);
       const clockZone = document.getElementById('zone_time');
       if (!clockZone) return;
       const status = snap.val() || {};
+      if (!document.body.classList.contains('music-active')) return;
       // Используем track_name как ID (если нет настоящего id) - меняется при смене
       const tid = status.track_name || '';
       if (!tid) return;
@@ -11648,13 +12506,12 @@ gateColor.addEventListener('input', syncColor);
           clockZone.style.display = '';
           clockZone.style.opacity = '1';
         }
-        if (!isFirst){
-          _voteDetectorPausedUntil = Date.now() + 5000;
-          _voteHoldStart.clear();
-          _voteCommitted.clear();
-          _yankMyPointToCenter();
-          console.log('🎵 Новый трек — морды в центр, пауза 5 сек');
-        }
+        _voteDetectorPausedUntil = Date.now() + 5000;
+        _voteHoldStart.clear();
+        _voteCommitted.clear();
+        _yankMyPointToCenter();
+        if (isFirst) console.log('🎵 Трек — морды в центр, пауза 5 сек');
+        else console.log('🎵 Новый трек — морды в центр, пауза 5 сек');
       }
     });
 
@@ -11663,7 +12520,16 @@ gateColor.addEventListener('input', syncColor);
         if (!window.auth || !window.auth.currentUser) return;
         const uid = window.__ccCanonicalUid?.() || window.auth.currentUser.uid;
         if (!window.state || !window.state.points) return;
-        const my = window.state.points.get(uid);
+        let my = window.state.points.get(uid);
+        const isHostSelf = _isHostHere() || window.__ccIsHostName?.(window.state?.name || localStorage.getItem('cc_name'));
+        if (!my && isHostSelf) {
+          my = {
+            id: window.HOST_IDENTITY?.uid || uid,
+            name: window.HOST_IDENTITY?.name || 'Лёха',
+            color: window.HOST_IDENTITY?.color || '#1e40af',
+            emoji: window.HOST_IDENTITY?.emoji || '🐻'
+          };
+        }
         if (!my) return;
         const updated = { ...my, x: 0.5, y: 0.5, lastActive: Date.now(), ts: Date.now() };
         await set(ref(music_db, `sessions/DepressivePasties/points/${uid}`), updated);
@@ -11734,6 +12600,9 @@ gateColor.addEventListener('input', syncColor);
         // Скрываем часы
         if (!_clockHidden){
           _clockHidden = true;
+          if (_isHostHere()) {
+            try { removeMusicHostPoint?.(); } catch {}
+          }
           clockZone.style.transition = 'opacity 0.4s';
           clockZone.style.opacity = '0';
           setTimeout(() => {
