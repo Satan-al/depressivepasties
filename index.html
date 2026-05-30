@@ -8526,7 +8526,7 @@ document.head.appendChild(ratAnimStyle);
     CLEANUP_DELAY_MS: 7000,
     STALE_AFTER_MS: 180000,
     MIN_WORDS: 3,
-    BAD_WORDS: ['обновите', 'тест', 'лагает', 'тормозит'],
+    BAD_WORDS: ['обновите', 'тест', 'лагает', 'тормозит', 'морда', 'лимфома', 'рак', 'опухоль', 'болеет'],
     NAME_ALIASES: {
       'чужой': 'Лёха',
       'леха': 'Лёха',
@@ -8621,8 +8621,15 @@ document.head.appendChild(ratAnimStyle);
     if (!s || s.startsWith('/')) return '';
     if (_quoteTextWordCount(s) < QUOTE_GAME.MIN_WORDS) return '';
     const low = s.toLocaleLowerCase('ru-RU');
-    if (QUOTE_GAME.BAD_WORDS.some(w => low.includes(w))) return '';
+    if (_quoteHasBannedText(low)) return '';
     return s.slice(0, 220);
+  }
+
+  function _quoteHasBannedText(lowText){
+    return QUOTE_GAME.BAD_WORDS.some(word => {
+      if (word === 'рак') return /(^|[^\p{L}\p{N}])рак([^\p{L}\p{N}]|$)/u.test(lowText);
+      return lowText.includes(word);
+    });
   }
 
   function _quoteBlockedAuthor(name){
