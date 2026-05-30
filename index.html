@@ -2059,10 +2059,10 @@ input[type="range"]{
     <!-- 🎥 ВИДЕО КОНТЕЙНЕР (обязательная обёртка для overlay canvas!) -->
     <div class="videoWrap" id="videoWrap">
       <!-- Iframe для стрима -->
-      <iframe 
-        id="player" 
-        src="about:blank" 
-        allow="autoplay; camera; microphone; fullscreen; picture-in-picture; display-capture; self">
+      <iframe
+        id="player"
+        src="about:blank"
+        allow="autoplay; camera; microphone; fullscreen; picture-in-picture; display-capture; encrypted-media; speaker-selection">
       </iframe>
       
       <!-- 🎨 CANVAS ДЛЯ ОВЕРЛЕЯ (ОБЯЗАТЕЛЬНО внутри videoWrap!) -->
@@ -2554,7 +2554,6 @@ input[type="range"]{
     if (Number.isFinite(scale) && scale > 0) url.searchParams.set('scale', String(Math.round(scale)));
     if (codec) url.searchParams.set('codec', codec);
 
-    url.searchParams.set('noaudio', '0');
     url.searchParams.set('autohide', '');
     url.searchParams.set('cleanoutput', '');
     url.searchParams.set('noheader', '');
