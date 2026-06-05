@@ -1038,7 +1038,7 @@ background:
       top: 18px;
       left: 50%;
       transform: translateX(-50%);
-      display: flex;
+      display: none;
       align-items: center;
       gap: 10px;
       padding: 10px 14px;
@@ -1056,6 +1056,7 @@ background:
       color: var(--fg);
     }
     .overlay-toast.show{
+      display: flex;
       opacity: 1;
       transform: translateX(-50%) translateY(0);
     }
@@ -1855,6 +1856,10 @@ input[type="range"]{
   #now-playing[hidden] {
     display: none !important;
   }
+  html.overlay-live #now-playing,
+  html.overlay-mode #now-playing {
+    z-index: 200100 !important;
+  }
   #headerEmojis {
   flex-wrap: wrap;
   justify-content: flex-start; /* выровнять влево */
@@ -2441,6 +2446,19 @@ input[type="range"]{
     else if (comp === 'music_queue_btn') {
       const btn = document.getElementById('openQueueBtn');
       mountRoundButton(btn, '[MUSIC_QUEUE_OPEN]');
+      document.body.style.background = 'transparent';
+    }
+    else if (comp === 'music_party_btn') {
+      const btn = document.createElement('button');
+      btn.id = 'openPartyBtn';
+      btn.className = 'btn ghost small';
+      btn.innerHTML = '&#128293;';
+      btn.style.fontSize = '28px';
+      btn.style.background = 'rgba(251,191,36,0.18)';
+      btn.style.border = '1px solid rgba(251,191,36,0.55)';
+      btn.style.boxShadow = '0 0 24px rgba(251,191,36,0.28)';
+      btn.style.color = '#fff';
+      mountRoundButton(btn, '[MUSIC_PARTY_OPEN]');
       document.body.style.background = 'transparent';
     }
     else if (comp === 'music_queue_btn') {
@@ -4836,13 +4854,17 @@ window.addEventListener('pointerdown', ()=>{ _ensureToastAudio(); }, { once:true
     const resolvedEmoji = resolvedUid ? (state.presence?.get?.(resolvedUid)?.emoji || state.points?.get?.(resolvedUid)?.emoji) : null;
     const emoji = (m && m.emoji) ? m.emoji : (resolvedEmoji || '💬');
     const text  = (m && m.text) ? m.text : '';
+    if (!String(text).trim()) return;
     toast.style.setProperty('--ot-color', color);
     toast.setAttribute('data-color','1');
     toast.innerHTML = `<div class="ot-emoji"><span class="ot-emoji-glyph">${escapeHtml(emoji || '⭕')}</span></div><div class="ot-text">${escapeHtml(text)}</div>`;
     toast.classList.add('show');
     playOverlayToastBeep();
     clearTimeout(overlayToastTimer);
-    overlayToastTimer = setTimeout(()=> toast.classList.remove('show'), 3000);
+    overlayToastTimer = setTimeout(()=> {
+      toast.classList.remove('show');
+      toast.innerHTML = '';
+    }, 3000);
   }
   window.showOverlayToast = showOverlayToast;
   // Чат управляется ТОЛЬКО через Python оверлей (Alt+F7)
@@ -6093,6 +6115,10 @@ document.head.appendChild(ratAnimStyle);
   }
   function _onSniperEnd(){
     document.body.classList.remove('sniper-active');
+    _hideSniperTarget();
+    if (_sniperOverlay) { _sniperOverlay.remove(); _sniperOverlay = null; }
+    if (_sniperBall) { _sniperBall.remove(); _sniperBall = null; }
+    if (_sniperCard) { _sniperCard.remove(); _sniperCard = null; }
     sniperCleanupScheduled = false;
     if (auth.currentUser && _isHostHere()){
       console.log('[DUEL_INTERACTIVE_OFF]');
@@ -6292,34 +6318,47 @@ document.head.appendChild(ratAnimStyle);
     setTimeout(() => flash.remove(), 450);
   }
 
+  function _hideSniperTarget(){
+    if (_sniperOverlay) {
+      _sniperOverlay.style.setProperty('display', 'none', 'important');
+      _sniperOverlay.style.setProperty('pointer-events', 'none', 'important');
+    }
+    if (_sniperBall) {
+      _sniperBall.style.setProperty('display', 'none', 'important');
+      _sniperBall.style.setProperty('visibility', 'hidden', 'important');
+      _sniperBall.style.setProperty('opacity', '0', 'important');
+    }
+  }
+
   function _updateSniperOverlay(){
     const ov = _ensureSniperOverlay();
     const ball = _ensureSniperBall();
 
     if (!currentSniper || currentSniper.state !== 'playing'){
-      ov.style.display = 'none';
-      ball.style.display = 'none';
+      _hideSniperTarget();
       return;
     }
     const myUid = _myDuelIds().find(uid => currentSniper.participants?.[uid]);
     const isParticipant = !!myUid;
     if (!isParticipant){
-      ov.style.display = 'none';
-      ball.style.display = 'none';
+      _hideSniperTarget();
       return;
     }
 
-    ov.style.display = 'block';
+    ov.style.setProperty('display', 'block', 'important');
+    ov.style.setProperty('pointer-events', 'auto', 'important');
 
     const tgt = currentSniper.currentTarget;
-    if (!tgt){ ball.style.display = 'none'; return; }
+    if (!tgt){ _hideSniperTarget(); return; }
 
     const W = window.innerWidth, H = window.innerHeight;
     const minSide = Math.min(W, H);
     const r_px = tgt.r_norm * minSide;
     const x_px = tgt.x * W;
     const y_px = tgt.y * H;
-    ball.style.display = 'block';
+    ball.style.setProperty('display', 'block', 'important');
+    ball.style.setProperty('visibility', 'visible', 'important');
+    ball.style.setProperty('opacity', '1', 'important');
     ball.style.left = (x_px - r_px) + 'px';
     ball.style.top  = (y_px - r_px) + 'px';
     ball.style.width  = (r_px * 2) + 'px';
@@ -7334,11 +7373,29 @@ document.head.appendChild(ratAnimStyle);
   let _raceMouseHandlers = null;
   let _raceMainRAF = null;
 
+  function _raceMyUid(){
+    return window.__ccCanonicalUid?.() || auth.currentUser?.uid || state.id || null;
+  }
+
+  function _raceMyIds(){
+    return new Set([
+      ...((typeof _myDuelIds === 'function') ? _myDuelIds() : []),
+      _raceMyUid()
+    ].filter(Boolean));
+  }
+
+  function _raceParticipantUid(v = currentRace){
+    const ids = _raceMyIds();
+    const participants = v?.participants || {};
+    return Object.keys(participants).find(uid => ids.has(uid)) || _raceMyUid();
+  }
+
   // === Запуск гонок ===
   // Не выбираем соперника — все игроки попадают в лобби и нажимают "вписаться".
   async function _triggerRaceLobby(){
     if (!auth.currentUser) return;
-    const myUid = auth.currentUser.uid;
+    const myUid = _raceMyUid();
+    if (!myUid) return;
 
     try {
       const snap = await get(raceRootRef);
@@ -7402,7 +7459,7 @@ document.head.appendChild(ratAnimStyle);
     }
 
     // Хост двигает фазы:
-    const isHost = (auth.currentUser && v.host === auth.currentUser.uid);
+    const isHost = _raceMyIds().has(v.host);
 
     if (v.state === 'lobby' && isHost){
       // Если время лобби вышло — начинаем
@@ -7498,8 +7555,10 @@ document.head.appendChild(ratAnimStyle);
   async function _raceJoin(){
     if (!currentRace || currentRace.state !== 'lobby') return;
     if (!auth.currentUser) return;
-    const myUid = auth.currentUser.uid;
-    if (currentRace.participants?.[myUid]) return; // уже есть
+    const myUid = _raceMyUid();
+    if (!myUid) return;
+    const myIds = _raceMyIds();
+    if (Object.keys(currentRace.participants || {}).some(uid => myIds.has(uid))) return;
     const myName = getDisplayName(state) || 'Гонщик';
     const myColor = state.color || '#16c7b7';
     try {
@@ -7606,7 +7665,7 @@ document.head.appendChild(ratAnimStyle);
   // Локальный шаг моей машинки (использует ту же физику что в тесте)
   function _raceStepMyCar(){
     if (!auth.currentUser) return;
-    const myUid = auth.currentUser.uid;
+    const myUid = _raceParticipantUid();
     if (!currentRace.participants?.[myUid]) return;
 
     if (!_raceMyCarState){
@@ -7641,7 +7700,8 @@ document.head.appendChild(ratAnimStyle);
 
   async function _raceReportFinish(){
     if (!auth.currentUser || !currentRace) return;
-    const myUid = auth.currentUser.uid;
+    const myUid = _raceParticipantUid();
+    if (!myUid) return;
     try {
       // Атомарно добавляем в finishOrder если меня там нет
       const snap = await get(ref(db, `${RACE_NET.ROOT}/finishOrder`));
@@ -7661,7 +7721,8 @@ document.head.appendChild(ratAnimStyle);
     if (now - _raceMyCarLastWrite < interval) return;
     _raceMyCarLastWrite = now;
 
-    const myUid = auth.currentUser.uid;
+    const myUid = _raceParticipantUid();
+    if (!myUid) return;
     const c = _raceMyCarState;
     set(ref(db, `${RACE_NET.ROOT}/cars/${myUid}`), {
       x: c.x_norm, y: c.y_norm, angle: c.angle,
@@ -7675,7 +7736,7 @@ document.head.appendChild(ratAnimStyle);
   // Рендер всех машинок (моя по локальному state, чужие по Firebase)
   function _renderAllCars(){
     if (!currentRace || !currentRace.participants) return;
-    const myUid = auth.currentUser?.uid;
+    const myUid = _raceParticipantUid();
     const cars = currentRace.cars || {};
 
     for (const [uid, info] of Object.entries(currentRace.participants)){
@@ -7716,6 +7777,22 @@ document.head.appendChild(ratAnimStyle);
       text-align: center; min-width: 420px; max-width: 90vw;
       color: #fff;
     `;
+    el.addEventListener('pointerdown', (e) => {
+      const join = e.target.closest?.('#raceJoinBtn');
+      const start = e.target.closest?.('#raceStartBtn');
+      if (!join && !start) return;
+      e.preventDefault();
+      e.stopPropagation();
+      if (join) _raceJoin();
+      if (start) _raceBeginCountdown();
+    }, true);
+    el.addEventListener('click', (e) => {
+      const join = e.target.closest?.('#raceJoinBtn');
+      const start = e.target.closest?.('#raceStartBtn');
+      if (!join && !start) return;
+      e.preventDefault();
+      e.stopPropagation();
+    }, true);
     document.body.appendChild(el);
     _raceUI = el;
     return el;
@@ -7731,7 +7808,7 @@ document.head.appendChild(ratAnimStyle);
     }
     const el = _ensureRaceUI();
     const v = currentRace;
-    const myUid = auth.currentUser?.uid;
+    const myUid = _raceParticipantUid();
     const isHost = (myUid === v.host);
     const amIn = !!(myUid && v.participants?.[myUid]);
 
@@ -9072,7 +9149,12 @@ document.head.appendChild(ratAnimStyle);
         label.className = 'quote-option-label';
         label.textContent = opt.label;
         btn.appendChild(label);
-        btn.onclick = () => _quoteSubmitAnswer(opt.id);
+        btn.onpointerdown = (e) => e.stopPropagation();
+        btn.onclick = (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          _quoteSubmitAnswer(opt.id);
+        };
         if (v.state === 'ended'){
           btn.classList.add('ready');
         } else {
@@ -9178,7 +9260,7 @@ document.head.appendChild(ratAnimStyle);
         background: rgba(15,23,42,0.88);
         color: #fff; font-weight: 850; font-size: 16px;
         position: relative; padding: 10px 14px 18px;
-        cursor: pointer; opacity: 0; pointer-events: none;
+        cursor: pointer; opacity: 0; pointer-events: auto;
         animation: quoteOptionIn 0.26s ease both;
         animation-delay: var(--delay, 0ms);
         transition: border-color 0.12s ease, box-shadow 0.12s ease, background 0.12s ease;
