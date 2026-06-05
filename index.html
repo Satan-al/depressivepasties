@@ -5462,6 +5462,14 @@ document.head.appendChild(ratAnimStyle);
     duelFightStarted = false;
     _stopDuelSound('loop');
     _applyDuelVisuals(false);
+    if (_duelClickCatcher) {
+      _duelClickCatcher.remove();
+      _duelClickCatcher = null;
+    }
+    if (_duelBanner) {
+      _duelBanner.remove();
+      _duelBanner = null;
+    }
     if (_isHostHere()) console.log('[DUEL_INTERACTIVE_OFF]');
   }
 
@@ -5759,9 +5767,19 @@ document.head.appendChild(ratAnimStyle);
 
   function _updateDuelUI(){
     _requestDuelInteractiveIfNeeded();
+    if (!currentDuel){
+      if (_duelClickCatcher) {
+        _duelClickCatcher.remove();
+        _duelClickCatcher = null;
+      }
+      if (_duelBanner) {
+        _duelBanner.remove();
+        _duelBanner = null;
+      }
+      return;
+    }
     _updateDuelClickCatcher();
     const wrap = _ensureDuelBanner();
-    if (!currentDuel){ wrap.style.display = 'none'; return; }
     wrap.style.display = 'flex';
 
     const card = wrap.querySelector('.duel-card');
@@ -12691,7 +12709,7 @@ gateColor.addEventListener('input', syncColor);
 })();
 </script>
 <script type="module">
-  import { ref, onValue, set, push, update, remove } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+  import { ref, onValue, set, push, update, remove, get } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
   const LOST_AFTER_MS = 10 * 60 * 1000;
   const GONE_AFTER_MS = 30 * 60 * 1000;
 
@@ -13212,6 +13230,8 @@ gateColor.addEventListener('input', syncColor);
     let currentVoteColors = {};
     let currentMusicStatus = {};
     let _lastDecisionKey = '';
+    const autoExcVotes = new Map();
+    const autoExcColors = new Map();
     onValue(ref(music_db, `${musicPath}/status`), (snap) => {
       currentMusicStatus = snap.val() || {};
     });
@@ -13225,12 +13245,19 @@ gateColor.addEventListener('input', syncColor);
       if (window.overlayComponent) return;
       if (!window.state?.authed || !window.auth?.currentUser) return;
       const entries = Object.entries(currentVotes).filter(([, zone]) => ['da', 'da_no', 'no'].includes(zone));
-      const allVoteNames = new Set(Object.keys(currentVotes).filter(Boolean));
+      const excNames = new Set(Object.entries(currentVotes)
+        .filter(([, zone]) => zone === 'exc')
+        .map(([name]) => window.__ccCanonicalName?.(name) || name)
+        .filter(Boolean));
+      const allVoteNames = new Set(Object.keys(currentVotes)
+        .map(name => window.__ccCanonicalName?.(name) || name)
+        .filter(Boolean));
       const activeNames = new Set();
       const now = Date.now();
       const addActiveName = (rawName, item = {}) => {
         const name = window.__ccCanonicalName?.(rawName) || rawName;
         if (!name) return;
+        if (excNames.has(name)) return;
         const state = item.state || 'online';
         if (state === 'gone' || state === 'offline') return;
         const lastSeen = Number(item.lastActive || item.ts || 0);
@@ -13238,6 +13265,14 @@ gateColor.addEventListener('input', syncColor);
         activeNames.add(name);
       };
       try {
+        const [pointsSnap, presenceSnap] = await Promise.all([
+          get(ref(music_db, pointsPath)).catch(() => null),
+          get(ref(music_db, presencePath)).catch(() => null)
+        ]);
+        const pointsDb = pointsSnap?.val?.() || {};
+        const presenceDb = presenceSnap?.val?.() || {};
+        for (const p of Object.values(pointsDb)) addActiveName(p?.name, p || {});
+        for (const p of Object.values(presenceDb)) addActiveName(p?.name, p || {});
         for (const [, p] of (window.state?.points || new Map()).entries()){
           if (!p) continue;
           addActiveName(p.name, p);
@@ -13247,8 +13282,10 @@ gateColor.addEventListener('input', syncColor);
           addActiveName(p.name, p);
         }
       } catch {}
-      for (const name of allVoteNames) activeNames.add(window.__ccCanonicalName?.(name) || name);
-      const total = Math.max(allVoteNames.size, activeNames.size);
+      for (const name of allVoteNames) {
+        if (!excNames.has(name)) activeNames.add(name);
+      }
+      const total = activeNames.size;
       if (!total || total < 2) {
         try { await remove(ref(music_db, `${musicPath}/vote_result`)); } catch {}
         _lastDecisionKey = '';
@@ -13259,7 +13296,7 @@ gateColor.addEventListener('input', syncColor);
       const skipVoters = entries.filter(([, zone]) => zone === 'no' || zone === 'da_no').map(([name]) => name);
       const needed = Math.floor(total / 2) + 1;
       const playlistPassed = playlistVoters.length >= needed;
-      const skipPassed = skipVoters.length >= needed;
+      const skipPassed = skipVoters.length >= needed && skipVoters.length > playlistVoters.length;
       const trackId = _trackDecisionId();
       const result = {
         trackId,
@@ -13289,11 +13326,17 @@ gateColor.addEventListener('input', syncColor);
     }
 
     onValue(ref(music_db, `${musicPath}/votes`), (snap) => {
-      currentVotes = snap.val() || {};
+      currentVotes = {
+        ...Object.fromEntries(autoExcVotes.entries()),
+        ...(snap.val() || {})
+      };
       _evaluateMusicVotes();
     });
     onValue(ref(music_db, `${musicPath}/vote_colors`), (snap) => {
-      currentVoteColors = snap.val() || {};
+      currentVoteColors = {
+        ...Object.fromEntries(autoExcColors.entries()),
+        ...(snap.val() || {})
+      };
     });
 
     const _lostNotified = new Set();
@@ -13513,7 +13556,10 @@ gateColor.addEventListener('input', syncColor);
         );
         if (canClearVotes) {
           try {
+            autoExcVotes.clear();
+            autoExcColors.clear();
             currentVotes = {};
+            currentVoteColors = {};
             await remove(ref(music_db, `${musicPath}/votes`));
             await remove(ref(music_db, `${musicPath}/vote_colors`));
             await remove(ref(music_db, `${musicPath}/vote_result`));
@@ -13697,7 +13743,15 @@ gateColor.addEventListener('input', syncColor);
       
         // 10+ сек без движения вне зон — отправляем в Исключение
         try {
-          await writeMusicVote(voterName, 'exc');
+          const voterColor = p.color || currentVoteColors[voterName] || '#16c7b7';
+          await update(ref(music_db), {
+            [`${musicPath}/votes/${voterName}`]: 'exc',
+            [`${musicPath}/vote_colors/${voterName}`]: voterColor
+          });
+          autoExcVotes.set(voterName, 'exc');
+          autoExcColors.set(voterName, voterColor);
+          currentVotes = { ...currentVotes, [voterName]: 'exc' };
+          currentVoteColors = { ...currentVoteColors, [voterName]: voterColor };
           _voteCommitted.set(uid, { zone: 'exc', t: now });
           _inactiveTracker.delete(uid);
           try { await update(ref(music_db, `${pointsPath}/${uid}`), { state: 'lost' }); } catch {}
