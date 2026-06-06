@@ -12753,6 +12753,7 @@ gateColor.addEventListener('input', syncColor);
     let cleanupScheduled = false;
     let privateSignalKey = '';
     let revealAllHands = localStorage.getItem('durak_reveal_all') === '1';
+    let selectedCard = '';
     let pendingChoiceCard = '';
 
     function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
@@ -12798,7 +12799,8 @@ gateColor.addEventListener('input', syncColor);
     function red(c){ return suit(c) === 'H' || suit(c) === 'D'; }
     function label(c){ return `${rank(c)}${D.label[suit(c)] || suit(c)}`; }
     function modeLabel(v){ return D.modes[v?.mode || 'podkidnoy'] || D.modes.podkidnoy; }
-    function cardAsset(card){ return `${CARD_ASSET_DIR}/${rank(card)}${suit(card)}.png`; }
+    function assetRank(r){ return r === 'Q' ? 'D' : r; }
+    function cardAsset(card){ return `${CARD_ASSET_DIR}/${assetRank(rank(card))}${suit(card)}.png`; }
     function cardArt(card){
       if (!card) return '';
       return `<img class="durak-art" src="${attr(cardAsset(card))}" alt="" loading="lazy" onload="this.parentElement?.classList.add('has-art')" onerror="this.remove()">`;
@@ -13062,20 +13064,24 @@ gateColor.addEventListener('input', syncColor);
           const defendIdx = defenseIndex(v, id, card);
           if (intent === 'transfer' && !transferOk) {
             pendingChoiceCard = '';
+            selectedCard = '';
             render();
             return null;
           }
           if (intent === 'defend' && defendIdx < 0) {
             pendingChoiceCard = '';
+            selectedCard = '';
             render();
             return null;
           }
           if (transferOk && defendIdx >= 0 && intent === 'auto') {
+            selectedCard = card;
             pendingChoiceCard = card;
             render();
             return null;
           }
           if (transferOk && intent !== 'defend') {
+            selectedCard = '';
             pendingChoiceCard = '';
             const nextDefender = nextAfter(v, id);
             hands[id] = (hands[id] || []).filter(c => c !== card);
@@ -13093,11 +13099,13 @@ gateColor.addEventListener('input', syncColor);
           }
           const idx = defendIdx;
           if (idx < 0) return null;
+          selectedCard = '';
           pendingChoiceCard = '';
           hands[id] = (hands[id] || []).filter(c => c !== card);
           table[idx] = { ...table[idx], defense:card, defenseBy:id };
         } else {
           if (!canAttack(v, id, card)) return null;
+          selectedCard = '';
           pendingChoiceCard = '';
           hands[id] = (hands[id] || []).filter(c => c !== card);
           table.push({ attack:card, by:id, defense:null });
@@ -13172,17 +13180,36 @@ gateColor.addEventListener('input', syncColor);
       if (id === v.defender) return canTransfer(v, id, card) || defenseIndex(v, id, card) >= 0;
       return canAttack(v, id, card);
     }
+    function selectCard(card){
+      const id = participantUid(game);
+      const hand = id ? (game?.hands?.[id] || []) : [];
+      if (!hand.includes(card)) return;
+      selectedCard = card;
+      pendingChoiceCard = needsPlayChoice(game, id, card) ? card : '';
+      render();
+    }
+    function confirmSelectedCard(intent='auto'){
+      const id = participantUid(game);
+      if (!selectedCard || !canPlayCard(game, id, selectedCard)) return;
+      if (intent === 'auto' && needsPlayChoice(game, id, selectedCard)) {
+        pendingChoiceCard = selectedCard;
+        render();
+        return;
+      }
+      playCard(selectedCard, intent);
+    }
     function cardHtml(card, opts=false, ownerMaybe=''){
       const options = typeof opts === 'object' ? opts : { inert:!!opts, ownerColor:ownerMaybe || '' };
       const inert = !!options.inert;
       const tag = inert ? 'span' : 'button';
       const ownerColor = options.ownerColor || '';
-      const disabled = !inert && options.playable === false;
+      const inspectable = !!options.inspectable;
+      const disabled = !inert && options.playable === false && !inspectable;
       const ambiguous = !!options.ambiguous;
       const chosen = !!options.chosen;
       const style = ownerColor ? ` style="--owner:${attr(ownerColor)}"` : '';
       const attrs = inert ? '' : `type="button" data-card="${attr(card)}" ${disabled ? 'disabled' : ''}`;
-      return `<${tag} class="durak-card ${inert ? 'inert' : ''} ${ownerColor ? 'owned' : ''} ${disabled ? 'dim' : ''} ${ambiguous ? 'ambiguous' : ''} ${chosen ? 'chosen' : ''} ${red(card) ? 'red' : 'black'}"${style} ${attrs}>${cardArt(card)}<span>${esc(rank(card))}</span><b>${D.label[suit(card)] || ''}</b></${tag}>`;
+      return `<${tag} class="durak-card ${inert ? 'inert' : ''} ${ownerColor ? 'owned' : ''} ${options.playable === false ? 'dim' : ''} ${inspectable ? 'inspectable' : ''} ${ambiguous ? 'ambiguous' : ''} ${chosen ? 'chosen' : ''} ${red(card) ? 'red' : 'black'}"${style} ${attrs}>${cardArt(card)}<span>${esc(rank(card))}</span><b>${D.label[suit(card)] || ''}</b></${tag}>`;
     }
     function deckBackHtml(v){
       return `<span class="durak-back">${backArt()}<span>${(v.deck || []).length}</span></span>`;
@@ -13195,7 +13222,7 @@ gateColor.addEventListener('input', syncColor);
     function miniCardHtml(card, ownerColor, i, total, reveal=false){
       const mid = (Math.max(1, total) - 1) / 2;
       const delta = i - mid;
-      const style = `--owner:${attr(ownerColor || '#94a3b8')};--tx:${(delta * 10).toFixed(1)}px;--rot:${(delta * -8).toFixed(1)}deg`;
+      const style = `--owner:${attr(ownerColor || '#94a3b8')};--tx:${(delta * 12).toFixed(1)}px;--rot:${(delta * -7).toFixed(1)}deg`;
       if (reveal && card) {
         return `<span class="durak-mini-card face ${red(card) ? 'red' : 'black'}" style="${style}">${cardArt(card)}<span>${esc(rank(card))}</span><b>${D.label[suit(card)] || ''}</b></span>`;
       }
@@ -13244,6 +13271,15 @@ gateColor.addEventListener('input', syncColor);
       if (!pendingChoiceCard || !needsPlayChoice(v, id, pendingChoiceCard)) return '';
       return `<div class="durak-choice"><b>${esc(label(pendingChoiceCard))}</b><span>может и перевести, и отбить</span><div><button class="btn ghost small" data-da="choose-transfer">Перевести</button><button class="btn small" data-da="choose-defend">Отбить</button></div></div>`;
     }
+    function previewHtml(v, id){
+      if (!selectedCard || !(v.hands?.[id] || []).includes(selectedCard)) return '';
+      const playable = canPlayCard(v, id, selectedCard);
+      const needsChoice = needsPlayChoice(v, id, selectedCard);
+      const hint = playable
+        ? (needsChoice ? 'Выбери действие ниже' : 'Нажми на карту, чтобы сходить')
+        : 'Сейчас эту карту нельзя сыграть';
+      return `<div class="durak-preview ${playable ? 'playable' : 'locked'}"><button type="button" class="durak-preview-card ${red(selectedCard) ? 'red' : 'black'}" data-da="confirm-card" ${playable && !needsChoice ? '' : 'disabled'}>${cardArt(selectedCard)}<span>${esc(rank(selectedCard))}</span><b>${D.label[suit(selectedCard)] || ''}</b></button><div class="durak-preview-hint">${esc(hint)}</div></div>`;
+    }
     function wire(root){
       root.querySelectorAll('[data-da]').forEach(btn => {
         btn.onclick = () => {
@@ -13255,13 +13291,14 @@ gateColor.addEventListener('input', syncColor);
           if (a === 'pass') pass();
           if (a === 'beat') beat();
           if (a === 'private') console.log('[DURAK_HAND_OPEN]');
-          if (a === 'choose-transfer' && pendingChoiceCard) playCard(pendingChoiceCard, 'transfer');
-          if (a === 'choose-defend' && pendingChoiceCard) playCard(pendingChoiceCard, 'defend');
+          if (a === 'confirm-card') confirmSelectedCard('auto');
+          if (a === 'choose-transfer' && pendingChoiceCard) confirmSelectedCard('transfer');
+          if (a === 'choose-defend' && pendingChoiceCard) confirmSelectedCard('defend');
           if (a && a.startsWith('mode-')) setMode(a.slice(5));
         };
       });
       root.querySelectorAll('.durak-hand .durak-card[data-card]').forEach(btn => {
-        btn.onclick = () => playCard(btn.dataset.card);
+        btn.onclick = () => selectCard(btn.dataset.card);
       });
     }
     function render(){
@@ -13279,10 +13316,12 @@ gateColor.addEventListener('input', syncColor);
       const id = participantUid(v);
       const inGame = !!(id && v.participants?.[id]);
       const hand = inGame ? sortHand(v.hands?.[id] || [], v.trump) : [];
+      if (selectedCard && !hand.includes(selectedCard)) selectedCard = '';
+      if (pendingChoiceCard && pendingChoiceCard !== selectedCard) pendingChoiceCard = '';
       if (pendingChoiceCard && !needsPlayChoice(v, id, pendingChoiceCard)) pendingChoiceCard = '';
       if (isPrivateHand) {
         el.className = 'durak-private';
-        el.innerHTML = `<div class="durak-private-head"><b>${esc(turnText(v,id) || 'Твои карты')}</b><span>${modeLabel(v)} · козырь: ${v.trumpCard ? label(v.trumpCard) : (v.trump ? D.label[v.trump] : '-')}</span></div><div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), ambiguous:needsPlayChoice(v,id,c), chosen:pendingChoiceCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}${controls(v,id)}`;
+        el.innerHTML = `<div class="durak-private-head"><b>${esc(turnText(v,id) || 'Твои карты')}</b><span>${modeLabel(v)} · козырь: ${v.trumpCard ? label(v.trumpCard) : (v.trump ? D.label[v.trump] : '-')}</span></div>${previewHtml(v,id)}<div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), inspectable:true, ambiguous:needsPlayChoice(v,id,c), chosen:selectedCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}${controls(v,id)}`;
         wire(el);
         return;
       }
@@ -13305,7 +13344,7 @@ gateColor.addEventListener('input', syncColor);
       const status = turnText(v, id);
       const handHtml = hideMainHand() && !revealAllHands
         ? `<div class="durak-hidden"><b>Карты хоста скрыты</b><span>Открой приватное окно руки. В шаримую страницу они не рисуются.</span><button class="btn ghost small" data-da="private">Открыть руку</button></div>`
-        : `<div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), ambiguous:needsPlayChoice(v,id,c), chosen:pendingChoiceCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}`;
+        : `${previewHtml(v,id)}<div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), inspectable:true, ambiguous:needsPlayChoice(v,id,c), chosen:selectedCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}`;
       el.className = 'durak-shell playing';
       el.innerHTML = `<div class="durak-panel"><div class="durak-top"><div><b>Дурак</b><span>${modeLabel(v)}${revealAllHands ? ' · тест: руки открыты' : ''}</span></div><div class="durak-turn">${esc(status)}</div><div class="durak-deck">${deckBackHtml(v)}${trumpHtml(v)}</div></div><div class="durak-board">${players}<div class="durak-center"><div class="durak-table">${table || '<div class="durak-muted">Стол пуст</div>'}</div></div></div>${inGame ? `<div class="durak-my-zone">${handHtml}${controls(v,id)}</div>` : '<div class="durak-muted">Ты зритель этой партии</div>'}</div>`;
       wire(el);
@@ -13344,6 +13383,13 @@ gateColor.addEventListener('input', syncColor);
       }
     });
     window.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && selectedCard) {
+        selectedCard = '';
+        pendingChoiceCard = '';
+        render();
+        e.preventDefault();
+        return;
+      }
       if (!e.altKey || !(e.code === 'Backquote' || e.key === '`' || e.key === 'ё' || e.key === 'Ё')) return;
       if (!game || game.type !== 'durak') return;
       revealAllHands = !revealAllHands;
@@ -13365,14 +13411,14 @@ gateColor.addEventListener('input', syncColor);
         .durak-deck{display:flex;gap:8px;align-items:center}.durak-back,.durak-trump-card{width:62px;height:88px;border-radius:8px;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.25);font-weight:950;box-shadow:0 10px 24px rgba(0,0,0,.34)}.durak-back{background:linear-gradient(135deg,#172554,#020617);color:#fff;font-size:22px}.durak-trump-card{background:#f8fafc;color:#0f172a;gap:4px}.durak-trump-card.red{color:#dc2626}.durak-trump-card span{font-size:20px;line-height:1}.durak-trump-card b{font-size:24px;line-height:1}
         .durak-board{position:relative;min-height:430px;margin:8px 0 14px;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:radial-gradient(circle at 50% 50%,rgba(34,197,94,.12),rgba(2,6,23,.08) 48%,transparent 72%)}
         .durak-seats{position:absolute;inset:0;pointer-events:none}.durak-seat{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:auto}.durak-face{width:42px;height:42px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.9);border:2px solid var(--pc);font-size:23px;box-shadow:0 0 18px color-mix(in srgb,var(--pc) 42%,transparent)}.durak-seat.turn .durak-face{background:color-mix(in srgb,var(--pc) 30%,#111827);box-shadow:0 0 0 4px rgba(251,191,36,.16),0 0 26px color-mix(in srgb,var(--pc) 70%,transparent)}.durak-seat.me .durak-face{outline:2px solid rgba(255,255,255,.56);outline-offset:2px}
-        .durak-fan{position:relative;width:104px;height:52px}.durak-fan em{position:absolute;left:50%;top:8px;transform:translateX(-50%);z-index:4;min-width:24px;height:22px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:rgba(2,6,23,.88);border:1px solid var(--pc);color:#fff;font-size:12px;font-weight:950;font-style:normal}.durak-mini-card{position:absolute;left:50%;bottom:0;width:28px;height:40px;border-radius:4px;border:1px solid var(--owner);transform:translateX(calc(-50% + var(--tx))) rotate(var(--rot));transform-origin:50% 120%;background:#f8fafc;color:#0f172a;box-shadow:0 5px 12px rgba(0,0,0,.32);overflow:hidden}.durak-mini-card.back{background:linear-gradient(135deg,#172554,#020617)}.durak-mini-card.red{color:#dc2626}.durak-mini-card span,.durak-mini-card b{position:relative;z-index:1;display:block;text-align:center;line-height:1}.durak-mini-card span{font-size:10px;margin-top:7px}.durak-mini-card b{font-size:14px}
+        .durak-fan{position:relative;width:128px;height:66px}.durak-fan em{position:absolute;left:50%;top:13px;transform:translateX(-50%);z-index:4;min-width:26px;height:24px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:rgba(2,6,23,.88);border:1px solid var(--pc);color:#fff;font-size:12px;font-weight:950;font-style:normal}.durak-mini-card{position:absolute;left:50%;bottom:0;width:34px;height:48px;border-radius:5px;border:1px solid var(--owner);transform:translateX(calc(-50% + var(--tx))) rotate(var(--rot));transform-origin:50% 120%;background:#f8fafc;color:#0f172a;box-shadow:0 5px 12px rgba(0,0,0,.32);overflow:hidden}.durak-mini-card.back{background:linear-gradient(135deg,#172554,#020617)}.durak-mini-card.red{color:#dc2626}.durak-mini-card span,.durak-mini-card b{position:relative;z-index:1;display:block;text-align:center;line-height:1}.durak-mini-card span{font-size:11px;margin-top:8px}.durak-mini-card b{font-size:16px}
         .durak-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,64vw);min-height:210px;display:flex;align-items:center;justify-content:center}.durak-table{width:100%;min-height:196px;padding:14px;border:1px dashed rgba(255,255,255,.15);border-radius:8px;background:rgba(2,6,23,.28)}.durak-trick{position:relative;width:116px;height:130px}.durak-trick>.durak-card{position:absolute;left:0;top:30px;transform:rotate(-7deg)}.durak-trick>.durak-card+.durak-card{left:42px;top:4px;transform:rotate(9deg)}.durak-trick>.durak-slot.defense{position:absolute;left:42px;top:4px;transform:rotate(9deg)}
         .durak-slot{width:62px;height:88px;border-radius:8px;border:1px dashed rgba(255,255,255,.28);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.32);font-weight:900}
-        .durak-card{width:62px;height:88px;border-radius:8px;border:1px solid rgba(15,23,42,.2);background:#f8fafc;color:#0f172a;font-weight:950;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.34);transition:transform .12s ease,box-shadow .12s ease,opacity .12s ease}.durak-card.owned{border-color:var(--owner);box-shadow:0 10px 24px rgba(0,0,0,.34),0 0 0 2px color-mix(in srgb,var(--owner) 68%,transparent) inset}.durak-card.ambiguous{box-shadow:0 10px 24px rgba(0,0,0,.34),0 0 0 3px rgba(251,191,36,.78) inset,0 0 22px rgba(251,191,36,.28)}.durak-card.chosen{transform:translateY(-8px);box-shadow:0 16px 30px rgba(0,0,0,.48),0 0 0 3px #fbbf24 inset}.durak-card:not(.inert):not(:disabled):hover{transform:translateY(-6px);box-shadow:0 16px 30px rgba(0,0,0,.48)}.durak-card.inert{cursor:default;opacity:.96}.durak-card.dim{opacity:.34;cursor:default;filter:grayscale(.28)}.durak-card.red{color:#dc2626}.durak-card span,.durak-card b,.durak-trump-card span,.durak-trump-card b,.durak-back span{position:relative;z-index:1}.durak-card span{font-size:20px;line-height:1}.durak-card b{font-size:24px;line-height:1}.durak-art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}.durak-card.has-art>span,.durak-card.has-art>b,.durak-trump-card.has-art>span,.durak-trump-card.has-art>b,.durak-back.has-art>span,.durak-mini-card.has-art>span,.durak-mini-card.has-art>b{display:none}
+        .durak-card{width:62px;height:88px;border-radius:8px;border:1px solid rgba(15,23,42,.2);background:#f8fafc;color:#0f172a;font-weight:950;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.34);transition:transform .12s ease,box-shadow .12s ease,opacity .12s ease}.durak-card.owned{border-color:var(--owner);box-shadow:0 10px 24px rgba(0,0,0,.34),0 0 0 2px color-mix(in srgb,var(--owner) 68%,transparent) inset}.durak-card.ambiguous{box-shadow:0 10px 24px rgba(0,0,0,.34),0 0 0 3px rgba(251,191,36,.78) inset,0 0 22px rgba(251,191,36,.28)}.durak-card.chosen{transform:translateY(-8px);box-shadow:0 16px 30px rgba(0,0,0,.48),0 0 0 3px #fbbf24 inset}.durak-card:not(.inert):not(:disabled):hover{transform:translateY(-6px);box-shadow:0 16px 30px rgba(0,0,0,.48)}.durak-card.inert{cursor:default;opacity:.96}.durak-card.dim{opacity:.34;cursor:default;filter:grayscale(.28)}.durak-card.dim.inspectable{opacity:.64;cursor:pointer}.durak-card.red{color:#dc2626}.durak-card span,.durak-card b,.durak-trump-card span,.durak-trump-card b,.durak-back span,.durak-preview-card span,.durak-preview-card b{position:relative;z-index:1}.durak-card span{font-size:20px;line-height:1}.durak-card b{font-size:24px;line-height:1}.durak-hand .durak-card{width:82px;height:116px}.durak-hand .durak-card span{font-size:24px}.durak-hand .durak-card b{font-size:30px}.durak-preview{display:flex;flex-direction:column;align-items:center;gap:8px;margin:4px auto 12px}.durak-preview-card{width:clamp(150px,24vmin,270px);aspect-ratio:62/88;border-radius:12px;border:1px solid rgba(15,23,42,.2);background:#f8fafc;color:#0f172a;font-weight:950;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;position:relative;overflow:hidden;box-shadow:0 24px 62px rgba(0,0,0,.55),0 0 0 3px rgba(251,191,36,.36);transition:transform .12s ease,box-shadow .12s ease}.durak-preview-card:not(:disabled):hover{transform:translateY(-3px);box-shadow:0 28px 70px rgba(0,0,0,.62),0 0 0 3px rgba(251,191,36,.62)}.durak-preview-card:disabled{cursor:default}.durak-preview-card.red{color:#dc2626}.durak-preview-card span{font-size:clamp(34px,5vmin,54px);line-height:1}.durak-preview-card b{font-size:clamp(42px,6vmin,68px);line-height:1}.durak-preview-hint{color:rgba(255,255,255,.72);font-weight:800;text-align:center;font-size:13px}.durak-art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}.durak-card.has-art>span,.durak-card.has-art>b,.durak-trump-card.has-art>span,.durak-trump-card.has-art>b,.durak-back.has-art>span,.durak-mini-card.has-art>span,.durak-mini-card.has-art>b,.durak-preview-card.has-art>span,.durak-preview-card.has-art>b{display:none}
         .durak-choice{width:max-content;max-width:min(520px,calc(100vw - 32px));margin:12px auto 0;padding:10px 12px;border-radius:8px;border:1px solid rgba(251,191,36,.55);background:rgba(15,23,42,.9);display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;box-shadow:0 12px 34px rgba(0,0,0,.38),0 0 26px rgba(251,191,36,.12)}.durak-choice b{color:#fbbf24;font-size:18px}.durak-choice span{color:rgba(255,255,255,.72);font-weight:800}.durak-choice>div{display:flex;gap:8px}
         .durak-my-zone{border-top:1px solid rgba(255,255,255,.1);padding-top:14px}.durak-hidden{display:flex;flex-direction:column;align-items:center;gap:8px;color:#fff;background:rgba(2,6,23,.72);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:12px}.durak-hidden span{color:rgba(255,255,255,.68);font-size:13px}.durak-end{font-size:26px;font-weight:950;margin:18px 0}
-        #durakHandOverlay,.durak-private{width:100vw;height:100vh;background:#050814;color:#fff;font-family:'Montserrat','Open Sans',sans-serif;box-sizing:border-box;padding:12px}.durak-private-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;color:#fbbf24;font-weight:900}.durak-private .durak-hand{justify-content:flex-start;align-items:flex-end;min-height:104px}.durak-private .durak-actions{justify-content:flex-start;margin-top:10px}.durak-private-empty{padding:18px;color:rgba(255,255,255,.72);font-weight:800}
-        @media(max-width:700px){.durak-panel{padding:12px}.durak-top{grid-template-columns:1fr;justify-items:center}.durak-turn{font-size:22px}.durak-board{min-height:390px}.durak-center{width:min(360px,76vw)}.durak-card,.durak-back,.durak-trump-card{width:52px;height:76px}.durak-slot{width:52px;height:76px}.durak-trick{width:100px;height:114px}.durak-trick>.durak-card+.durak-card,.durak-trick>.durak-slot.defense{left:34px}}
+        #durakHandOverlay,.durak-private{width:100vw;height:100vh;background:#050814;color:#fff;font-family:'Montserrat','Open Sans',sans-serif;box-sizing:border-box;padding:12px;overflow:auto}.durak-private-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;color:#fbbf24;font-weight:900}.durak-private .durak-preview-card{width:clamp(150px,34vh,270px)}.durak-private .durak-hand{justify-content:flex-start;align-items:flex-end;min-height:126px}.durak-private .durak-actions{justify-content:flex-start;margin-top:10px}.durak-private-empty{padding:18px;color:rgba(255,255,255,.72);font-weight:800}
+        @media(max-width:700px){.durak-panel{padding:12px}.durak-top{grid-template-columns:1fr;justify-items:center}.durak-turn{font-size:22px}.durak-board{min-height:390px}.durak-center{width:min(360px,76vw)}.durak-card,.durak-back,.durak-trump-card{width:52px;height:76px}.durak-hand .durak-card{width:68px;height:96px}.durak-preview-card{width:clamp(140px,44vw,220px)}.durak-slot{width:52px;height:76px}.durak-trick{width:100px;height:114px}.durak-trick>.durak-card+.durak-card,.durak-trick>.durak-slot.defense{left:34px}.durak-fan{width:116px;height:58px}.durak-mini-card{width:30px;height:42px}}
       `;
       document.head.appendChild(st);
     }
