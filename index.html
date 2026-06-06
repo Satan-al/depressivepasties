@@ -12799,6 +12799,7 @@ gateColor.addEventListener('input', syncColor);
       max: 6,
       hand: 6,
       turnMs: 60 * 1000,
+      resolveDelay: 1800,
       cleanup: 15000,
       stale: 45 * 60 * 1000,
       ranks: ['6','7','8','9','10','J','Q','K','A'],
@@ -12824,6 +12825,8 @@ gateColor.addEventListener('input', syncColor);
     let preloadStarted = false;
     let privateHadActiveGame = false;
     let privateCloseSignaled = false;
+    let resolveTimer = 0;
+    let resolveTimerKey = '';
 
     function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
     function attr(s){ return esc(s).replace(/'/g,'&#39;'); }
@@ -12934,8 +12937,13 @@ gateColor.addEventListener('input', syncColor);
     }
     function ranksOnTable(v){ return new Set(tableCards(v.table || []).map(rank)); }
     function allDefended(v){ return (v.table || []).length > 0 && (v.table || []).every(p => !!p.defense); }
+    function isResolving(v){ return !!(v && v.state === 'playing' && v.resolveOutcome); }
+    function scheduleBoutEnd(v, outcome){
+      return { ...v, resolveOutcome:outcome, resolveAt:Date.now() + D.resolveDelay, updatedAt:Date.now() };
+    }
     function canAttackOpen(v, id, card){
       if (!v || v.state !== 'playing' || !id || id === v.defender) return false;
+      if (isResolving(v)) return false;
       if (!(v.hands?.[id] || []).includes(card)) return false;
       const table = v.table || [];
       const attackLimit = Math.min(D.hand, Math.max(1, Number(v.defenderHandAtStart || D.hand)));
@@ -12952,6 +12960,7 @@ gateColor.addEventListener('input', syncColor);
     }
     function defenseTargets(v, id, card){
       if (!v || v.state !== 'playing' || id !== v.defender) return [];
+      if (isResolving(v)) return [];
       if (!(v.hands?.[id] || []).includes(card)) return [];
       return (v.table || [])
         .map((p, i) => (!p.defense && beats(card, p.attack, v.trump)) ? i : -1)
@@ -12966,6 +12975,7 @@ gateColor.addEventListener('input', syncColor);
     }
     function canTransfer(v, id, card){
       if (!v || v.mode !== 'transfer' || v.state !== 'playing' || id !== v.defender) return false;
+      if (isResolving(v)) return false;
       if (!(v.hands?.[id] || []).includes(card)) return false;
       const table = v.table || [];
       if (!table.length || table.some(p => p.defense)) return false;
@@ -13043,13 +13053,14 @@ gateColor.addEventListener('input', syncColor);
     }
     function normalizePassesAndMaybeEnd(v){
       if (!v || v.state !== 'playing' || !allDefended(v)) return v;
+      if (isResolving(v)) return v;
       const attackers = activeOrder(v).filter(pid => pid !== v.defender && (v.hands?.[pid] || []).length);
-      if (!attackers.length) return endBout(v, 'beaten');
+      if (!attackers.length) return scheduleBoutEnd(v, 'beaten');
       const passes = { ...(v.passes || {}) };
       attackers.forEach(pid => {
         if (!canAnyAttackOpen(v, pid)) passes[pid] = true;
       });
-      if (attackers.every(pid => passes[pid])) return endBout({ ...v, passes }, 'beaten');
+      if (attackers.every(pid => passes[pid])) return scheduleBoutEnd({ ...v, passes }, 'beaten');
       return { ...v, passes };
     }
     function maybeFinish(next, preferredAttacker, outcome){
@@ -13082,6 +13093,8 @@ gateColor.addEventListener('input', syncColor);
     function endBout(v, outcome){
       const hands = { ...(v.hands || {}) };
       const next = { ...v, hands, table: [], discard: [...(v.discard || [])] };
+      delete next.resolveOutcome;
+      delete next.resolveAt;
       const cards = tableCards(v.table || []);
       if (outcome === 'take') hands[v.defender] = sortHand([...(hands[v.defender] || []), ...cards], v.trump);
       else next.discard = [...next.discard, ...cards];
@@ -13166,6 +13179,7 @@ gateColor.addEventListener('input', syncColor);
       window.__ccMarkActive?.(true);
       await withFresh(async (v) => {
         if (v.state !== 'playing') return null;
+        if (isResolving(v)) return null;
         const id = participantUid(v);
         if (!id) return null;
         const hands = { ...(v.hands || {}) };
@@ -13242,6 +13256,7 @@ gateColor.addEventListener('input', syncColor);
     async function pass(){
       await withFresh(async (v) => {
         if (v.state !== 'playing') return null;
+        if (isResolving(v)) return null;
         const id = participantUid(v);
         if (!id || id === v.defender || !allDefended(v)) return null;
         const passes = { ...(v.passes || {}), [id]:true };
@@ -13257,6 +13272,7 @@ gateColor.addEventListener('input', syncColor);
     }
     async function take(){
       await withFresh(async (v) => {
+        if (isResolving(v)) return null;
         const id = participantUid(v);
         if (!id || id !== v.defender || !(v.table || []).length) return null;
         return endBout(v, 'take');
@@ -13288,6 +13304,7 @@ gateColor.addEventListener('input', syncColor);
     function nameOf(v, id){ return v?.participants?.[id]?.name || 'игрока'; }
     function turnOwner(v){
       if (!v || v.state !== 'playing') return null;
+      if (isResolving(v)) return null;
       const table = v.table || [];
       if (table.some(p => !p.defense)) return v.defender;
       if (!table.length) return v.attacker;
@@ -13295,6 +13312,7 @@ gateColor.addEventListener('input', syncColor);
       return attackers[0] || v.attacker;
     }
     function turnText(v, id){
+      if (isResolving(v)) return 'Бито';
       const owner = turnOwner(v);
       if (!owner) return '';
       return owner === id ? 'Твой ход' : `Ход ${nameOf(v, owner)}`;
@@ -13304,6 +13322,7 @@ gateColor.addEventListener('input', syncColor);
     }
     function turnTimerHtml(v){
       if (!v || v.state !== 'playing') return '';
+      if (isResolving(v)) return '<small>смотрим отбой</small>';
       const left = Math.ceil(timeLeftMs(v) / 1000);
       return `<small>${Math.max(0, left)}с</small>`;
     }
@@ -13428,6 +13447,7 @@ gateColor.addEventListener('input', syncColor);
     }
     function controls(v, id){
       if (!id || v.state !== 'playing') return '';
+      if (isResolving(v)) return '<div class="durak-actions"><span class="durak-action-state">Бито</span></div>';
       const def = id === v.defender;
       const table = (v.table || []).length > 0;
       const openDefense = (v.table || []).some(p => !p.defense);
@@ -13553,11 +13573,11 @@ gateColor.addEventListener('input', syncColor);
       console.log(active ? '[DUEL_INTERACTIVE_ON]' : '[DUEL_INTERACTIVE_OFF]');
     }
     async function enforceTurnTimeout(){
-      if (timeoutBusy || !game || game.state !== 'playing' || timeLeftMs(game) > 0) return;
+      if (timeoutBusy || !game || game.state !== 'playing' || isResolving(game) || timeLeftMs(game) > 0) return;
       timeoutBusy = true;
       try {
         await withFresh(async (v) => {
-          if (!v || v.state !== 'playing' || timeLeftMs(v) > 0) return null;
+          if (!v || v.state !== 'playing' || isResolving(v) || timeLeftMs(v) > 0) return null;
           const loser = turnOwner(v);
           if (!loser) return null;
           return { ...v, state:'ended', loser, timeout:true, endedAt:Date.now(), updatedAt:Date.now() };
@@ -13566,10 +13586,37 @@ gateColor.addEventListener('input', syncColor);
         timeoutBusy = false;
       }
     }
+    async function resolveBoutIfDue(){
+      if (!game || game.state !== 'playing' || !game.resolveOutcome) return;
+      if (Date.now() < Number(game.resolveAt || 0)) return;
+      await withFresh(async (v) => {
+        if (!v || v.state !== 'playing' || !v.resolveOutcome) return null;
+        if (Date.now() < Number(v.resolveAt || 0)) return null;
+        return endBout(v, v.resolveOutcome);
+      });
+    }
+    function armResolveTimer(v){
+      if (!v || v.state !== 'playing' || !v.resolveOutcome) {
+        if (resolveTimer) clearTimeout(resolveTimer);
+        resolveTimer = 0;
+        resolveTimerKey = '';
+        return;
+      }
+      const key = `${v.startedAt || 0}:${v.resolveOutcome}:${v.resolveAt || 0}`;
+      if (resolveTimerKey === key) return;
+      if (resolveTimer) clearTimeout(resolveTimer);
+      resolveTimerKey = key;
+      const wait = Math.max(0, Number(v.resolveAt || 0) - Date.now() + 20);
+      resolveTimer = setTimeout(() => {
+        resolveTimer = 0;
+        resolveBoutIfDue();
+      }, wait);
+    }
     onValue(rootRef, (snap) => {
       if (component && !isPrivateHand) return;
       const v = snap.val() || null;
       if (!v || v.type !== 'durak') {
+        armResolveTimer(null);
         if (isPrivateHand && privateHadActiveGame && !privateCloseSignaled) {
           privateCloseSignaled = true;
           console.log('[DURAK_HAND_CLOSE]');
@@ -13581,6 +13628,7 @@ gateColor.addEventListener('input', syncColor);
         return;
       }
       game = v;
+      armResolveTimer(v);
       if (isPrivateHand && (v.state === 'lobby' || v.state === 'playing')) {
         privateHadActiveGame = true;
         privateCloseSignaled = false;
@@ -13618,6 +13666,7 @@ gateColor.addEventListener('input', syncColor);
     });
     setInterval(() => {
       if (!game || game.state !== 'playing') return;
+      resolveBoutIfDue();
       enforceTurnTimeout();
       render();
     }, 1000);
