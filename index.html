@@ -12818,9 +12818,12 @@ gateColor.addEventListener('input', syncColor);
     let pendingChoiceCard = '';
     let selectedIntent = '';
     let selectedDefenseIndex = -1;
+    let inspectedCard = '';
     let interactiveActive = false;
     let timeoutBusy = false;
     let preloadStarted = false;
+    let privateHadActiveGame = false;
+    let privateCloseSignaled = false;
 
     function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
     function attr(s){ return esc(s).replace(/'/g,'&#39;'); }
@@ -12931,15 +12934,21 @@ gateColor.addEventListener('input', syncColor);
     }
     function ranksOnTable(v){ return new Set(tableCards(v.table || []).map(rank)); }
     function allDefended(v){ return (v.table || []).length > 0 && (v.table || []).every(p => !!p.defense); }
-    function canAttack(v, id, card){
+    function canAttackOpen(v, id, card){
       if (!v || v.state !== 'playing' || !id || id === v.defender) return false;
       if (!(v.hands?.[id] || []).includes(card)) return false;
-      if (v.passes?.[id]) return false;
       const table = v.table || [];
       const attackLimit = Math.min(D.hand, Math.max(1, Number(v.defenderHandAtStart || D.hand)));
       if (table.length >= attackLimit) return false;
       if (!table.length) return id === v.attacker;
       return ranksOnTable(v).has(rank(card));
+    }
+    function canAttack(v, id, card){
+      if (v?.passes?.[id]) return false;
+      return canAttackOpen(v, id, card);
+    }
+    function canAnyAttackOpen(v, id){
+      return (v?.hands?.[id] || []).some(card => canAttackOpen(v, id, card));
     }
     function defenseTargets(v, id, card){
       if (!v || v.state !== 'playing' || id !== v.defender) return [];
@@ -13031,6 +13040,17 @@ gateColor.addEventListener('input', syncColor);
     function resetTurnClock(next){
       if (next && next.state === 'playing') next.turnDeadlineAt = Date.now() + D.turnMs;
       return next;
+    }
+    function normalizePassesAndMaybeEnd(v){
+      if (!v || v.state !== 'playing' || !allDefended(v)) return v;
+      const attackers = activeOrder(v).filter(pid => pid !== v.defender && (v.hands?.[pid] || []).length);
+      if (!attackers.length) return endBout(v, 'beaten');
+      const passes = { ...(v.passes || {}) };
+      attackers.forEach(pid => {
+        if (!canAnyAttackOpen(v, pid)) passes[pid] = true;
+      });
+      if (attackers.every(pid => passes[pid])) return endBout({ ...v, passes }, 'beaten');
+      return { ...v, passes };
     }
     function maybeFinish(next, preferredAttacker, outcome){
       const parts = { ...(next.participants || {}) };
@@ -13200,6 +13220,7 @@ gateColor.addEventListener('input', syncColor);
           pendingChoiceCard = '';
           selectedIntent = '';
           selectedDefenseIndex = -1;
+          inspectedCard = '';
           hands[id] = (hands[id] || []).filter(c => c !== card);
           table[idx] = { ...table[idx], defense:card, defenseBy:id };
         } else {
@@ -13208,28 +13229,30 @@ gateColor.addEventListener('input', syncColor);
           pendingChoiceCard = '';
           selectedIntent = '';
           selectedDefenseIndex = -1;
+          inspectedCard = '';
           hands[id] = (hands[id] || []).filter(c => c !== card);
           table.push({ attack:card, by:id, defense:null });
         }
-        return resetTurnClock({ ...v, hands, table, passes:{}, updatedAt:Date.now() });
+        const next = id === v.defender
+          ? normalizePassesAndMaybeEnd({ ...v, hands, table, updatedAt:Date.now() })
+          : { ...v, hands, table, passes:{}, updatedAt:Date.now() };
+        return resetTurnClock(next);
       });
     }
     async function pass(){
       await withFresh(async (v) => {
         if (v.state !== 'playing') return null;
         const id = participantUid(v);
-        if (!id || id === v.defender) return null;
+        if (!id || id === v.defender || !allDefended(v)) return null;
         const passes = { ...(v.passes || {}), [id]:true };
-        const attackers = activeOrder(v).filter(pid => pid !== v.defender && (v.hands?.[pid] || []).length);
-        if (allDefended(v) && attackers.length && attackers.every(pid => passes[pid])) return endBout(v, 'beaten');
-        return resetTurnClock({ ...v, passes, updatedAt:Date.now() });
+        return resetTurnClock(normalizePassesAndMaybeEnd({ ...v, passes, updatedAt:Date.now() }));
       });
     }
     async function beat(){
       await withFresh(async (v) => {
-        const id = participantUid(v);
-        if (!id || id === v.defender || !allDefended(v)) return null;
-        return endBout(v, 'beaten');
+        if (!allDefended(v)) return null;
+        const next = normalizePassesAndMaybeEnd(v);
+        return next !== v ? next : null;
       });
     }
     async function take(){
@@ -13294,16 +13317,27 @@ gateColor.addEventListener('input', syncColor);
       pendingChoiceCard = '';
       selectedIntent = '';
       selectedDefenseIndex = -1;
+      inspectedCard = '';
     }
     function selectCard(card){
       const id = participantUid(game);
       const hand = id ? (game?.hands?.[id] || []) : [];
       if (!hand.includes(card)) return;
       selectedCard = card;
+      inspectedCard = '';
       selectedIntent = '';
       pendingChoiceCard = needsPlayChoice(game, id, card) ? card : '';
       const targets = defenseTargets(game, id, card);
       selectedDefenseIndex = targets.length === 1 ? targets[0] : -1;
+      render();
+    }
+    function inspectCard(card){
+      if (!card) return;
+      selectedCard = '';
+      pendingChoiceCard = '';
+      selectedIntent = '';
+      selectedDefenseIndex = -1;
+      inspectedCard = card;
       render();
     }
     function confirmSelectedCard(intent='auto'){
@@ -13328,14 +13362,14 @@ gateColor.addEventListener('input', syncColor);
     function cardHtml(card, opts=false, ownerMaybe=''){
       const options = typeof opts === 'object' ? opts : { inert:!!opts, ownerColor:ownerMaybe || '' };
       const inert = !!options.inert;
-      const tag = inert ? 'span' : 'button';
-      const ownerColor = options.ownerColor || '';
       const inspectable = !!options.inspectable;
+      const tag = inert && !inspectable ? 'span' : 'button';
+      const ownerColor = options.ownerColor || '';
       const disabled = !inert && options.playable === false && !inspectable;
       const ambiguous = !!options.ambiguous;
       const chosen = !!options.chosen;
       const style = ownerColor ? ` style="--owner:${attr(ownerColor)}"` : '';
-      const attrs = inert ? '' : `type="button" data-card="${attr(card)}" ${disabled ? 'disabled' : ''}`;
+      const attrs = inert && !inspectable ? '' : `type="button" ${options.peek ? `data-da="peek-${attr(card)}"` : `data-card="${attr(card)}"`} ${disabled ? 'disabled' : ''}`;
       return `<${tag} class="durak-card ${inert ? 'inert' : ''} ${ownerColor ? 'owned' : ''} ${options.playable === false ? 'dim' : ''} ${inspectable ? 'inspectable' : ''} ${ambiguous ? 'ambiguous' : ''} ${chosen ? 'chosen' : ''} ${red(card) ? 'red' : 'black'}"${style} ${attrs}>${cardArt(card)}<span>${esc(rank(card))}</span><b>${D.label[suit(card)] || ''}</b></${tag}>`;
     }
     function deckBackHtml(v){
@@ -13365,9 +13399,10 @@ gateColor.addEventListener('input', syncColor);
       const order = (v.order || []).filter(pid => v.participants?.[pid]);
       const total = Math.max(1, order.length);
       const turn = turnOwner(v);
+      const myIdx = order.indexOf(myId);
       return `<div class="durak-seats">${order.map((pid, i) => {
         const p = v.participants?.[pid] || {};
-        const angle = -90 + (360 / total) * i;
+        const angle = myIdx >= 0 ? 90 + (360 / total) * (i - myIdx) : -90 + (360 / total) * i;
         const rad = angle * Math.PI / 180;
         const left = 50 + Math.cos(rad) * 42;
         const top = 50 + Math.sin(rad) * 39;
@@ -13380,11 +13415,11 @@ gateColor.addEventListener('input', syncColor);
       const targets = selectedCard ? defenseTargets(v, myId, selectedCard) : [];
       const canTarget = !pair.defense && targets.includes(i);
       const defenseSlot = pair.defense
-        ? cardHtml(pair.defense,{ inert:true, ownerColor:defenseColor })
+        ? cardHtml(pair.defense,{ inert:true, inspectable:true, peek:true, ownerColor:defenseColor })
         : (canTarget
           ? `<button type="button" class="durak-slot defense target ${selectedDefenseIndex === i ? 'selected' : ''}" data-da="target-${i}">Бить</button>`
           : `<div class="durak-slot defense">${i+1}</div>`);
-      return `<div class="durak-trick ${pair.defense ? 'defended' : 'open'}">${pair.attack ? cardHtml(pair.attack,{ inert:true, ownerColor:attackColor }) : '<div class="durak-slot"></div>'}${defenseSlot}</div>`;
+      return `<div class="durak-trick ${pair.defense ? 'defended' : 'open'}">${pair.attack ? cardHtml(pair.attack,{ inert:true, inspectable:true, peek:true, ownerColor:attackColor }) : '<div class="durak-slot"></div>'}${defenseSlot}</div>`;
     }
     function modePicker(v){
       const active = v.mode || 'podkidnoy';
@@ -13395,10 +13430,13 @@ gateColor.addEventListener('input', syncColor);
       if (!id || v.state !== 'playing') return '';
       const def = id === v.defender;
       const table = (v.table || []).length > 0;
+      const openDefense = (v.table || []).some(p => !p.defense);
+      const canThrow = canAnyAttackOpen(v, id) && !v.passes?.[id];
       return `<div class="durak-actions">
-        ${def && table ? '<button class="btn ghost small danger" data-da="take">Взять</button>' : ''}
-        ${!def && table ? '<button class="btn ghost small" data-da="pass">Пас</button>' : ''}
-        ${!def && allDefended(v) ? '<button class="btn small" data-da="beat">Бито</button>' : ''}
+        ${def && table && openDefense ? '<button class="btn ghost small danger" data-da="take">Взять</button>' : ''}
+        ${def && table && !openDefense ? '<span class="durak-action-state">Отбился</span>' : ''}
+        ${!def && table && allDefended(v) && canThrow ? '<button class="btn ghost small" data-da="pass">Пас</button>' : ''}
+        ${!def && table && allDefended(v) && !canThrow ? '<span class="durak-action-state">Пас</span>' : ''}
       </div>`;
     }
     function choiceHtml(v, id){
@@ -13406,14 +13444,17 @@ gateColor.addEventListener('input', syncColor);
       return `<div class="durak-choice"><b>${esc(label(pendingChoiceCard))}</b><span>может и перевести, и отбить</span><div><button class="btn ghost small" data-da="choose-transfer">Перевести</button><button class="btn small" data-da="choose-defend">Отбить</button></div></div>`;
     }
     function previewHtml(v, id){
-      if (!selectedCard || !(v.hands?.[id] || []).includes(selectedCard)) return '';
+      const viewingTable = !!inspectedCard && !selectedCard;
+      const card = selectedCard || inspectedCard;
+      if (!card) return '';
+      if (!viewingTable && !(v.hands?.[id] || []).includes(card)) return '';
       const playable = canPlayCard(v, id, selectedCard);
       const needsChoice = !selectedIntent && needsPlayChoice(v, id, selectedCard);
       const needsTarget = defenseTargets(v, id, selectedCard).length > 1 && selectedDefenseIndex < 0 && !needsChoice;
-      const hint = playable
+      const hint = viewingTable ? 'Карта на столе' : (playable
         ? (needsChoice ? 'Выбери действие ниже' : (defenseTargets(v, id, selectedCard).length > 1 && selectedDefenseIndex < 0 ? 'Выбери на столе, какую карту бить' : 'Нажми на карту, чтобы сходить'))
-        : 'Сейчас эту карту нельзя сыграть';
-      return `<div class="durak-preview ${playable ? 'playable' : 'locked'}"><button type="button" class="durak-preview-card ${red(selectedCard) ? 'red' : 'black'}" data-da="confirm-card" ${playable && !needsChoice && !needsTarget ? '' : 'disabled'}>${cardArt(selectedCard)}<span>${esc(rank(selectedCard))}</span><b>${D.label[suit(selectedCard)] || ''}</b></button><div class="durak-preview-hint">${esc(hint)}</div></div>`;
+        : 'Сейчас эту карту нельзя сыграть');
+      return `<div class="durak-preview ${playable && !viewingTable ? 'playable' : 'locked'}"><button type="button" class="durak-preview-card ${red(card) ? 'red' : 'black'}" data-da="confirm-card" ${!viewingTable && playable && !needsChoice && !needsTarget ? '' : 'disabled'}>${cardArt(card)}<span>${esc(rank(card))}</span><b>${D.label[suit(card)] || ''}</b></button><div class="durak-preview-hint">${esc(hint)}</div></div>`;
     }
     function wire(root){
       root.querySelectorAll('[data-da]').forEach(btn => {
@@ -13431,6 +13472,7 @@ gateColor.addEventListener('input', syncColor);
           if (a === 'choose-transfer' && pendingChoiceCard) confirmSelectedCard('transfer');
           if (a === 'choose-defend' && pendingChoiceCard) confirmSelectedCard('defend');
           if (a && a.startsWith('mode-')) setMode(a.slice(5));
+          if (a && a.startsWith('peek-')) inspectCard(a.slice(5));
           if (a && a.startsWith('target-')) {
             selectedDefenseIndex = Number(a.slice(7));
             render();
@@ -13466,6 +13508,7 @@ gateColor.addEventListener('input', syncColor);
       const inGame = !!(id && v.participants?.[id]);
       const hand = inGame ? sortHand(v.hands?.[id] || [], v.trump) : [];
       if (selectedCard && !hand.includes(selectedCard)) clearSelection();
+      if (inspectedCard && !tableCards(v.table || []).includes(inspectedCard)) inspectedCard = '';
       if (pendingChoiceCard && pendingChoiceCard !== selectedCard) pendingChoiceCard = '';
       if (pendingChoiceCard && !needsPlayChoice(v, id, pendingChoiceCard)) pendingChoiceCard = '';
       if (isPrivateHand) {
@@ -13527,6 +13570,10 @@ gateColor.addEventListener('input', syncColor);
       if (component && !isPrivateHand) return;
       const v = snap.val() || null;
       if (!v || v.type !== 'durak') {
+        if (isPrivateHand && privateHadActiveGame && !privateCloseSignaled) {
+          privateCloseSignaled = true;
+          console.log('[DURAK_HAND_CLOSE]');
+        }
         setDurakInteractive(false);
         game = null;
         privateSignalKey = '';
@@ -13534,6 +13581,14 @@ gateColor.addEventListener('input', syncColor);
         return;
       }
       game = v;
+      if (isPrivateHand && (v.state === 'lobby' || v.state === 'playing')) {
+        privateHadActiveGame = true;
+        privateCloseSignaled = false;
+      }
+      if (isPrivateHand && v.state === 'ended' && !privateCloseSignaled) {
+        privateCloseSignaled = true;
+        console.log('[DURAK_HAND_CLOSE]');
+      }
       preloadCardAssets();
       setDurakInteractive(true);
       const currentId = participantUid(v);
@@ -13607,11 +13662,11 @@ gateColor.addEventListener('input', syncColor);
         .durak-fan{position:relative;width:128px;height:66px}.durak-fan em{position:absolute;left:50%;top:13px;transform:translateX(-50%);z-index:4;min-width:26px;height:24px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:rgba(2,6,23,.88);border:1px solid var(--pc);color:#fff;font-size:12px;font-weight:950;font-style:normal}.durak-mini-card{position:absolute;left:50%;bottom:0;width:34px;height:48px;border-radius:5px;border:1px solid var(--owner);transform:translateX(calc(-50% + var(--tx))) rotate(var(--rot));transform-origin:50% 120%;background:#f8fafc;color:#0f172a;box-shadow:0 5px 12px rgba(0,0,0,.32);overflow:hidden}.durak-mini-card.back{background:linear-gradient(135deg,#172554,#020617)}.durak-mini-card.red{color:#dc2626}.durak-mini-card span,.durak-mini-card b{position:relative;z-index:1;display:block;text-align:center;line-height:1}.durak-mini-card span{font-size:11px;margin-top:8px}.durak-mini-card b{font-size:16px}
         .durak-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,64vw);min-height:210px;display:flex;align-items:center;justify-content:center}.durak-table{width:100%;min-height:196px;padding:14px;border:1px dashed rgba(255,255,255,.15);border-radius:8px;background:rgba(2,6,23,.28)}.durak-trick{position:relative;width:116px;height:130px}.durak-trick>.durak-card{position:absolute;left:0;top:30px;transform:rotate(-7deg)}.durak-trick>.durak-card+.durak-card{left:42px;top:4px;transform:rotate(9deg)}.durak-trick>.durak-slot.defense{position:absolute;left:42px;top:4px;transform:rotate(9deg)}
         .durak-slot{width:62px;height:88px;border-radius:8px;border:1px dashed rgba(255,255,255,.28);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.32);font-weight:900}
-        .durak-card{width:62px;height:88px;border-radius:8px;border:1px solid rgba(15,23,42,.2);background:#f8fafc;color:#0f172a;font-weight:950;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.34);transition:transform .12s ease,box-shadow .12s ease,opacity .12s ease}.durak-card.owned{border-color:var(--owner);box-shadow:0 10px 24px rgba(0,0,0,.34),0 0 0 2px color-mix(in srgb,var(--owner) 68%,transparent) inset}.durak-card.ambiguous{box-shadow:0 10px 24px rgba(0,0,0,.34),0 0 0 3px rgba(251,191,36,.78) inset,0 0 22px rgba(251,191,36,.28)}.durak-card.chosen{transform:translateY(-8px);box-shadow:0 16px 30px rgba(0,0,0,.48),0 0 0 3px #fbbf24 inset}.durak-card:not(.inert):not(:disabled):hover{transform:translateY(-6px);box-shadow:0 16px 30px rgba(0,0,0,.48)}.durak-card.inert{cursor:default;opacity:.96}.durak-card.dim{opacity:.34;cursor:default;filter:grayscale(.28)}.durak-card.dim.inspectable{opacity:.64;cursor:pointer}.durak-card.red{color:#dc2626}.durak-card span,.durak-card b,.durak-trump-card span,.durak-trump-card b,.durak-back span,.durak-preview-card span,.durak-preview-card b{position:relative;z-index:1}.durak-card span{font-size:20px;line-height:1}.durak-card b{font-size:24px;line-height:1}.durak-hand .durak-card{width:82px;height:116px}.durak-hand .durak-card span{font-size:24px}.durak-hand .durak-card b{font-size:30px}.durak-preview{display:flex;flex-direction:column;align-items:center;gap:8px;margin:4px auto 12px}.durak-preview-card{width:clamp(150px,24vmin,270px);aspect-ratio:62/88;border-radius:12px;border:1px solid rgba(15,23,42,.2);background:#f8fafc;color:#0f172a;font-weight:950;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;position:relative;overflow:hidden;box-shadow:0 24px 62px rgba(0,0,0,.55),0 0 0 3px rgba(251,191,36,.36);transition:transform .12s ease,box-shadow .12s ease}.durak-preview-card:not(:disabled):hover{transform:translateY(-3px);box-shadow:0 28px 70px rgba(0,0,0,.62),0 0 0 3px rgba(251,191,36,.62)}.durak-preview-card:disabled{cursor:default}.durak-preview-card.red{color:#dc2626}.durak-preview-card span{font-size:clamp(34px,5vmin,54px);line-height:1}.durak-preview-card b{font-size:clamp(42px,6vmin,68px);line-height:1}.durak-preview-hint{color:rgba(255,255,255,.72);font-weight:800;text-align:center;font-size:13px}.durak-art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}.durak-card.has-art>span,.durak-card.has-art>b,.durak-trump-card.has-art>span,.durak-trump-card.has-art>b,.durak-back.has-art>span,.durak-mini-card.has-art>span,.durak-mini-card.has-art>b,.durak-preview-card.has-art>span,.durak-preview-card.has-art>b{display:none}
+        .durak-card{width:62px;height:88px;border-radius:8px;border:1px solid rgba(15,23,42,.2);background:#f8fafc;color:#0f172a;font-weight:950;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.34);transition:transform .12s ease,box-shadow .12s ease,opacity .12s ease}.durak-card.owned{border-color:var(--owner);box-shadow:0 10px 24px rgba(0,0,0,.34),0 0 0 2px color-mix(in srgb,var(--owner) 68%,transparent) inset}.durak-card.ambiguous{box-shadow:0 10px 24px rgba(0,0,0,.34),0 0 0 3px rgba(251,191,36,.78) inset,0 0 22px rgba(251,191,36,.28)}.durak-card.chosen{transform:translateY(-8px);box-shadow:0 16px 30px rgba(0,0,0,.48),0 0 0 3px #fbbf24 inset}.durak-card:not(.inert):not(:disabled):hover{transform:translateY(-6px);box-shadow:0 16px 30px rgba(0,0,0,.48)}.durak-card.inert{cursor:default;opacity:.96}.durak-card.inert.inspectable{cursor:pointer}.durak-card.dim{opacity:.34;cursor:default;filter:grayscale(.28)}.durak-card.dim.inspectable{opacity:.64;cursor:pointer}.durak-card.red{color:#dc2626}.durak-card span,.durak-card b,.durak-trump-card span,.durak-trump-card b,.durak-back span,.durak-preview-card span,.durak-preview-card b{position:relative;z-index:1}.durak-card span{font-size:20px;line-height:1}.durak-card b{font-size:24px;line-height:1}.durak-hand .durak-card{width:82px;height:116px}.durak-hand .durak-card span{font-size:24px}.durak-hand .durak-card b{font-size:30px}.durak-preview{display:flex;flex-direction:column;align-items:center;gap:8px;margin:4px auto 12px}.durak-preview-card{width:clamp(150px,24vmin,270px);aspect-ratio:62/88;border-radius:12px;border:1px solid rgba(15,23,42,.2);background:#f8fafc;color:#0f172a;font-weight:950;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;position:relative;overflow:hidden;box-shadow:0 24px 62px rgba(0,0,0,.55),0 0 0 3px rgba(251,191,36,.36);transition:transform .12s ease,box-shadow .12s ease}.durak-preview-card:not(:disabled):hover{transform:translateY(-3px);box-shadow:0 28px 70px rgba(0,0,0,.62),0 0 0 3px rgba(251,191,36,.62)}.durak-preview-card:disabled{cursor:default}.durak-preview-card.red{color:#dc2626}.durak-preview-card span{font-size:clamp(34px,5vmin,54px);line-height:1}.durak-preview-card b{font-size:clamp(42px,6vmin,68px);line-height:1}.durak-preview-hint{color:rgba(255,255,255,.72);font-weight:800;text-align:center;font-size:13px}.durak-art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}.durak-card.has-art>span,.durak-card.has-art>b,.durak-trump-card.has-art>span,.durak-trump-card.has-art>b,.durak-back.has-art>span,.durak-mini-card.has-art>span,.durak-mini-card.has-art>b,.durak-preview-card.has-art>span,.durak-preview-card.has-art>b{display:none}
         .durak-choice{width:max-content;max-width:min(520px,calc(100vw - 32px));margin:12px auto 0;padding:10px 12px;border-radius:8px;border:1px solid rgba(251,191,36,.55);background:rgba(15,23,42,.9);display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;box-shadow:0 12px 34px rgba(0,0,0,.38),0 0 26px rgba(251,191,36,.12)}.durak-choice b{color:#fbbf24;font-size:18px}.durak-choice span{color:rgba(255,255,255,.72);font-weight:800}.durak-choice>div{display:flex;gap:8px}
         .durak-my-zone{border-top:1px solid rgba(255,255,255,.1);padding-top:14px}.durak-hidden{display:flex;flex-direction:column;align-items:center;gap:8px;color:#fff;background:rgba(2,6,23,.72);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:12px}.durak-hidden span{color:rgba(255,255,255,.68);font-size:13px}.durak-end{font-size:26px;font-weight:950;margin:18px 0}
         #durakHandOverlay,.durak-private{width:100vw;height:100vh;background:#050814;color:#fff;font-family:'Montserrat','Open Sans',sans-serif;box-sizing:border-box;padding:12px;overflow:auto}.durak-private-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;color:#fbbf24;font-weight:900}.durak-private .durak-preview-card{width:clamp(150px,34vh,270px)}.durak-private .durak-hand{justify-content:flex-start;align-items:flex-end;min-height:126px}.durak-private .durak-actions{justify-content:flex-start;margin-top:10px}.durak-private-empty{padding:18px;color:rgba(255,255,255,.72);font-weight:800}
-        #durakOverlay{pointer-events:none;background:transparent}#durakOverlay .durak-panel{pointer-events:auto}.durak-panel{overflow:visible}.durak-turn small,.durak-private-head small{display:block;margin-top:2px;color:#fbbf24;font-size:13px;line-height:1}.durak-slot.target{cursor:pointer;color:#fbbf24;border-color:rgba(251,191,36,.72);background:rgba(251,191,36,.1);box-shadow:0 0 18px rgba(251,191,36,.22)}.durak-slot.target.selected{background:rgba(34,197,94,.22);border-color:#22c55e;color:#fff;box-shadow:0 0 22px rgba(34,197,94,.34)}.durak-preview{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:100220;margin:0;pointer-events:auto}.durak-preview-card{width:clamp(150px,20vmin,250px)}.durak-private{display:flex;flex-direction:column;justify-content:flex-end;background:transparent;overflow:hidden;padding:8px 10px}.durak-private-head{position:fixed;left:10px;right:10px;top:8px;z-index:2;margin:0;padding:6px 8px;border-radius:8px;background:rgba(5,8,20,.48);backdrop-filter:blur(5px);gap:8px}.durak-private-head b{min-width:120px}.durak-private-head span{font-size:12px;color:rgba(255,255,255,.72);flex:1;text-align:center}.durak-private-toggle{padding:6px 10px}.durak-private .durak-hand{margin-top:auto;max-height:132px;overflow:visible;flex-wrap:wrap;align-content:flex-end;justify-content:center;gap:7px;padding:0 86px 0 4px}.durak-private .durak-hand .durak-card{width:72px;height:102px}.durak-private .durak-actions{position:fixed;right:12px;bottom:12px;z-index:3;margin:0;justify-content:flex-end}.durak-private .durak-choice{position:fixed;left:50%;bottom:124px;transform:translateX(-50%);z-index:3;margin:0}.durak-private .durak-preview{top:44px}.durak-private .durak-preview-card{width:clamp(130px,36vh,220px)}.durak-private-empty{align-self:center;margin-bottom:60px;background:rgba(5,8,20,.5);border-radius:8px}
+        #durakOverlay{pointer-events:none;background:transparent}#durakOverlay .durak-panel{pointer-events:auto}.durak-panel{overflow:visible}.durak-turn small,.durak-private-head small{display:block;margin-top:2px;color:#fbbf24;font-size:13px;line-height:1}.durak-slot.target{cursor:pointer;color:#fbbf24;border-color:rgba(251,191,36,.72);background:rgba(251,191,36,.1);box-shadow:0 0 18px rgba(251,191,36,.22)}.durak-slot.target.selected{background:rgba(34,197,94,.22);border-color:#22c55e;color:#fff;box-shadow:0 0 22px rgba(34,197,94,.34)}.durak-preview{position:fixed;left:50%;top:clamp(72px,12vh,126px);transform:translateX(-50%);z-index:100220;margin:0;pointer-events:auto}.durak-preview-card{width:clamp(150px,20vmin,250px)}html.overlay-live #durakOverlay .durak-preview,html.overlay-mode #durakOverlay .durak-preview{top:12px}.durak-action-state{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:6px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.14);color:rgba(255,255,255,.62);font-weight:900}.durak-private{display:flex;flex-direction:column;justify-content:flex-end;background:transparent;overflow:hidden;padding:8px 10px}.durak-private-head{position:fixed;left:10px;right:10px;top:8px;z-index:2;margin:0;padding:6px 8px;border-radius:8px;background:rgba(5,8,20,.48);backdrop-filter:blur(5px);gap:8px}.durak-private-head b{min-width:120px}.durak-private-head span{font-size:12px;color:rgba(255,255,255,.72);flex:1;text-align:center}.durak-private-toggle{padding:6px 10px}.durak-private .durak-hand{margin-top:auto;max-height:132px;overflow:visible;flex-wrap:wrap;align-content:flex-end;justify-content:center;gap:7px;padding:0 86px 0 4px}.durak-private .durak-hand .durak-card{width:72px;height:102px}.durak-private .durak-actions{position:fixed;right:12px;bottom:12px;z-index:3;margin:0;justify-content:flex-end}.durak-private .durak-choice{position:fixed;left:50%;bottom:124px;transform:translateX(-50%);z-index:3;margin:0}.durak-private .durak-preview{top:44px}.durak-private .durak-preview-card{width:clamp(130px,36vh,220px)}.durak-private-empty{align-self:center;margin-bottom:60px;background:rgba(5,8,20,.5);border-radius:8px}
         @media(max-width:700px){.durak-panel{padding:12px}.durak-top{grid-template-columns:1fr;justify-items:center}.durak-turn{font-size:22px}.durak-board{min-height:390px}.durak-center{width:min(360px,76vw)}.durak-card,.durak-back,.durak-trump-card{width:52px;height:76px}.durak-hand .durak-card{width:68px;height:96px}.durak-preview-card{width:clamp(140px,44vw,220px)}.durak-slot{width:52px;height:76px}.durak-trick{width:100px;height:114px}.durak-trick>.durak-card+.durak-card,.durak-trick>.durak-slot.defense{left:34px}.durak-fan{width:116px;height:58px}.durak-mini-card{width:30px;height:42px}}
       `;
       document.head.appendChild(st);
