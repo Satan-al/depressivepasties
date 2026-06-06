@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
@@ -2192,6 +2192,66 @@ input[type="range"]{
   <div class="chat-context-menu-item danger" id="contextDelete">🗑️ Удалить</div>
 </div>
 
+<script>
+  (function(){
+    const memory = Object.create(null);
+    function store(){
+      try { return window.localStorage; }
+      catch(e) { return null; }
+    }
+    window.ccStorage = window.ccStorage || {
+      getItem(key){
+        key = String(key);
+        try {
+          const s = store();
+          if (s) {
+            const value = s.getItem(key);
+            if (value !== null) return value;
+          }
+        } catch(e) {}
+        return Object.prototype.hasOwnProperty.call(memory, key) ? memory[key] : null;
+      },
+      setItem(key, value){
+        key = String(key);
+        value = String(value);
+        memory[key] = value;
+        try {
+          const s = store();
+          if (s) s.setItem(key, value);
+        } catch(e) {}
+      },
+      removeItem(key){
+        key = String(key);
+        delete memory[key];
+        try {
+          const s = store();
+          if (s) s.removeItem(key);
+        } catch(e) {}
+      },
+      clear(){
+        for (const key of Object.keys(memory)) delete memory[key];
+        try {
+          const s = store();
+          if (s) s.clear();
+        } catch(e) {}
+      },
+      key(index){
+        try {
+          const s = store();
+          if (s) return s.key(index);
+        } catch(e) {}
+        return Object.keys(memory)[index] || null;
+      },
+      get length(){
+        try {
+          const s = store();
+          if (s) return s.length;
+        } catch(e) {}
+        return Object.keys(memory).length;
+      }
+    };
+  })();
+</script>
 <script type="module">
   window.isOverlayHotkeys = new URLSearchParams(location.search).get('overlay')==='1';
   window.isPartyMode = new URLSearchParams(location.search).get('party')==='1';
@@ -2535,7 +2595,7 @@ input[type="range"]{
 
   const SESSION_KEY = "DepressivePasties";
   const VDO_DEFAULT_VIEW_ID = "DepressivePasties";
-  let _currentVdoViewId = normalizeVdoViewId(localStorage.getItem('cc_vdo_view_id')) || VDO_DEFAULT_VIEW_ID;
+  let _currentVdoViewId = normalizeVdoViewId(window.ccStorage.getItem('cc_vdo_view_id')) || VDO_DEFAULT_VIEW_ID;
   const VDO_DEFAULTS = {
     bitrate: 9000,
     width: 1920,
@@ -2556,13 +2616,13 @@ input[type="range"]{
     const url = new URL('https://vdo.ninja/');
     url.searchParams.set('view', normalizeVdoViewId(viewId) || VDO_DEFAULT_VIEW_ID);
 
-    const bitrate = Number(params.get('vdoBitrate') || localStorage.getItem('cc_vdo_bitrate') || VDO_DEFAULTS.bitrate);
-    const width = Number(params.get('vdoWidth') || localStorage.getItem('cc_vdo_width') || VDO_DEFAULTS.width);
-    const height = Number(params.get('vdoHeight') || localStorage.getItem('cc_vdo_height') || VDO_DEFAULTS.height);
-    const fps = Number(params.get('vdoFps') || localStorage.getItem('cc_vdo_fps') || VDO_DEFAULTS.framerate);
-    const buffer = Number(params.get('vdoBuffer') ?? localStorage.getItem('cc_vdo_buffer') ?? VDO_DEFAULTS.buffer);
-    const scale = Number(params.get('vdoScale') || localStorage.getItem('cc_vdo_scale') || VDO_DEFAULTS.scale);
-    const codec = params.get('vdoCodec') || localStorage.getItem('cc_vdo_codec') || '';
+    const bitrate = Number(params.get('vdoBitrate') || window.ccStorage.getItem('cc_vdo_bitrate') || VDO_DEFAULTS.bitrate);
+    const width = Number(params.get('vdoWidth') || window.ccStorage.getItem('cc_vdo_width') || VDO_DEFAULTS.width);
+    const height = Number(params.get('vdoHeight') || window.ccStorage.getItem('cc_vdo_height') || VDO_DEFAULTS.height);
+    const fps = Number(params.get('vdoFps') || window.ccStorage.getItem('cc_vdo_fps') || VDO_DEFAULTS.framerate);
+    const buffer = Number(params.get('vdoBuffer') ?? window.ccStorage.getItem('cc_vdo_buffer') ?? VDO_DEFAULTS.buffer);
+    const scale = Number(params.get('vdoScale') || window.ccStorage.getItem('cc_vdo_scale') || VDO_DEFAULTS.scale);
+    const codec = params.get('vdoCodec') || window.ccStorage.getItem('cc_vdo_codec') || '';
 
     if (Number.isFinite(bitrate) && bitrate > 0) url.searchParams.set('bitrate', String(Math.round(bitrate)));
     if (Number.isFinite(width) && width > 0) url.searchParams.set('width', String(Math.round(width)));
@@ -2583,7 +2643,7 @@ input[type="range"]{
     const clean = normalizeVdoViewId(viewId) || VDO_DEFAULT_VIEW_ID;
     const changed = clean !== _currentVdoViewId;
     _currentVdoViewId = clean;
-    localStorage.setItem('cc_vdo_view_id', clean);
+    window.ccStorage.setItem('cc_vdo_view_id', clean);
     const player = document.getElementById('player');
     if (!player || isOverlayMode()) return changed;
     const src = buildVdoViewUrl(clean);
@@ -2811,26 +2871,26 @@ input[type="range"]{
   // ПРОВЕРКА URL ПАРАМЕТРА ?overlay=1 ДЛЯ АВТОМАТИЧЕСКОГО ВКЛЮЧЕНИЯ OVERLAY РЕЖИМА
   const urlParams = new URLSearchParams(window.location.search);
   if (urlParams.get('overlay') === '1') {
-    localStorage.setItem('cc_mode', 'overlay');
+    window.ccStorage.setItem('cc_mode', 'overlay');
     console.log('🎬 Overlay mode activated via URL parameter');
     document.body.classList.add('overlay-mode'); // Добавляем класс для CSS
   }
   
   const state = {
-    id: localStorage.getItem('cc_id') || crypto.randomUUID(),
-    name: localStorage.getItem('cc_name') || '',
-    color: localStorage.getItem('cc_color') || DEFAULT_COLOR,
-    emoji: localStorage.getItem('cc_emoji') || '🐶',
-    mode: localStorage.getItem('cc_mode') || 'watch',
-    tool: localStorage.getItem('cc_tool') || 'vote',
-    showClustersOnSite: (localStorage.getItem('cc_show_clusters') === '1' || localStorage.getItem('cc_show_clusters') === '1'),
+    id: window.ccStorage.getItem('cc_id') || crypto.randomUUID(),
+    name: window.ccStorage.getItem('cc_name') || '',
+    color: window.ccStorage.getItem('cc_color') || DEFAULT_COLOR,
+    emoji: window.ccStorage.getItem('cc_emoji') || '🐶',
+    mode: window.ccStorage.getItem('cc_mode') || 'watch',
+    tool: window.ccStorage.getItem('cc_tool') || 'vote',
+    showClustersOnSite: (window.ccStorage.getItem('cc_show_clusters') === '1' || window.ccStorage.getItem('cc_show_clusters') === '1'),
     authed: false,
     points: new Map(),
     strokes: new Map(),
     presence: new Map(),
     tgIndex: new Map(),
-    localChat: JSON.parse(localStorage.getItem('cc_chat_cache')||'[]'),
-    notifications: localStorage.getItem('cc_notifications') !== 'false',
+    localChat: JSON.parse(window.ccStorage.getItem('cc_chat_cache')||'[]'),
+    notifications: window.ccStorage.getItem('cc_notifications') !== 'false',
     unreadCount: 0,
     lastReadTs: Date.now(),
     currentStroke: null, // текущая рисуемая линия
@@ -2864,22 +2924,22 @@ input[type="range"]{
     state.name = HOST_IDENTITY.name;
     state.color = HOST_IDENTITY.color;
     state.emoji = HOST_IDENTITY.emoji;
-    localStorage.setItem('cc_id', HOST_IDENTITY.uid);
-    localStorage.setItem('cc_name', HOST_IDENTITY.name);
-    localStorage.setItem('cc_color', HOST_IDENTITY.color);
-    localStorage.setItem('cc_emoji', HOST_IDENTITY.emoji);
+    window.ccStorage.setItem('cc_id', HOST_IDENTITY.uid);
+    window.ccStorage.setItem('cc_name', HOST_IDENTITY.name);
+    window.ccStorage.setItem('cc_color', HOST_IDENTITY.color);
+    window.ccStorage.setItem('cc_emoji', HOST_IDENTITY.emoji);
     if (window.__neoApplyAccent) window.__neoApplyAccent(HOST_IDENTITY.color);
   }
 
   function __ccCanonicalUid(fallback){
     const raw = fallback || auth?.currentUser?.uid || state.id;
-    return __ccIsHostName(state.name || localStorage.getItem('cc_name')) ? HOST_IDENTITY.uid : raw;
+    return __ccIsHostName(state.name || window.ccStorage.getItem('cc_name')) ? HOST_IDENTITY.uid : raw;
   }
 
   function __ccCanonicalName(fallback){
-    return __ccIsHostName(fallback || state.name || localStorage.getItem('cc_name'))
+    return __ccIsHostName(fallback || state.name || window.ccStorage.getItem('cc_name'))
       ? HOST_IDENTITY.name
-      : (fallback || state.name || localStorage.getItem('cc_name') || '');
+      : (fallback || state.name || window.ccStorage.getItem('cc_name') || '');
   }
 
   window.__ccCanonicalUid = __ccCanonicalUid;
@@ -2896,7 +2956,7 @@ window.addEventListener('cc_emoji_changed', async (e) => {
   try {
     const emo = (e && e.detail && typeof e.detail.emoji !== 'undefined') ? String(e.detail.emoji) : '';
     state.emoji = emo;
-    localStorage.setItem('cc_emoji', emo);
+    window.ccStorage.setItem('cc_emoji', emo);
 
     // If already authed, update profile + my point immediately
     if (state.authed) {
@@ -2919,14 +2979,14 @@ window.addEventListener('cc_emoji_changed', async (e) => {
 });
 
 
-  localStorage.setItem('cc_id', state.id);
+  window.ccStorage.setItem('cc_id', state.id);
 
   function saveState(){
-    localStorage.setItem('cc_name',state.name);
-    localStorage.setItem('cc_color',state.color);
-    localStorage.setItem('cc_mode',state.mode);
-    localStorage.setItem('cc_emoji', state.emoji || '');
-    localStorage.setItem('cc_auth', 'true'); // Добавляем метку, что вход выполнен
+    window.ccStorage.setItem('cc_name',state.name);
+    window.ccStorage.setItem('cc_color',state.color);
+    window.ccStorage.setItem('cc_mode',state.mode);
+    window.ccStorage.setItem('cc_emoji', state.emoji || '');
+    window.ccStorage.setItem('cc_auth', 'true'); // Добавляем метку, что вход выполнен
   }
 
   /* ======= SIZE ======= */
@@ -3594,7 +3654,7 @@ const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со ста
 
     // локальный кэш (без смешивания с удалёнными!)
     state.localChat = msgs.slice(-100);
-    localStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
+    window.ccStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
   });
   
   // Слушаем удаление сообщений
@@ -3605,7 +3665,7 @@ const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со ста
       msgs.splice(index, 1);
       removeChatMessageFromDOM(removedKey);
       state.localChat = msgs.slice(-100);
-      localStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
+      window.ccStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
     }
   });
 })();
@@ -3639,7 +3699,7 @@ async function sendReaction(reaction) {
     _lastReactionAt = now;
 
     // 2) данные под правила
-    const isHostSelf = __ccIsHostName(state?.name || localStorage.getItem('cc_name'));
+    const isHostSelf = __ccIsHostName(state?.name || window.ccStorage.getItem('cc_name'));
     const color = isHostSelf ? HOST_IDENTITY.color : ((state?.color && String(state.color).trim()) || '#16c7b7');
     const item = {
       uid: __ccCanonicalUid(),
@@ -3720,7 +3780,7 @@ function _shouldRunReactionsCleanup(){
     window.isOverlayHotkeys ||
     document.documentElement.classList.contains('overlay-live') ||
     document.documentElement.classList.contains('overlay-mode') ||
-    window.__ccIsHostName?.(state?.name || localStorage.getItem('cc_name'))
+    window.__ccIsHostName?.(state?.name || window.ccStorage.getItem('cc_name'))
   );
 }
 
@@ -3763,7 +3823,7 @@ window.cleanupOldReactions = cleanupOldReactions;
 
   /* ======= AUTH GATE + АВТОЛОГИН ======= */
   function setBlur(on){ document.querySelector('.app').classList.toggle('blur-wrap', on); }
-  function isOverlayMode(){ return (localStorage.getItem('cc_mode')||'watch')==='overlay'; }
+  function isOverlayMode(){ return (window.ccStorage.getItem('cc_mode')||'watch')==='overlay'; }
 
   // АВТОЛОГИН ДЛЯ OVERLAY РЕЖИМА
   const AUTO_LOGIN_NAME = 'Лёха';
@@ -3775,8 +3835,8 @@ window.cleanupOldReactions = cleanupOldReactions;
 
   // Функция загрузки состояния и проверки автологина
   function checkAutoLogin() {
-    const savedName = localStorage.getItem('cc_name');
-    const isAuth = localStorage.getItem('cc_auth') === 'true';
+    const savedName = window.ccStorage.getItem('cc_name');
+    const isAuth = window.ccStorage.getItem('cc_auth') === 'true';
 
     // Если человек нажал "Выйти", cc_auth будет удален, и мы просто стоим на месте
     if (!isAuth || !savedName) {
@@ -3791,8 +3851,8 @@ window.cleanupOldReactions = cleanupOldReactions;
     setBlur(false);
     
     state.name = savedName;
-    state.color = localStorage.getItem('cc_color') || '#16c7b7';
-    state.emoji = localStorage.getItem('cc_emoji') || state.emoji || '';
+    state.color = window.ccStorage.getItem('cc_color') || '#16c7b7';
+    state.emoji = window.ccStorage.getItem('cc_emoji') || state.emoji || '';
     if (__ccIsHostName(savedName)) __ccApplyHostIdentity();
     if (window.__neoApplyAccent) window.__neoApplyAccent(state.color);
     
@@ -3811,7 +3871,7 @@ window.cleanupOldReactions = cleanupOldReactions;
 
   async function doGateLogin() {
     const pin = gatePin.value.trim();
-    const storedName = localStorage.getItem('cc_name') || '';
+    const storedName = window.ccStorage.getItem('cc_name') || '';
     const inputName = document.getElementById('gateName').value.trim() || storedName || 'Чужой';
     const inputColor = gateColor.value;
 
@@ -3826,7 +3886,7 @@ window.cleanupOldReactions = cleanupOldReactions;
     }
 
     // Быстрая локальная проверка (если бан уже был в этой сессии)
-    if (localStorage.getItem('cc_banned') === 'true') {
+    if (window.ccStorage.getItem('cc_banned') === 'true') {
       document.body.innerHTML = '<h1 style="color:white; text-align:center; margin-top:20%;">⚰️ ТЫ МЕРТВ И ИЗГНАН ⚰️</h1>';
       return;
     }
@@ -3860,7 +3920,7 @@ window.cleanupOldReactions = cleanupOldReactions;
         if (banSnap.exists()) {
           const banData = banSnap.val();
           if (Date.now() < banData.bannedUntil) {
-            localStorage.setItem('cc_banned', 'true');
+            window.ccStorage.setItem('cc_banned', 'true');
             alert(`ВАШ IP ЗАБЛОКИРОВАН. ⚰️`);
             await signOut(auth); // Выходим, раз бан подтвержден
             location.reload();
@@ -3895,7 +3955,7 @@ window.cleanupOldReactions = cleanupOldReactions;
 
       // 5. ПРОВЕРКА НА 4 ЧЕРЕПА (СМЕРТЬ)
       if (typeof getSkullLevel === 'function' && getSkullLevel(state) >= 4) {
-        localStorage.setItem('cc_banned', 'true');
+        window.ccStorage.setItem('cc_banned', 'true');
         
         if (userIP) {
           const ipKey = userIP.replaceAll('.', '_');
@@ -3933,7 +3993,7 @@ window.cleanupOldReactions = cleanupOldReactions;
         __ccApplyHostIdentity();
       } else {
         state.id = profileUid;
-        localStorage.setItem('cc_id', profileUid);
+        window.ccStorage.setItem('cc_id', profileUid);
       }
 
       // 7. ФИНАЛИЗАЦИЯ
@@ -3977,9 +4037,9 @@ window.cleanupOldReactions = cleanupOldReactions;
     try { await signOut(auth); } catch(e) {}
 
     // ПОЛНАЯ ОЧИСТКА: удаляем всё, что связано с авторизацией
-    localStorage.removeItem('cc_auth');
-    localStorage.removeItem('cc_name');
-    localStorage.removeItem('cc_color');
+    window.ccStorage.removeItem('cc_auth');
+    window.ccStorage.removeItem('cc_name');
+    window.ccStorage.removeItem('cc_color');
 
     state.authed = false;
     state.name = '';
@@ -4009,7 +4069,7 @@ window.cleanupOldReactions = cleanupOldReactions;
     if (isOverlayMode && isOverlayMode()) toggleSelfClusters.style.display = 'none';
     toggleSelfClusters.addEventListener('click', ()=>{
       state.showClustersOnSite = !state.showClustersOnSite;
-      localStorage.setItem('cc_show_clusters', state.showClustersOnSite ? '1' : '0');
+      window.ccStorage.setItem('cc_show_clusters', state.showClustersOnSite ? '1' : '0');
       syncSelfClustersBtn();
     });
     syncSelfClustersBtn();
@@ -4219,7 +4279,7 @@ window.cleanupOldReactions = cleanupOldReactions;
   // Кнопка уведомлений
   chatNotifications.addEventListener('click', ()=>{
     state.notifications = !state.notifications;
-    localStorage.setItem('cc_notifications', state.notifications);
+    window.ccStorage.setItem('cc_notifications', state.notifications);
     chatNotifications.textContent = state.notifications ? '🔔' : '🔕';
     chatNotifications.style.opacity = state.notifications ? '1' : '0.5';
   });
@@ -4292,7 +4352,7 @@ window.cleanupOldReactions = cleanupOldReactions;
       window.isOverlayHotkeys ||
       document.documentElement.classList.contains('overlay-live') ||
       document.documentElement.classList.contains('overlay-mode') ||
-      window.__ccIsHostName?.(window.state?.name || state.name || localStorage.getItem('cc_name'))
+      window.__ccIsHostName?.(window.state?.name || state.name || window.ccStorage.getItem('cc_name'))
     );
   }
 
@@ -4698,7 +4758,7 @@ if (txt === '/random') {
     uid: __ccCanonicalUid(),
     name: __ccCanonicalName(getDisplayName(state)), // Вот здесь магия! || 'Чужой',
     color: __ccIsHostName(state.name) ? HOST_IDENTITY.color : state.color,
-    emoji: __ccIsHostName(state.name) ? HOST_IDENTITY.emoji : (state.emoji || localStorage.getItem('cc_emoji') || ''),
+    emoji: __ccIsHostName(state.name) ? HOST_IDENTITY.emoji : (state.emoji || window.ccStorage.getItem('cc_emoji') || ''),
     text: txt,
     t: serverTimestamp()        // <-- главное: серверный таймстемп
   };
@@ -4775,7 +4835,7 @@ if (txt === '/random') {
     uid: __ccCanonicalUid(),
     name: __ccCanonicalName(getDisplayName(state)) || 'Чужой',
     color: __ccIsHostName(state.name) ? HOST_IDENTITY.color : state.color,
-    emoji: __ccIsHostName(state.name) ? HOST_IDENTITY.emoji : (state.emoji || localStorage.getItem('cc_emoji') || ''),
+    emoji: __ccIsHostName(state.name) ? HOST_IDENTITY.emoji : (state.emoji || window.ccStorage.getItem('cc_emoji') || ''),
     text: txt,
     t: serverTimestamp()
   };
@@ -4874,7 +4934,7 @@ window.addEventListener('pointerdown', ()=>{ _ensureToastAudio(); }, { once:true
   (function(){
     const keyW = 'overlay_chat_w', keyH = 'overlay_chat_h';
     function ensureDefaultChatHeight(){ if(!chatOverlay.style.height){ chatOverlay.style.height = '360px'; }}
-    const savedW = localStorage.getItem(keyW), savedH = localStorage.getItem(keyH);
+    const savedW = window.ccStorage.getItem(keyW), savedH = window.ccStorage.getItem(keyH);
     if (savedW) chatOverlay.style.width = savedW;
     if (savedH) chatOverlay.style.height = savedH;
     ensureDefaultChatHeight();
@@ -4882,8 +4942,8 @@ window.addEventListener('pointerdown', ()=>{ _ensureToastAudio(); }, { once:true
     const saveSize = ()=>{
       clearTimeout(saveTimer);
       saveTimer=setTimeout(()=>{
-        localStorage.setItem(keyW, chatOverlay.style.width || chatOverlay.getBoundingClientRect().width+'px');
-        localStorage.setItem(keyH, chatOverlay.style.height || chatOverlay.getBoundingClientRect().height+'px');
+        window.ccStorage.setItem(keyW, chatOverlay.style.width || chatOverlay.getBoundingClientRect().width+'px');
+        window.ccStorage.setItem(keyH, chatOverlay.style.height || chatOverlay.getBoundingClientRect().height+'px');
       }, 200);
     };
     // Save on mouseup (after resize) and on transition end
@@ -5227,7 +5287,7 @@ document.head.appendChild(ratAnimStyle);
       auth.currentUser?.uid,
       window.__ccCanonicalUid?.()
     ].filter(Boolean);
-    if (_isHostHere() || window.__ccIsHostName?.(window.state?.name || localStorage.getItem('cc_name'))) {
+    if (_isHostHere() || window.__ccIsHostName?.(window.state?.name || window.ccStorage.getItem('cc_name'))) {
       ids.push(HOST_IDENTITY.uid);
     }
     return [...new Set(ids)];
@@ -8137,7 +8197,7 @@ document.head.appendChild(ratAnimStyle);
       }
     } catch {}
 
-    const isHost = _isHostHere() || window.__ccIsHostName?.(window.state?.name || localStorage.getItem('cc_name'));
+    const isHost = _isHostHere() || window.__ccIsHostName?.(window.state?.name || window.ccStorage.getItem('cc_name'));
     const myName = isHost ? DUEL.HOST_NAME : (getDisplayName(state) || 'Игрок');
     const myColor = isHost ? DUEL.HOST_COLOR : (state.color || '#16c7b7');
     const startedAt = Date.now();
@@ -8692,12 +8752,12 @@ document.head.appendChild(ratAnimStyle);
   }
 
   function _quoteMyName(){
-    return _quoteCleanName(__ccCanonicalName(getDisplayName(state)) || state.name || localStorage.getItem('cc_name') || 'Чужой');
+    return _quoteCleanName(__ccCanonicalName(getDisplayName(state)) || state.name || window.ccStorage.getItem('cc_name') || 'Чужой');
   }
 
   function _quoteMyColor(){
     if (window.__ccIsHostName?.(_quoteMyName())) return HOST_IDENTITY.color;
-    return state.color || localStorage.getItem('cc_color') || '#16c7b7';
+    return state.color || window.ccStorage.getItem('cc_color') || '#16c7b7';
   }
 
   function _quoteSafeColor(color){
@@ -9919,7 +9979,7 @@ document.head.appendChild(ratAnimStyle);
         msgs.splice(index, 1);
         removeChatMessageFromDOM(msg.key);
         state.localChat = msgs.slice(-100);
-        localStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
+        window.ccStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
       }
       
       hideContextMenu();
@@ -11581,7 +11641,7 @@ function moveStroke(e){
   /* ======= DRAGGABLE CHAT (с поддержкой тачскрина) ======= */
   (function enableDrag(){
     let startX=0, startY=0, baseLeft=chatPanel.offsetLeft, baseTop=chatPanel.offsetTop, dragging=false;
-    const saved=localStorage.getItem('cc_chat_pos'); 
+    const saved=window.ccStorage.getItem('cc_chat_pos'); 
     if(saved){ 
       try{
         const {left,top}=JSON.parse(saved); 
@@ -11625,7 +11685,7 @@ function moveStroke(e){
       document.removeEventListener('pointerup', onUp); 
       document.removeEventListener('touchmove', onMove);
       document.removeEventListener('touchend', onUp);
-      localStorage.setItem('cc_chat_pos', JSON.stringify({ 
+      window.ccStorage.setItem('cc_chat_pos', JSON.stringify({ 
         left: chatPanel.offsetLeft, 
         top: chatPanel.offsetTop 
       })); 
@@ -12516,7 +12576,7 @@ function boot(){
       '🐯','🦁','🐮','🐷','🐸','🐵','🦉','🐺','🦀','🦝'
     ];
 
-    let selected = localStorage.getItem('cc_emoji');
+    let selected = window.ccStorage.getItem('cc_emoji');
     // null/empty means "no face"
     if (selected === null) selected = '🐶';
     try { window.dispatchEvent(new CustomEvent('cc_emoji_changed', { detail: { emoji: selected } })); } catch {}
@@ -12534,7 +12594,7 @@ function boot(){
 
         btn.addEventListener('click', ()=>{
           selected = (emo === null) ? '' : emo;
-          localStorage.setItem('cc_emoji', selected);
+          window.ccStorage.setItem('cc_emoji', selected);
           try { window.dispatchEvent(new CustomEvent('cc_emoji_changed', { detail: { emoji: selected } })); } catch {}
           updatePreview();
           // active style
@@ -12681,7 +12741,7 @@ gateColor.addEventListener('input', syncColor);
 
     // init accent from saved account color
     try{
-      const saved = localStorage.getItem('cc_color') || localStorage.getItem('color') || '#16c7b7';
+      const saved = window.ccStorage.getItem('cc_color') || window.ccStorage.getItem('color') || '#16c7b7';
       window.__neoApplyAccent(saved);
     }catch(e){}
 
@@ -12738,6 +12798,7 @@ gateColor.addEventListener('input', syncColor);
       min: 2,
       max: 6,
       hand: 6,
+      turnMs: 60 * 1000,
       cleanup: 15000,
       stale: 45 * 60 * 1000,
       ranks: ['6','7','8','9','10','J','Q','K','A'],
@@ -12752,22 +12813,27 @@ gateColor.addEventListener('input', syncColor);
     let busy = false;
     let cleanupScheduled = false;
     let privateSignalKey = '';
-    let revealAllHands = localStorage.getItem('durak_reveal_all') === '1';
+    let revealAllHands = window.ccStorage.getItem('durak_reveal_all') === '1';
     let selectedCard = '';
     let pendingChoiceCard = '';
+    let selectedIntent = '';
+    let selectedDefenseIndex = -1;
+    let interactiveActive = false;
+    let timeoutBusy = false;
+    let preloadStarted = false;
 
     function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
     function attr(s){ return esc(s).replace(/'/g,'&#39;'); }
     function host(){ return window.HOST_IDENTITY || { uid:'host_leha', name:'Лёха', color:'#1e40af', emoji:'🐻' }; }
     function cleanName(raw){ return window.__ccCanonicalName?.(raw) || String(raw || '').trim(); }
     function myName(){
-      const raw = state.name || localStorage.getItem('cc_name') || 'Игрок';
+      const raw = state.name || window.ccStorage.getItem('cc_name') || 'Игрок';
       const clean = cleanName(raw) || 'Игрок';
       return isHostName(clean) ? host().name : clean;
     }
     function isHostName(name){ return !!window.__ccIsHostName?.(name); }
-    function myColor(){ return isHostName(myName()) ? host().color : (state.color || localStorage.getItem('cc_color') || '#16c7b7'); }
-    function myEmoji(){ return isHostName(myName()) ? host().emoji : (state.emoji || localStorage.getItem('cc_emoji') || ''); }
+    function myColor(){ return isHostName(myName()) ? host().color : (state.color || window.ccStorage.getItem('cc_color') || '#16c7b7'); }
+    function myEmoji(){ return isHostName(myName()) ? host().emoji : (state.emoji || window.ccStorage.getItem('cc_emoji') || ''); }
     function uid(){ return window.__ccCanonicalUid?.() || auth.currentUser?.uid || state.id || null; }
     function ids(){
       const out = [uid()];
@@ -12803,10 +12869,21 @@ gateColor.addEventListener('input', syncColor);
     function cardAsset(card){ return `${CARD_ASSET_DIR}/${assetRank(rank(card))}${suit(card)}.png`; }
     function cardArt(card){
       if (!card) return '';
-      return `<img class="durak-art" src="${attr(cardAsset(card))}" alt="" loading="lazy" onload="this.parentElement?.classList.add('has-art')" onerror="this.remove()">`;
+      return `<img class="durak-art" src="${attr(cardAsset(card))}" alt="" loading="eager" decoding="async" onload="this.parentElement?.classList.add('has-art')" onerror="this.remove()">`;
     }
     function backArt(){
-      return `<img class="durak-art" src="${CARD_ASSET_DIR}/back.png" alt="" loading="lazy" onload="this.parentElement?.classList.add('has-art')" onerror="this.remove()">`;
+      return `<img class="durak-art" src="${CARD_ASSET_DIR}/back.png" alt="" loading="eager" decoding="async" onload="this.parentElement?.classList.add('has-art')" onerror="this.remove()">`;
+    }
+    function preloadCardAssets(){
+      if (preloadStarted) return;
+      preloadStarted = true;
+      const files = [`${CARD_ASSET_DIR}/back.png`];
+      for (const s of D.suits) for (const r of D.ranks) files.push(`${CARD_ASSET_DIR}/${assetRank(r)}${s}.png`);
+      files.forEach(src => {
+        const img = new Image();
+        img.decoding = 'async';
+        img.src = src;
+      });
     }
     function sortHand(cards = [], trump){
       return [...cards].sort((a,b) => {
@@ -12864,10 +12941,19 @@ gateColor.addEventListener('input', syncColor);
       if (!table.length) return id === v.attacker;
       return ranksOnTable(v).has(rank(card));
     }
-    function defenseIndex(v, id, card){
-      if (!v || v.state !== 'playing' || id !== v.defender) return -1;
-      if (!(v.hands?.[id] || []).includes(card)) return -1;
-      return (v.table || []).findIndex(p => !p.defense && beats(card, p.attack, v.trump));
+    function defenseTargets(v, id, card){
+      if (!v || v.state !== 'playing' || id !== v.defender) return [];
+      if (!(v.hands?.[id] || []).includes(card)) return [];
+      return (v.table || [])
+        .map((p, i) => (!p.defense && beats(card, p.attack, v.trump)) ? i : -1)
+        .filter(i => i >= 0);
+    }
+    function defenseIndex(v, id, card, targetIndex = -1){
+      const targets = defenseTargets(v, id, card);
+      if (!targets.length) return -1;
+      const want = Number(targetIndex);
+      if (Number.isInteger(want) && targets.includes(want)) return want;
+      return targets[0];
     }
     function canTransfer(v, id, card){
       if (!v || v.mode !== 'transfer' || v.state !== 'playing' || id !== v.defender) return false;
@@ -12924,6 +13010,7 @@ gateColor.addEventListener('input', syncColor);
         defender,
         defenderHandAtStart: hands[defender]?.length || D.hand,
         passes: {},
+        turnDeadlineAt: Date.now() + D.turnMs,
         updatedAt: Date.now()
       };
     }
@@ -12941,6 +13028,10 @@ gateColor.addEventListener('input', syncColor);
       next.deck = deck;
       return next;
     }
+    function resetTurnClock(next){
+      if (next && next.state === 'playing') next.turnDeadlineAt = Date.now() + D.turnMs;
+      return next;
+    }
     function maybeFinish(next, preferredAttacker, outcome){
       const parts = { ...(next.participants || {}) };
       if (!(next.deck || []).length) {
@@ -12956,7 +13047,7 @@ gateColor.addEventListener('input', syncColor);
       let attacker = preferredAttacker;
       if (!active.includes(attacker)) attacker = active[0];
       const defender = nextAfter({ ...next, participants: parts }, attacker);
-      return {
+      return resetTurnClock({
         ...next,
         state:'playing',
         attacker,
@@ -12966,7 +13057,7 @@ gateColor.addEventListener('input', syncColor);
         passes: {},
         lastOutcome: outcome,
         updatedAt: Date.now()
-      };
+      });
     }
     function endBout(v, outcome){
       const hands = { ...(v.hands || {}) };
@@ -13051,7 +13142,7 @@ gateColor.addEventListener('input', syncColor);
       if (!game || !amHost(game)) return;
       await remove(rootRef).catch(()=>{});
     }
-    async function playCard(card, intent='auto'){
+    async function playCard(card, intent='auto', targetIndex = -1){
       window.__ccMarkActive?.(true);
       await withFresh(async (v) => {
         if (v.state !== 'playing') return null;
@@ -13061,16 +13152,20 @@ gateColor.addEventListener('input', syncColor);
         const table = [...(v.table || [])];
         if (id === v.defender) {
           const transferOk = canTransfer(v, id, card);
-          const defendIdx = defenseIndex(v, id, card);
+          const defendIdx = defenseIndex(v, id, card, targetIndex);
           if (intent === 'transfer' && !transferOk) {
             pendingChoiceCard = '';
             selectedCard = '';
+            selectedIntent = '';
+            selectedDefenseIndex = -1;
             render();
             return null;
           }
           if (intent === 'defend' && defendIdx < 0) {
             pendingChoiceCard = '';
             selectedCard = '';
+            selectedIntent = '';
+            selectedDefenseIndex = -1;
             render();
             return null;
           }
@@ -13083,10 +13178,12 @@ gateColor.addEventListener('input', syncColor);
           if (transferOk && intent !== 'defend') {
             selectedCard = '';
             pendingChoiceCard = '';
+            selectedIntent = '';
+            selectedDefenseIndex = -1;
             const nextDefender = nextAfter(v, id);
             hands[id] = (hands[id] || []).filter(c => c !== card);
             table.push({ attack:card, by:id, defense:null, transfer:true });
-            return {
+            return resetTurnClock({
               ...v,
               hands,
               table,
@@ -13095,22 +13192,26 @@ gateColor.addEventListener('input', syncColor);
               defenderHandAtStart:hands[nextDefender]?.length || D.hand,
               passes:{},
               updatedAt:Date.now()
-            };
+            });
           }
           const idx = defendIdx;
           if (idx < 0) return null;
           selectedCard = '';
           pendingChoiceCard = '';
+          selectedIntent = '';
+          selectedDefenseIndex = -1;
           hands[id] = (hands[id] || []).filter(c => c !== card);
           table[idx] = { ...table[idx], defense:card, defenseBy:id };
         } else {
           if (!canAttack(v, id, card)) return null;
           selectedCard = '';
           pendingChoiceCard = '';
+          selectedIntent = '';
+          selectedDefenseIndex = -1;
           hands[id] = (hands[id] || []).filter(c => c !== card);
           table.push({ attack:card, by:id, defense:null });
         }
-        return { ...v, hands, table, passes:{}, updatedAt:Date.now() };
+        return resetTurnClock({ ...v, hands, table, passes:{}, updatedAt:Date.now() });
       });
     }
     async function pass(){
@@ -13121,7 +13222,7 @@ gateColor.addEventListener('input', syncColor);
         const passes = { ...(v.passes || {}), [id]:true };
         const attackers = activeOrder(v).filter(pid => pid !== v.defender && (v.hands?.[pid] || []).length);
         if (allDefended(v) && attackers.length && attackers.every(pid => passes[pid])) return endBout(v, 'beaten');
-        return { ...v, passes, updatedAt:Date.now() };
+        return resetTurnClock({ ...v, passes, updatedAt:Date.now() });
       });
     }
     async function beat(){
@@ -13175,28 +13276,54 @@ gateColor.addEventListener('input', syncColor);
       if (!owner) return '';
       return owner === id ? 'Твой ход' : `Ход ${nameOf(v, owner)}`;
     }
+    function timeLeftMs(v){
+      return Math.max(0, Number(v?.turnDeadlineAt || 0) - Date.now());
+    }
+    function turnTimerHtml(v){
+      if (!v || v.state !== 'playing') return '';
+      const left = Math.ceil(timeLeftMs(v) / 1000);
+      return `<small>${Math.max(0, left)}с</small>`;
+    }
     function canPlayCard(v, id, card){
       if (!id || !card || v.state !== 'playing') return false;
       if (id === v.defender) return canTransfer(v, id, card) || defenseIndex(v, id, card) >= 0;
       return canAttack(v, id, card);
+    }
+    function clearSelection(){
+      selectedCard = '';
+      pendingChoiceCard = '';
+      selectedIntent = '';
+      selectedDefenseIndex = -1;
     }
     function selectCard(card){
       const id = participantUid(game);
       const hand = id ? (game?.hands?.[id] || []) : [];
       if (!hand.includes(card)) return;
       selectedCard = card;
+      selectedIntent = '';
       pendingChoiceCard = needsPlayChoice(game, id, card) ? card : '';
+      const targets = defenseTargets(game, id, card);
+      selectedDefenseIndex = targets.length === 1 ? targets[0] : -1;
       render();
     }
     function confirmSelectedCard(intent='auto'){
       const id = participantUid(game);
       if (!selectedCard || !canPlayCard(game, id, selectedCard)) return;
+      if (intent === 'auto' && selectedIntent) intent = selectedIntent;
       if (intent === 'auto' && needsPlayChoice(game, id, selectedCard)) {
         pendingChoiceCard = selectedCard;
         render();
         return;
       }
-      playCard(selectedCard, intent);
+      const targets = defenseTargets(game, id, selectedCard);
+      const defending = id === game?.defender && (intent === 'defend' || (!canTransfer(game, id, selectedCard) && targets.length));
+      if (defending && targets.length > 1 && !targets.includes(selectedDefenseIndex)) {
+        selectedIntent = 'defend';
+        pendingChoiceCard = '';
+        render();
+        return;
+      }
+      playCard(selectedCard, intent, selectedDefenseIndex);
     }
     function cardHtml(card, opts=false, ownerMaybe=''){
       const options = typeof opts === 'object' ? opts : { inert:!!opts, ownerColor:ownerMaybe || '' };
@@ -13247,10 +13374,17 @@ gateColor.addEventListener('input', syncColor);
         return `<div class="durak-seat ${pid === myId ? 'me' : ''} ${pid === turn ? 'turn' : ''}" style="--pc:${attr(p.color || '#94a3b8')};left:${left.toFixed(2)}%;top:${top.toFixed(2)}%" title="${attr(p.name || '')}"><div class="durak-face">${esc(p.emoji || '🙂')}</div>${fanHtml(v,pid)}</div>`;
       }).join('')}</div>`;
     }
-    function trickHtml(pair, i, v){
+    function trickHtml(pair, i, v, myId){
       const attackColor = colorOf(v, pair.by);
       const defenseColor = colorOf(v, pair.defenseBy);
-      return `<div class="durak-trick ${pair.defense ? 'defended' : 'open'}">${pair.attack ? cardHtml(pair.attack,{ inert:true, ownerColor:attackColor }) : '<div class="durak-slot"></div>'}${pair.defense ? cardHtml(pair.defense,{ inert:true, ownerColor:defenseColor }) : `<div class="durak-slot defense">${i+1}</div>`}</div>`;
+      const targets = selectedCard ? defenseTargets(v, myId, selectedCard) : [];
+      const canTarget = !pair.defense && targets.includes(i);
+      const defenseSlot = pair.defense
+        ? cardHtml(pair.defense,{ inert:true, ownerColor:defenseColor })
+        : (canTarget
+          ? `<button type="button" class="durak-slot defense target ${selectedDefenseIndex === i ? 'selected' : ''}" data-da="target-${i}">Бить</button>`
+          : `<div class="durak-slot defense">${i+1}</div>`);
+      return `<div class="durak-trick ${pair.defense ? 'defended' : 'open'}">${pair.attack ? cardHtml(pair.attack,{ inert:true, ownerColor:attackColor }) : '<div class="durak-slot"></div>'}${defenseSlot}</div>`;
     }
     function modePicker(v){
       const active = v.mode || 'podkidnoy';
@@ -13274,15 +13408,17 @@ gateColor.addEventListener('input', syncColor);
     function previewHtml(v, id){
       if (!selectedCard || !(v.hands?.[id] || []).includes(selectedCard)) return '';
       const playable = canPlayCard(v, id, selectedCard);
-      const needsChoice = needsPlayChoice(v, id, selectedCard);
+      const needsChoice = !selectedIntent && needsPlayChoice(v, id, selectedCard);
+      const needsTarget = defenseTargets(v, id, selectedCard).length > 1 && selectedDefenseIndex < 0 && !needsChoice;
       const hint = playable
-        ? (needsChoice ? 'Выбери действие ниже' : 'Нажми на карту, чтобы сходить')
+        ? (needsChoice ? 'Выбери действие ниже' : (defenseTargets(v, id, selectedCard).length > 1 && selectedDefenseIndex < 0 ? 'Выбери на столе, какую карту бить' : 'Нажми на карту, чтобы сходить'))
         : 'Сейчас эту карту нельзя сыграть';
-      return `<div class="durak-preview ${playable ? 'playable' : 'locked'}"><button type="button" class="durak-preview-card ${red(selectedCard) ? 'red' : 'black'}" data-da="confirm-card" ${playable && !needsChoice ? '' : 'disabled'}>${cardArt(selectedCard)}<span>${esc(rank(selectedCard))}</span><b>${D.label[suit(selectedCard)] || ''}</b></button><div class="durak-preview-hint">${esc(hint)}</div></div>`;
+      return `<div class="durak-preview ${playable ? 'playable' : 'locked'}"><button type="button" class="durak-preview-card ${red(selectedCard) ? 'red' : 'black'}" data-da="confirm-card" ${playable && !needsChoice && !needsTarget ? '' : 'disabled'}>${cardArt(selectedCard)}<span>${esc(rank(selectedCard))}</span><b>${D.label[suit(selectedCard)] || ''}</b></button><div class="durak-preview-hint">${esc(hint)}</div></div>`;
     }
     function wire(root){
       root.querySelectorAll('[data-da]').forEach(btn => {
-        btn.onclick = () => {
+        btn.onclick = (ev) => {
+          ev?.stopPropagation?.();
           const a = btn.dataset.da;
           if (a === 'join') joinLobby();
           if (a === 'start') startGame();
@@ -13295,11 +13431,24 @@ gateColor.addEventListener('input', syncColor);
           if (a === 'choose-transfer' && pendingChoiceCard) confirmSelectedCard('transfer');
           if (a === 'choose-defend' && pendingChoiceCard) confirmSelectedCard('defend');
           if (a && a.startsWith('mode-')) setMode(a.slice(5));
+          if (a && a.startsWith('target-')) {
+            selectedDefenseIndex = Number(a.slice(7));
+            render();
+          }
         };
       });
       root.querySelectorAll('.durak-hand .durak-card[data-card]').forEach(btn => {
-        btn.onclick = () => selectCard(btn.dataset.card);
+        btn.onclick = (ev) => {
+          ev?.stopPropagation?.();
+          selectCard(btn.dataset.card);
+        };
       });
+      root.onclick = (ev) => {
+        if (!selectedCard) return;
+        if (ev.target.closest('.durak-card,.durak-preview,.durak-choice,.durak-actions,.durak-mode-picker,.durak-deck,.durak-slot.target,[data-da]')) return;
+        clearSelection();
+        render();
+      };
     }
     function render(){
       if (component && !isPrivateHand) return;
@@ -13316,12 +13465,17 @@ gateColor.addEventListener('input', syncColor);
       const id = participantUid(v);
       const inGame = !!(id && v.participants?.[id]);
       const hand = inGame ? sortHand(v.hands?.[id] || [], v.trump) : [];
-      if (selectedCard && !hand.includes(selectedCard)) selectedCard = '';
+      if (selectedCard && !hand.includes(selectedCard)) clearSelection();
       if (pendingChoiceCard && pendingChoiceCard !== selectedCard) pendingChoiceCard = '';
       if (pendingChoiceCard && !needsPlayChoice(v, id, pendingChoiceCard)) pendingChoiceCard = '';
       if (isPrivateHand) {
         el.className = 'durak-private';
-        el.innerHTML = `<div class="durak-private-head"><b>${esc(turnText(v,id) || 'Твои карты')}</b><span>${modeLabel(v)} · козырь: ${v.trumpCard ? label(v.trumpCard) : (v.trump ? D.label[v.trump] : '-')}</span></div>${previewHtml(v,id)}<div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), inspectable:true, ambiguous:needsPlayChoice(v,id,c), chosen:selectedCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}${controls(v,id)}`;
+        const privateHead = `<div class="durak-private-head"><b>${esc(turnText(v,id) || 'Твои карты')}${turnTimerHtml(v)}</b><span>${modeLabel(v)} · козырь: ${v.trumpCard ? label(v.trumpCard) : (v.trump ? D.label[v.trump] : '-')}</span><button type="button" class="btn ghost small durak-private-toggle" data-da="private">Стол</button></div>`;
+        if (!inGame) {
+          el.innerHTML = `${privateHead}<div class="durak-private-empty">Ты пока не в партии</div>${v.state === 'lobby' ? '<div class="durak-actions"><button class="btn small" data-da="join">Вписаться</button></div>' : ''}`;
+        } else {
+          el.innerHTML = `${privateHead}${previewHtml(v,id)}<div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), inspectable:true, ambiguous:needsPlayChoice(v,id,c), chosen:selectedCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}${controls(v,id)}`;
+        }
         wire(el);
         return;
       }
@@ -13340,26 +13494,51 @@ gateColor.addEventListener('input', syncColor);
         return;
       }
       const players = playersCircleHtml(v, id);
-      const table = (v.table || []).map((p,i) => trickHtml(p,i,v)).join('');
+      const table = (v.table || []).map((p,i) => trickHtml(p,i,v,id)).join('');
       const status = turnText(v, id);
       const handHtml = hideMainHand() && !revealAllHands
         ? `<div class="durak-hidden"><b>Карты хоста скрыты</b><span>Открой приватное окно руки. В шаримую страницу они не рисуются.</span><button class="btn ghost small" data-da="private">Открыть руку</button></div>`
         : `${previewHtml(v,id)}<div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), inspectable:true, ambiguous:needsPlayChoice(v,id,c), chosen:selectedCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}`;
       el.className = 'durak-shell playing';
-      el.innerHTML = `<div class="durak-panel"><div class="durak-top"><div><b>Дурак</b><span>${modeLabel(v)}${revealAllHands ? ' · тест: руки открыты' : ''}</span></div><div class="durak-turn">${esc(status)}</div><div class="durak-deck">${deckBackHtml(v)}${trumpHtml(v)}</div></div><div class="durak-board">${players}<div class="durak-center"><div class="durak-table">${table || '<div class="durak-muted">Стол пуст</div>'}</div></div></div>${inGame ? `<div class="durak-my-zone">${handHtml}${controls(v,id)}</div>` : '<div class="durak-muted">Ты зритель этой партии</div>'}</div>`;
+      el.innerHTML = `<div class="durak-panel"><div class="durak-top"><div><b>Дурак</b><span>${modeLabel(v)}${revealAllHands ? ' · тест: руки открыты' : ''}</span></div><div class="durak-turn">${esc(status)}${turnTimerHtml(v)}</div><div class="durak-deck">${deckBackHtml(v)}${trumpHtml(v)}</div></div><div class="durak-board">${players}<div class="durak-center"><div class="durak-table">${table || '<div class="durak-muted">Стол пуст</div>'}</div></div></div>${inGame ? `<div class="durak-my-zone">${handHtml}${controls(v,id)}</div>` : '<div class="durak-muted">Ты зритель этой партии</div>'}</div>`;
       wire(el);
+    }
+    function setDurakInteractive(active){
+      if (component || isPrivateHand) return;
+      if (interactiveActive === active) return;
+      interactiveActive = active;
+      console.log(active ? '[DUEL_INTERACTIVE_ON]' : '[DUEL_INTERACTIVE_OFF]');
+    }
+    async function enforceTurnTimeout(){
+      if (timeoutBusy || !game || game.state !== 'playing' || timeLeftMs(game) > 0) return;
+      timeoutBusy = true;
+      try {
+        await withFresh(async (v) => {
+          if (!v || v.state !== 'playing' || timeLeftMs(v) > 0) return null;
+          const loser = turnOwner(v);
+          if (!loser) return null;
+          return { ...v, state:'ended', loser, timeout:true, endedAt:Date.now(), updatedAt:Date.now() };
+        });
+      } finally {
+        timeoutBusy = false;
+      }
     }
     onValue(rootRef, (snap) => {
       if (component && !isPrivateHand) return;
       const v = snap.val() || null;
       if (!v || v.type !== 'durak') {
+        setDurakInteractive(false);
         game = null;
         privateSignalKey = '';
         render();
         return;
       }
       game = v;
-      if (!isPrivateHand && hideMainHand()) {
+      preloadCardAssets();
+      setDurakInteractive(true);
+      const currentId = participantUid(v);
+      const currentInGame = !!(currentId && v.participants?.[currentId]);
+      if (!isPrivateHand && hideMainHand() && currentInGame && v.state === 'playing') {
         const key = `${v.startedAt || 0}:${v.state || ''}`;
         if (privateSignalKey !== key) {
           privateSignalKey = key;
@@ -13382,10 +13561,18 @@ gateColor.addEventListener('input', syncColor);
         remove(rootRef).catch(()=>{});
       }
     });
+    setInterval(() => {
+      if (!game || game.state !== 'playing') return;
+      enforceTurnTimeout();
+      render();
+    }, 1000);
+    window.addEventListener('beforeunload', () => setDurakInteractive(false));
     window.addEventListener('keydown', (e) => {
       if (e.key === 'Escape' && selectedCard) {
         selectedCard = '';
         pendingChoiceCard = '';
+        selectedIntent = '';
+        selectedDefenseIndex = -1;
         render();
         e.preventDefault();
         return;
@@ -13393,9 +13580,15 @@ gateColor.addEventListener('input', syncColor);
       if (!e.altKey || !(e.code === 'Backquote' || e.key === '`' || e.key === 'ё' || e.key === 'Ё')) return;
       if (!game || game.type !== 'durak') return;
       revealAllHands = !revealAllHands;
-      localStorage.setItem('durak_reveal_all', revealAllHands ? '1' : '0');
+      window.ccStorage.setItem('durak_reveal_all', revealAllHands ? '1' : '0');
       render();
       e.preventDefault();
+    });
+    document.addEventListener('click', (ev) => {
+      if (!selectedCard) return;
+      if (ev.target.closest('#durakOverlay .durak-panel,#durakHandOverlay,.durak-preview,.durak-choice,.durak-actions,.durak-card,[data-da]')) return;
+      clearSelection();
+      render();
     });
     if (!document.getElementById('durakStyles')) {
       const st = document.createElement('style');
@@ -13418,6 +13611,7 @@ gateColor.addEventListener('input', syncColor);
         .durak-choice{width:max-content;max-width:min(520px,calc(100vw - 32px));margin:12px auto 0;padding:10px 12px;border-radius:8px;border:1px solid rgba(251,191,36,.55);background:rgba(15,23,42,.9);display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;box-shadow:0 12px 34px rgba(0,0,0,.38),0 0 26px rgba(251,191,36,.12)}.durak-choice b{color:#fbbf24;font-size:18px}.durak-choice span{color:rgba(255,255,255,.72);font-weight:800}.durak-choice>div{display:flex;gap:8px}
         .durak-my-zone{border-top:1px solid rgba(255,255,255,.1);padding-top:14px}.durak-hidden{display:flex;flex-direction:column;align-items:center;gap:8px;color:#fff;background:rgba(2,6,23,.72);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:12px}.durak-hidden span{color:rgba(255,255,255,.68);font-size:13px}.durak-end{font-size:26px;font-weight:950;margin:18px 0}
         #durakHandOverlay,.durak-private{width:100vw;height:100vh;background:#050814;color:#fff;font-family:'Montserrat','Open Sans',sans-serif;box-sizing:border-box;padding:12px;overflow:auto}.durak-private-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;color:#fbbf24;font-weight:900}.durak-private .durak-preview-card{width:clamp(150px,34vh,270px)}.durak-private .durak-hand{justify-content:flex-start;align-items:flex-end;min-height:126px}.durak-private .durak-actions{justify-content:flex-start;margin-top:10px}.durak-private-empty{padding:18px;color:rgba(255,255,255,.72);font-weight:800}
+        #durakOverlay{pointer-events:none;background:transparent}#durakOverlay .durak-panel{pointer-events:auto}.durak-panel{overflow:visible}.durak-turn small,.durak-private-head small{display:block;margin-top:2px;color:#fbbf24;font-size:13px;line-height:1}.durak-slot.target{cursor:pointer;color:#fbbf24;border-color:rgba(251,191,36,.72);background:rgba(251,191,36,.1);box-shadow:0 0 18px rgba(251,191,36,.22)}.durak-slot.target.selected{background:rgba(34,197,94,.22);border-color:#22c55e;color:#fff;box-shadow:0 0 22px rgba(34,197,94,.34)}.durak-preview{position:fixed;left:50%;top:12px;transform:translateX(-50%);z-index:100220;margin:0;pointer-events:auto}.durak-preview-card{width:clamp(150px,20vmin,250px)}.durak-private{display:flex;flex-direction:column;justify-content:flex-end;background:transparent;overflow:hidden;padding:8px 10px}.durak-private-head{position:fixed;left:10px;right:10px;top:8px;z-index:2;margin:0;padding:6px 8px;border-radius:8px;background:rgba(5,8,20,.48);backdrop-filter:blur(5px);gap:8px}.durak-private-head b{min-width:120px}.durak-private-head span{font-size:12px;color:rgba(255,255,255,.72);flex:1;text-align:center}.durak-private-toggle{padding:6px 10px}.durak-private .durak-hand{margin-top:auto;max-height:132px;overflow:visible;flex-wrap:wrap;align-content:flex-end;justify-content:center;gap:7px;padding:0 86px 0 4px}.durak-private .durak-hand .durak-card{width:72px;height:102px}.durak-private .durak-actions{position:fixed;right:12px;bottom:12px;z-index:3;margin:0;justify-content:flex-end}.durak-private .durak-choice{position:fixed;left:50%;bottom:124px;transform:translateX(-50%);z-index:3;margin:0}.durak-private .durak-preview{top:44px}.durak-private .durak-preview-card{width:clamp(130px,36vh,220px)}.durak-private-empty{align-self:center;margin-bottom:60px;background:rgba(5,8,20,.5);border-radius:8px}
         @media(max-width:700px){.durak-panel{padding:12px}.durak-top{grid-template-columns:1fr;justify-items:center}.durak-turn{font-size:22px}.durak-board{min-height:390px}.durak-center{width:min(360px,76vw)}.durak-card,.durak-back,.durak-trump-card{width:52px;height:76px}.durak-hand .durak-card{width:68px;height:96px}.durak-preview-card{width:clamp(140px,44vw,220px)}.durak-slot{width:52px;height:76px}.durak-trick{width:100px;height:114px}.durak-trick>.durak-card+.durak-card,.durak-trick>.durak-slot.defense{left:34px}.durak-fan{width:116px;height:58px}.durak-mini-card{width:30px;height:42px}}
       `;
       document.head.appendChild(st);
@@ -13448,11 +13642,11 @@ gateColor.addEventListener('input', syncColor);
       return window.__ccCanonicalUid?.()
         || (window.auth && window.auth.currentUser?.uid)
         || (window.state && window.state.id)
-        || localStorage.getItem('cc_uid') || 'guest';
+        || window.ccStorage.getItem('cc_uid') || 'guest';
     }
 
     function _musicClientName(){
-      const raw = localStorage.getItem('cc_name') || window.state?.name || '';
+      const raw = window.ccStorage.getItem('cc_name') || window.state?.name || '';
       return window.__ccCanonicalName?.(raw) || raw || 'Гость';
     }
 
@@ -13495,7 +13689,7 @@ gateColor.addEventListener('input', syncColor);
         return false;
       }
       const voterName = window.__ccCanonicalName?.(name) || name || _musicClientName();
-      let voterColor = localStorage.getItem('cc_color') || window.state?.color || '#16c7b7';
+      let voterColor = window.ccStorage.getItem('cc_color') || window.state?.color || '#16c7b7';
       try {
         for (const p of (window.state?.points || new Map()).values()) {
           const pointName = window.__ccCanonicalName?.(p?.name) || p?.name;
@@ -13549,7 +13743,7 @@ gateColor.addEventListener('input', syncColor);
         window.isOverlayHotkeys ||
         document.documentElement.classList.contains('overlay-mode');
       const isMusicHost = isOverlayHost ||
-        _musicIsHostName(localStorage.getItem('cc_name')) ||
+        _musicIsHostName(window.ccStorage.getItem('cc_name')) ||
         _musicIsHostName(window.state?.name);
 
       if (isActive && !wasActive && isOverlayHost && !window.overlayComponent) {
@@ -13663,8 +13857,8 @@ gateColor.addEventListener('input', syncColor);
       console.log('➕ Добавление:', name);
       push(ref(music_db, `${musicPath}/queue`), { 
         uri, name, artist, 
-        addedBy: localStorage.getItem('cc_name') || 'Гость', 
-        color: localStorage.getItem('cc_color') || '#16c7b7', 
+        addedBy: window.ccStorage.getItem('cc_name') || 'Гость', 
+        color: window.ccStorage.getItem('cc_color') || '#16c7b7', 
         ts: Date.now() 
       });
 
@@ -13680,7 +13874,7 @@ gateColor.addEventListener('input', syncColor);
       if (!qList) return;
       
       const queueData = snap.val() || {};
-      const myName = localStorage.getItem('cc_name');
+      const myName = window.ccStorage.getItem('cc_name');
       const entries = Object.entries(queueData);
 
       if (entries.length === 0) {
@@ -13790,7 +13984,7 @@ gateColor.addEventListener('input', syncColor);
     });
 
     // Кнопка Salyose
-    const myName = localStorage.getItem('cc_name');
+    const myName = window.ccStorage.getItem('cc_name');
     if (myName === 'Salyose' || myName === 'salyose') {
       document.getElementById('salyoseLikeBtn')?.classList.remove('hidden');
     }
@@ -14301,7 +14495,7 @@ gateColor.addEventListener('input', syncColor);
         const uid = window.__ccCanonicalUid?.() || window.auth.currentUser.uid;
         if (!window.state || !window.state.points) return;
         let my = window.state.points.get(uid);
-        const isHostSelf = _isHostHere() || window.__ccIsHostName?.(window.state?.name || localStorage.getItem('cc_name'));
+        const isHostSelf = _isHostHere() || window.__ccIsHostName?.(window.state?.name || window.ccStorage.getItem('cc_name'));
         if (!my && isHostSelf) {
           my = {
             id: window.HOST_IDENTITY?.uid || uid,
