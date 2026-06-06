@@ -9404,6 +9404,11 @@ document.head.appendChild(ratAnimStyle);
       if (m) m.remove();
       _triggerRaceLobby();
     }});
+    games.push({ icon:'🃏', name:'Дурак', color:'#22c55e', onClick:()=>{
+      const m = document.getElementById('gamesModal');
+      if (m) m.remove();
+      window.__durak?.startOrJoin?.();
+    }});
 
     for (const g of games){
       const btn = document.createElement('button');
@@ -11986,6 +11991,10 @@ window.closeLinkModal = function() {
       panel.classList.remove('show');
       _triggerQuoteGame();
     }});
+    games.push({ icon: '🃏', name: 'Дурак', color: '#22c55e', onClick: () => {
+      panel.classList.remove('show');
+      window.__durak?.startOrJoin?.();
+    }});
 
     for (const g of games){
       const btn = document.createElement('button');
@@ -12707,6 +12716,668 @@ gateColor.addEventListener('input', syncColor);
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot);
   else boot();
 })();
+</script>
+<script type="module">
+  import { ref, onValue, set, update, remove, get } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+
+  (function initDurakModule(){
+    if (!window.db || !window.auth || !window.state) {
+      setTimeout(initDurakModule, 100);
+      return;
+    }
+
+    const db = window.db;
+    const auth = window.auth;
+    const state = window.state;
+    const SESSION_KEY = "DepressivePasties";
+    const basePath = `sessions/${SESSION_KEY}`;
+    const rootRef = ref(db, `${basePath}/games/active`);
+    const component = new URLSearchParams(location.search).get('component') || '';
+    const isPrivateHand = component === 'durak_hand';
+    const D = {
+      min: 2,
+      max: 6,
+      hand: 6,
+      cleanup: 15000,
+      stale: 45 * 60 * 1000,
+      ranks: ['6','7','8','9','10','J','Q','K','A'],
+      suits: ['S','H','D','C'],
+      label: { S:'♠', H:'♥', D:'♦', C:'♣' },
+      modes: { podkidnoy:'Подкидной', transfer:'Переводной' }
+    };
+    const CARD_ASSET_DIR = 'assets/durak/cards';
+
+    let game = null;
+    let overlay = null;
+    let busy = false;
+    let cleanupScheduled = false;
+    let privateSignalKey = '';
+    let revealAllHands = localStorage.getItem('durak_reveal_all') === '1';
+    let pendingChoiceCard = '';
+
+    function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+    function attr(s){ return esc(s).replace(/'/g,'&#39;'); }
+    function host(){ return window.HOST_IDENTITY || { uid:'host_leha', name:'Лёха', color:'#1e40af', emoji:'🐻' }; }
+    function cleanName(raw){ return window.__ccCanonicalName?.(raw) || String(raw || '').trim(); }
+    function myName(){
+      const raw = state.name || localStorage.getItem('cc_name') || 'Игрок';
+      const clean = cleanName(raw) || 'Игрок';
+      return isHostName(clean) ? host().name : clean;
+    }
+    function isHostName(name){ return !!window.__ccIsHostName?.(name); }
+    function myColor(){ return isHostName(myName()) ? host().color : (state.color || localStorage.getItem('cc_color') || '#16c7b7'); }
+    function myEmoji(){ return isHostName(myName()) ? host().emoji : (state.emoji || localStorage.getItem('cc_emoji') || ''); }
+    function uid(){ return window.__ccCanonicalUid?.() || auth.currentUser?.uid || state.id || null; }
+    function ids(){
+      const out = [uid()];
+      if (isHostName(myName())) out.push(host().uid);
+      return new Set(out.filter(Boolean));
+    }
+    function participantUid(v = game){
+      const setIds = ids();
+      const parts = v?.participants || {};
+      return Object.keys(parts).find(id => setIds.has(id)) || uid();
+    }
+    function amHost(v = game){
+      if (!v) return isHostName(myName()) || isOverlayHost();
+      return ids().has(v.host) || (isOverlayHost() && isHostName(v.hostName));
+    }
+    function isOverlayHost(){
+      return !!(
+        window.isOverlayHotkeys ||
+        document.documentElement.classList.contains('overlay-live') ||
+        document.documentElement.classList.contains('overlay-mode') ||
+        document.body?.classList.contains('overlay-live') ||
+        document.body?.classList.contains('overlay-mode')
+      );
+    }
+    function hideMainHand(){ return !isPrivateHand && isOverlayHost() && (amHost(game) || isHostName(myName())); }
+    function rank(c){ return String(c || '').slice(0, -1); }
+    function suit(c){ return String(c || '').slice(-1); }
+    function val(c){ return D.ranks.indexOf(rank(c)); }
+    function red(c){ return suit(c) === 'H' || suit(c) === 'D'; }
+    function label(c){ return `${rank(c)}${D.label[suit(c)] || suit(c)}`; }
+    function modeLabel(v){ return D.modes[v?.mode || 'podkidnoy'] || D.modes.podkidnoy; }
+    function cardAsset(card){ return `${CARD_ASSET_DIR}/${rank(card)}${suit(card)}.png`; }
+    function cardArt(card){
+      if (!card) return '';
+      return `<img class="durak-art" src="${attr(cardAsset(card))}" alt="" loading="lazy" onload="this.parentElement?.classList.add('has-art')" onerror="this.remove()">`;
+    }
+    function backArt(){
+      return `<img class="durak-art" src="${CARD_ASSET_DIR}/back.png" alt="" loading="lazy" onload="this.parentElement?.classList.add('has-art')" onerror="this.remove()">`;
+    }
+    function sortHand(cards = [], trump){
+      return [...cards].sort((a,b) => {
+        const at = suit(a) === trump ? 1 : 0;
+        const bt = suit(b) === trump ? 1 : 0;
+        if (at !== bt) return at - bt;
+        if (suit(a) !== suit(b)) return suit(a).localeCompare(suit(b));
+        return val(a) - val(b);
+      });
+    }
+    function buildDeck(){
+      const deck = [];
+      for (const s of D.suits) for (const r of D.ranks) deck.push(r + s);
+      for (let i = deck.length - 1; i > 0; i--){
+        const j = Math.floor(Math.random() * (i + 1));
+        [deck[i], deck[j]] = [deck[j], deck[i]];
+      }
+      return deck;
+    }
+    function tableCards(table = []){
+      return table.flatMap(p => [p.attack, p.defense].filter(Boolean));
+    }
+    function beats(def, atk, trump){
+      if (suit(def) === suit(atk)) return val(def) > val(atk);
+      return suit(def) === trump && suit(atk) !== trump;
+    }
+    function activeOrder(v){
+      return (v.order || []).filter(id => v.participants?.[id] && !v.participants[id].finishedAt);
+    }
+    function nextAfter(v, id){
+      const order = activeOrder(v);
+      if (!order.length) return null;
+      const idx = Math.max(0, order.indexOf(id));
+      for (let i = 1; i <= order.length; i++) {
+        const n = order[(idx + i) % order.length];
+        if (n) return n;
+      }
+      return order[0] || null;
+    }
+    function orderFrom(v, id){
+      const order = activeOrder(v);
+      if (!order.length) return [];
+      const idx = Math.max(0, order.indexOf(id));
+      return [...order.slice(idx), ...order.slice(0, idx)];
+    }
+    function ranksOnTable(v){ return new Set(tableCards(v.table || []).map(rank)); }
+    function allDefended(v){ return (v.table || []).length > 0 && (v.table || []).every(p => !!p.defense); }
+    function canAttack(v, id, card){
+      if (!v || v.state !== 'playing' || !id || id === v.defender) return false;
+      if (!(v.hands?.[id] || []).includes(card)) return false;
+      if (v.passes?.[id]) return false;
+      const table = v.table || [];
+      const attackLimit = Math.min(D.hand, Math.max(1, Number(v.defenderHandAtStart || D.hand)));
+      if (table.length >= attackLimit) return false;
+      if (!table.length) return id === v.attacker;
+      return ranksOnTable(v).has(rank(card));
+    }
+    function defenseIndex(v, id, card){
+      if (!v || v.state !== 'playing' || id !== v.defender) return -1;
+      if (!(v.hands?.[id] || []).includes(card)) return -1;
+      return (v.table || []).findIndex(p => !p.defense && beats(card, p.attack, v.trump));
+    }
+    function canTransfer(v, id, card){
+      if (!v || v.mode !== 'transfer' || v.state !== 'playing' || id !== v.defender) return false;
+      if (!(v.hands?.[id] || []).includes(card)) return false;
+      const table = v.table || [];
+      if (!table.length || table.some(p => p.defense)) return false;
+      if (!ranksOnTable(v).has(rank(card))) return false;
+      const nextDefender = nextAfter(v, id);
+      if (!nextDefender || nextDefender === id) return false;
+      const incoming = table.length + 1;
+      const nextHand = (v.hands?.[nextDefender] || []).length;
+      return incoming <= Math.min(D.hand, Math.max(1, nextHand));
+    }
+    function needsPlayChoice(v, id, card){
+      return canTransfer(v, id, card) && defenseIndex(v, id, card) >= 0;
+    }
+    function freshGame(lobby){
+      const order = Object.keys(lobby.participants || {})
+        .sort((a,b) => Number(lobby.participants[a].order || 0) - Number(lobby.participants[b].order || 0))
+        .slice(0, D.max);
+      const deck = buildDeck();
+      const trumpCard = deck[deck.length - 1];
+      const trump = suit(trumpCard);
+      const hands = {};
+      order.forEach(id => { hands[id] = []; });
+      for (let r = 0; r < D.hand; r++) {
+        for (const id of order) {
+          const card = deck.shift();
+          if (card) hands[id].push(card);
+        }
+      }
+      for (const id of order) hands[id] = sortHand(hands[id], trump);
+      let attacker = order[0];
+      let best = null;
+      for (const id of order) for (const c of hands[id]) {
+        if (suit(c) !== trump) continue;
+        if (!best || val(c) < val(best.card)) best = { id, card:c };
+      }
+      if (best) attacker = best.id;
+      const tmp = { ...lobby, order };
+      const defender = nextAfter(tmp, attacker);
+      return {
+        ...lobby,
+        state: 'playing',
+        mode: lobby.mode || 'podkidnoy',
+        order,
+        hands,
+        deck,
+        trump,
+        trumpCard,
+        table: [],
+        discard: [],
+        attacker,
+        defender,
+        defenderHandAtStart: hands[defender]?.length || D.hand,
+        passes: {},
+        updatedAt: Date.now()
+      };
+    }
+    function drawToSix(next, firstId, defenderId){
+      const hands = { ...(next.hands || {}) };
+      const deck = [...(next.deck || [])];
+      const drawOrder = orderFrom(next, firstId).filter(id => id !== defenderId);
+      if (defenderId) drawOrder.push(defenderId);
+      for (const id of drawOrder) {
+        if (!hands[id]) continue;
+        while (hands[id].length < D.hand && deck.length) hands[id].push(deck.shift());
+        hands[id] = sortHand(hands[id], next.trump);
+      }
+      next.hands = hands;
+      next.deck = deck;
+      return next;
+    }
+    function maybeFinish(next, preferredAttacker, outcome){
+      const parts = { ...(next.participants || {}) };
+      if (!(next.deck || []).length) {
+        for (const id of Object.keys(parts)) {
+          if (!parts[id].finishedAt && !(next.hands?.[id] || []).length) parts[id] = { ...parts[id], finishedAt: Date.now() };
+        }
+      }
+      next.participants = parts;
+      const active = activeOrder(next);
+      if (!(next.deck || []).length && active.length <= 1) {
+        return { ...next, state:'ended', loser: active[0] || null, endedAt: Date.now(), updatedAt: Date.now() };
+      }
+      let attacker = preferredAttacker;
+      if (!active.includes(attacker)) attacker = active[0];
+      const defender = nextAfter({ ...next, participants: parts }, attacker);
+      return {
+        ...next,
+        state:'playing',
+        attacker,
+        defender,
+        defenderHandAtStart: next.hands?.[defender]?.length || D.hand,
+        table: [],
+        passes: {},
+        lastOutcome: outcome,
+        updatedAt: Date.now()
+      };
+    }
+    function endBout(v, outcome){
+      const hands = { ...(v.hands || {}) };
+      const next = { ...v, hands, table: [], discard: [...(v.discard || [])] };
+      const cards = tableCards(v.table || []);
+      if (outcome === 'take') hands[v.defender] = sortHand([...(hands[v.defender] || []), ...cards], v.trump);
+      else next.discard = [...next.discard, ...cards];
+      drawToSix(next, v.attacker, v.defender);
+      const preferred = outcome === 'take' ? nextAfter(next, v.defender) : v.defender;
+      return maybeFinish(next, preferred, outcome);
+    }
+    async function withFresh(fn){
+      if (busy) return;
+      busy = true;
+      try {
+        const snap = await get(rootRef);
+        const v = snap.val() || null;
+        if (!v || v.type !== 'durak') return;
+        const next = await fn(v);
+        if (next) await set(rootRef, next);
+      } catch(e) {
+        console.warn('[durak] action failed', e);
+      } finally {
+        busy = false;
+      }
+    }
+    async function startLobby(){
+      if (!auth.currentUser) return;
+      const id = uid();
+      if (!id) return;
+      const nm = isHostName(myName()) ? host().name : myName();
+      const col = isHostName(nm) ? host().color : myColor();
+      const emo = isHostName(nm) ? host().emoji : myEmoji();
+      await set(rootRef, {
+        type:'durak',
+        state:'lobby',
+        mode:'podkidnoy',
+        host:id,
+        hostName:nm,
+        hostColor:col,
+        participants:{ [id]: { name:nm, color:col, emoji:emo, order:0, joinedAt:Date.now() } },
+        order:[id],
+        startedAt:Date.now(),
+        updatedAt:Date.now()
+      });
+    }
+    async function joinLobby(){
+      if (!auth.currentUser) return;
+      const id = uid();
+      if (!id) return;
+      await withFresh(async (v) => {
+        if (v.state !== 'lobby') return null;
+        const parts = { ...(v.participants || {}) };
+        if (Object.keys(parts).some(pid => ids().has(pid))) return null;
+        if (Object.keys(parts).length >= D.max) return null;
+        parts[id] = { name:myName(), color:myColor(), emoji:myEmoji(), order:Object.keys(parts).length, joinedAt:Date.now() };
+        return { ...v, participants:parts, order:Object.keys(parts), updatedAt:Date.now() };
+      });
+    }
+    async function setMode(mode){
+      if (!D.modes[mode]) return;
+      await withFresh(async (v) => {
+        if (v.state !== 'lobby' || !amHost(v)) return null;
+        return { ...v, mode, updatedAt:Date.now() };
+      });
+    }
+    async function startOrJoin(){
+      const snap = await get(rootRef).catch(() => null);
+      const v = snap?.val?.() || null;
+      if (v?.type === 'durak' && v.state === 'lobby') return joinLobby();
+      if (v?.type === 'durak') return render();
+      return startLobby();
+    }
+    async function startGame(){
+      await withFresh(async (v) => {
+        if (v.state !== 'lobby' || !amHost(v)) return null;
+        if (Object.keys(v.participants || {}).length < D.min) return null;
+        return freshGame(v);
+      });
+    }
+    async function cancelGame(){
+      if (!game || !amHost(game)) return;
+      await remove(rootRef).catch(()=>{});
+    }
+    async function playCard(card, intent='auto'){
+      window.__ccMarkActive?.(true);
+      await withFresh(async (v) => {
+        if (v.state !== 'playing') return null;
+        const id = participantUid(v);
+        if (!id) return null;
+        const hands = { ...(v.hands || {}) };
+        const table = [...(v.table || [])];
+        if (id === v.defender) {
+          const transferOk = canTransfer(v, id, card);
+          const defendIdx = defenseIndex(v, id, card);
+          if (intent === 'transfer' && !transferOk) {
+            pendingChoiceCard = '';
+            render();
+            return null;
+          }
+          if (intent === 'defend' && defendIdx < 0) {
+            pendingChoiceCard = '';
+            render();
+            return null;
+          }
+          if (transferOk && defendIdx >= 0 && intent === 'auto') {
+            pendingChoiceCard = card;
+            render();
+            return null;
+          }
+          if (transferOk && intent !== 'defend') {
+            pendingChoiceCard = '';
+            const nextDefender = nextAfter(v, id);
+            hands[id] = (hands[id] || []).filter(c => c !== card);
+            table.push({ attack:card, by:id, defense:null, transfer:true });
+            return {
+              ...v,
+              hands,
+              table,
+              attacker:id,
+              defender:nextDefender,
+              defenderHandAtStart:hands[nextDefender]?.length || D.hand,
+              passes:{},
+              updatedAt:Date.now()
+            };
+          }
+          const idx = defendIdx;
+          if (idx < 0) return null;
+          pendingChoiceCard = '';
+          hands[id] = (hands[id] || []).filter(c => c !== card);
+          table[idx] = { ...table[idx], defense:card, defenseBy:id };
+        } else {
+          if (!canAttack(v, id, card)) return null;
+          pendingChoiceCard = '';
+          hands[id] = (hands[id] || []).filter(c => c !== card);
+          table.push({ attack:card, by:id, defense:null });
+        }
+        return { ...v, hands, table, passes:{}, updatedAt:Date.now() };
+      });
+    }
+    async function pass(){
+      await withFresh(async (v) => {
+        if (v.state !== 'playing') return null;
+        const id = participantUid(v);
+        if (!id || id === v.defender) return null;
+        const passes = { ...(v.passes || {}), [id]:true };
+        const attackers = activeOrder(v).filter(pid => pid !== v.defender && (v.hands?.[pid] || []).length);
+        if (allDefended(v) && attackers.length && attackers.every(pid => passes[pid])) return endBout(v, 'beaten');
+        return { ...v, passes, updatedAt:Date.now() };
+      });
+    }
+    async function beat(){
+      await withFresh(async (v) => {
+        const id = participantUid(v);
+        if (!id || id === v.defender || !allDefended(v)) return null;
+        return endBout(v, 'beaten');
+      });
+    }
+    async function take(){
+      await withFresh(async (v) => {
+        const id = participantUid(v);
+        if (!id || id !== v.defender || !(v.table || []).length) return null;
+        return endBout(v, 'take');
+      });
+    }
+    function ensureRoot(){
+      if (overlay) return overlay;
+      if (isPrivateHand) {
+        document.documentElement.classList.add('durak-hand-mode');
+        document.body.style.background = '#050814';
+        document.querySelectorAll('.app,#gate,#party-root,.stage,.videoWrap,#overlay,#fx-layer,#chatOverlay').forEach(el => { if (el) el.style.display = 'none'; });
+        let dock = document.getElementById('durakHandDock');
+        if (!dock) {
+          dock = document.createElement('div');
+          dock.id = 'durakHandDock';
+          document.body.appendChild(dock);
+        }
+        overlay = document.createElement('div');
+        overlay.id = 'durakHandOverlay';
+        dock.appendChild(overlay);
+      } else {
+        overlay = document.createElement('div');
+        overlay.id = 'durakOverlay';
+        document.body.appendChild(overlay);
+      }
+      return overlay;
+    }
+    function colorOf(v, id){ return v?.participants?.[id]?.color || '#94a3b8'; }
+    function nameOf(v, id){ return v?.participants?.[id]?.name || 'игрока'; }
+    function turnOwner(v){
+      if (!v || v.state !== 'playing') return null;
+      const table = v.table || [];
+      if (table.some(p => !p.defense)) return v.defender;
+      if (!table.length) return v.attacker;
+      const attackers = activeOrder(v).filter(pid => pid !== v.defender && !v.passes?.[pid] && (v.hands?.[pid] || []).length);
+      return attackers[0] || v.attacker;
+    }
+    function turnText(v, id){
+      const owner = turnOwner(v);
+      if (!owner) return '';
+      return owner === id ? 'Твой ход' : `Ход ${nameOf(v, owner)}`;
+    }
+    function canPlayCard(v, id, card){
+      if (!id || !card || v.state !== 'playing') return false;
+      if (id === v.defender) return canTransfer(v, id, card) || defenseIndex(v, id, card) >= 0;
+      return canAttack(v, id, card);
+    }
+    function cardHtml(card, opts=false, ownerMaybe=''){
+      const options = typeof opts === 'object' ? opts : { inert:!!opts, ownerColor:ownerMaybe || '' };
+      const inert = !!options.inert;
+      const tag = inert ? 'span' : 'button';
+      const ownerColor = options.ownerColor || '';
+      const disabled = !inert && options.playable === false;
+      const ambiguous = !!options.ambiguous;
+      const chosen = !!options.chosen;
+      const style = ownerColor ? ` style="--owner:${attr(ownerColor)}"` : '';
+      const attrs = inert ? '' : `type="button" data-card="${attr(card)}" ${disabled ? 'disabled' : ''}`;
+      return `<${tag} class="durak-card ${inert ? 'inert' : ''} ${ownerColor ? 'owned' : ''} ${disabled ? 'dim' : ''} ${ambiguous ? 'ambiguous' : ''} ${chosen ? 'chosen' : ''} ${red(card) ? 'red' : 'black'}"${style} ${attrs}>${cardArt(card)}<span>${esc(rank(card))}</span><b>${D.label[suit(card)] || ''}</b></${tag}>`;
+    }
+    function deckBackHtml(v){
+      return `<span class="durak-back">${backArt()}<span>${(v.deck || []).length}</span></span>`;
+    }
+    function trumpHtml(v){
+      const c = v.trumpCard || '';
+      if (!c) return '<span class="durak-trump-card">-</span>';
+      return `<span class="durak-trump-card ${red(c) ? 'red' : 'black'}">${cardArt(c)}<span>${esc(rank(c))}</span><b>${D.label[suit(c)] || ''}</b></span>`;
+    }
+    function miniCardHtml(card, ownerColor, i, total, reveal=false){
+      const mid = (Math.max(1, total) - 1) / 2;
+      const delta = i - mid;
+      const style = `--owner:${attr(ownerColor || '#94a3b8')};--tx:${(delta * 10).toFixed(1)}px;--rot:${(delta * -8).toFixed(1)}deg`;
+      if (reveal && card) {
+        return `<span class="durak-mini-card face ${red(card) ? 'red' : 'black'}" style="${style}">${cardArt(card)}<span>${esc(rank(card))}</span><b>${D.label[suit(card)] || ''}</b></span>`;
+      }
+      return `<span class="durak-mini-card back" style="${style}">${backArt()}</span>`;
+    }
+    function fanHtml(v, pid){
+      const p = v.participants?.[pid] || {};
+      const cards = sortHand(v.hands?.[pid] || [], v.trump);
+      const shown = cards.slice(0, 10);
+      return `<div class="durak-fan" style="--pc:${attr(p.color || '#94a3b8')}">${shown.map((c,i) => miniCardHtml(c, p.color, i, shown.length, revealAllHands)).join('')}<em>${cards.length}</em></div>`;
+    }
+    function playersCircleHtml(v, myId){
+      const order = (v.order || []).filter(pid => v.participants?.[pid]);
+      const total = Math.max(1, order.length);
+      const turn = turnOwner(v);
+      return `<div class="durak-seats">${order.map((pid, i) => {
+        const p = v.participants?.[pid] || {};
+        const angle = -90 + (360 / total) * i;
+        const rad = angle * Math.PI / 180;
+        const left = 50 + Math.cos(rad) * 42;
+        const top = 50 + Math.sin(rad) * 39;
+        return `<div class="durak-seat ${pid === myId ? 'me' : ''} ${pid === turn ? 'turn' : ''}" style="--pc:${attr(p.color || '#94a3b8')};left:${left.toFixed(2)}%;top:${top.toFixed(2)}%" title="${attr(p.name || '')}"><div class="durak-face">${esc(p.emoji || '🙂')}</div>${fanHtml(v,pid)}</div>`;
+      }).join('')}</div>`;
+    }
+    function trickHtml(pair, i, v){
+      const attackColor = colorOf(v, pair.by);
+      const defenseColor = colorOf(v, pair.defenseBy);
+      return `<div class="durak-trick ${pair.defense ? 'defended' : 'open'}">${pair.attack ? cardHtml(pair.attack,{ inert:true, ownerColor:attackColor }) : '<div class="durak-slot"></div>'}${pair.defense ? cardHtml(pair.defense,{ inert:true, ownerColor:defenseColor }) : `<div class="durak-slot defense">${i+1}</div>`}</div>`;
+    }
+    function modePicker(v){
+      const active = v.mode || 'podkidnoy';
+      if (!amHost(v)) return `<div class="durak-mode-read">${modeLabel(v)}</div>`;
+      return `<div class="durak-mode-picker">${Object.entries(D.modes).map(([key,label]) => `<button class="btn ghost small ${active === key ? 'active' : ''}" data-da="mode-${attr(key)}">${esc(label)}</button>`).join('')}</div>`;
+    }
+    function controls(v, id){
+      if (!id || v.state !== 'playing') return '';
+      const def = id === v.defender;
+      const table = (v.table || []).length > 0;
+      return `<div class="durak-actions">
+        ${def && table ? '<button class="btn ghost small danger" data-da="take">Взять</button>' : ''}
+        ${!def && table ? '<button class="btn ghost small" data-da="pass">Пас</button>' : ''}
+        ${!def && allDefended(v) ? '<button class="btn small" data-da="beat">Бито</button>' : ''}
+      </div>`;
+    }
+    function choiceHtml(v, id){
+      if (!pendingChoiceCard || !needsPlayChoice(v, id, pendingChoiceCard)) return '';
+      return `<div class="durak-choice"><b>${esc(label(pendingChoiceCard))}</b><span>может и перевести, и отбить</span><div><button class="btn ghost small" data-da="choose-transfer">Перевести</button><button class="btn small" data-da="choose-defend">Отбить</button></div></div>`;
+    }
+    function wire(root){
+      root.querySelectorAll('[data-da]').forEach(btn => {
+        btn.onclick = () => {
+          const a = btn.dataset.da;
+          if (a === 'join') joinLobby();
+          if (a === 'start') startGame();
+          if (a === 'cancel') cancelGame();
+          if (a === 'take') take();
+          if (a === 'pass') pass();
+          if (a === 'beat') beat();
+          if (a === 'private') console.log('[DURAK_HAND_OPEN]');
+          if (a === 'choose-transfer' && pendingChoiceCard) playCard(pendingChoiceCard, 'transfer');
+          if (a === 'choose-defend' && pendingChoiceCard) playCard(pendingChoiceCard, 'defend');
+          if (a && a.startsWith('mode-')) setMode(a.slice(5));
+        };
+      });
+      root.querySelectorAll('.durak-hand .durak-card[data-card]').forEach(btn => {
+        btn.onclick = () => playCard(btn.dataset.card);
+      });
+    }
+    function render(){
+      if (component && !isPrivateHand) return;
+      if (!game) {
+        if (overlay) { overlay.remove(); overlay = null; }
+        if (isPrivateHand) {
+          const el = ensureRoot();
+          el.innerHTML = '<div class="durak-private-empty">Дурак: ждём партию</div>';
+        }
+        return;
+      }
+      const el = ensureRoot();
+      const v = game;
+      const id = participantUid(v);
+      const inGame = !!(id && v.participants?.[id]);
+      const hand = inGame ? sortHand(v.hands?.[id] || [], v.trump) : [];
+      if (pendingChoiceCard && !needsPlayChoice(v, id, pendingChoiceCard)) pendingChoiceCard = '';
+      if (isPrivateHand) {
+        el.className = 'durak-private';
+        el.innerHTML = `<div class="durak-private-head"><b>${esc(turnText(v,id) || 'Твои карты')}</b><span>${modeLabel(v)} · козырь: ${v.trumpCard ? label(v.trumpCard) : (v.trump ? D.label[v.trump] : '-')}</span></div><div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), ambiguous:needsPlayChoice(v,id,c), chosen:pendingChoiceCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}${controls(v,id)}`;
+        wire(el);
+        return;
+      }
+      if (v.state === 'lobby') {
+        const list = Object.values(v.participants || {}).map(p => `<span class="durak-lobby-player" style="--pc:${p.color || '#16c7b7'}">${esc(p.emoji || '')} ${esc(p.name || '?')}</span>`).join('');
+        el.className = 'durak-shell lobby';
+        el.innerHTML = `<div class="durak-panel lobby-panel"><div class="durak-title">🃏 Дурак</div><div class="durak-sub">${modeLabel(v)} • ${Object.keys(v.participants || {}).length}/${D.max}</div>${modePicker(v)}<div class="durak-lobby-list">${list || '<span class="durak-muted">Пока пусто</span>'}</div><div class="durak-actions">${!inGame ? '<button class="btn ghost small" data-da="join">Вписаться</button>' : ''}${amHost(v) && Object.keys(v.participants || {}).length >= D.min ? '<button class="btn small" data-da="start">Старт</button>' : ''}${amHost(v) ? '<button class="btn ghost small danger" data-da="cancel">Закрыть</button>' : ''}</div></div>`;
+        wire(el);
+        return;
+      }
+      if (v.state === 'ended') {
+        const loser = v.loser ? v.participants?.[v.loser] : null;
+        el.className = 'durak-shell ended';
+        el.innerHTML = `<div class="durak-panel"><div class="durak-title">🃏 Дурак</div><div class="durak-end">${loser ? `Дурак: ${esc(loser.name || '?')}` : 'Ничья. Все отбились.'}</div>${amHost(v) ? '<button class="btn ghost small danger" data-da="cancel">Убрать</button>' : ''}</div>`;
+        wire(el);
+        return;
+      }
+      const players = playersCircleHtml(v, id);
+      const table = (v.table || []).map((p,i) => trickHtml(p,i,v)).join('');
+      const status = turnText(v, id);
+      const handHtml = hideMainHand() && !revealAllHands
+        ? `<div class="durak-hidden"><b>Карты хоста скрыты</b><span>Открой приватное окно руки. В шаримую страницу они не рисуются.</span><button class="btn ghost small" data-da="private">Открыть руку</button></div>`
+        : `<div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), ambiguous:needsPlayChoice(v,id,c), chosen:pendingChoiceCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}`;
+      el.className = 'durak-shell playing';
+      el.innerHTML = `<div class="durak-panel"><div class="durak-top"><div><b>Дурак</b><span>${modeLabel(v)}${revealAllHands ? ' · тест: руки открыты' : ''}</span></div><div class="durak-turn">${esc(status)}</div><div class="durak-deck">${deckBackHtml(v)}${trumpHtml(v)}</div></div><div class="durak-board">${players}<div class="durak-center"><div class="durak-table">${table || '<div class="durak-muted">Стол пуст</div>'}</div></div></div>${inGame ? `<div class="durak-my-zone">${handHtml}${controls(v,id)}</div>` : '<div class="durak-muted">Ты зритель этой партии</div>'}</div>`;
+      wire(el);
+    }
+    onValue(rootRef, (snap) => {
+      if (component && !isPrivateHand) return;
+      const v = snap.val() || null;
+      if (!v || v.type !== 'durak') {
+        game = null;
+        privateSignalKey = '';
+        render();
+        return;
+      }
+      game = v;
+      if (!isPrivateHand && hideMainHand()) {
+        const key = `${v.startedAt || 0}:${v.state || ''}`;
+        if (privateSignalKey !== key) {
+          privateSignalKey = key;
+          console.log('[DURAK_HAND_OPEN]');
+        }
+      }
+      render();
+      if (v.state === 'ended' && !cleanupScheduled && amHost(v)) {
+        cleanupScheduled = true;
+        setTimeout(async () => {
+          try {
+            const s = await get(rootRef);
+            const cur = s.val() || {};
+            if (cur.type === 'durak' && cur.startedAt === v.startedAt) await remove(rootRef);
+          } catch {}
+          cleanupScheduled = false;
+        }, D.cleanup);
+      }
+      if (v.state !== 'ended' && Date.now() - Number(v.startedAt || 0) > D.stale && amHost(v)) {
+        remove(rootRef).catch(()=>{});
+      }
+    });
+    window.addEventListener('keydown', (e) => {
+      if (!e.altKey || !(e.code === 'Backquote' || e.key === '`' || e.key === 'ё' || e.key === 'Ё')) return;
+      if (!game || game.type !== 'durak') return;
+      revealAllHands = !revealAllHands;
+      localStorage.setItem('durak_reveal_all', revealAllHands ? '1' : '0');
+      render();
+      e.preventDefault();
+    });
+    if (!document.getElementById('durakStyles')) {
+      const st = document.createElement('style');
+      st.id = 'durakStyles';
+      st.textContent = `
+        #durakOverlay{position:fixed;inset:0;z-index:100180;display:flex;align-items:center;justify-content:center;pointer-events:auto;font-family:'Montserrat','Open Sans',sans-serif}
+        .durak-panel{width:min(980px,calc(100vw - 24px));max-height:calc(100vh - 24px);overflow:auto;background:rgba(7,13,24,.94);border:1px solid rgba(34,197,94,.42);border-radius:8px;padding:18px;color:#fff;box-shadow:0 24px 80px rgba(0,0,0,.76),0 0 46px rgba(34,197,94,.12)}
+        .durak-title{font-size:28px;font-weight:950;color:#fbbf24}.durak-sub,.durak-muted{color:rgba(255,255,255,.66);font-weight:700}
+        .durak-lobby-list,.durak-actions,.durak-hand,.durak-table{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:center}
+        .durak-lobby-list{margin:18px 0}.durak-lobby-player{border:1px solid color-mix(in srgb,var(--pc) 72%,rgba(255,255,255,.16));background:rgba(15,23,42,.72);border-radius:8px;padding:8px 10px;box-shadow:0 0 14px color-mix(in srgb,var(--pc) 36%,transparent)}
+        .durak-mode-picker{display:flex;gap:8px;justify-content:center;margin:14px 0 4px}.durak-mode-picker .active{background:#fbbf24;color:#111827;border-color:#fbbf24}.durak-mode-read{margin:12px auto 0;width:max-content;color:#fbbf24;font-weight:900}
+        .durak-top{display:grid;grid-template-columns:1fr auto 1fr;gap:16px;align-items:center;margin-bottom:14px}.durak-top>div:first-child>b{display:block;font-size:24px;color:#fbbf24}.durak-top>div:first-child>span{color:rgba(255,255,255,.7);font-size:13px}.durak-turn{min-width:160px;text-align:center;font-size:26px;font-weight:950;color:#fff;text-shadow:0 0 20px rgba(251,191,36,.32)}
+        .durak-deck{display:flex;gap:8px;align-items:center}.durak-back,.durak-trump-card{width:62px;height:88px;border-radius:8px;display:inline-flex;flex-direction:column;align-items:center;justify-content:center;position:relative;overflow:hidden;border:1px solid rgba(255,255,255,.25);font-weight:950;box-shadow:0 10px 24px rgba(0,0,0,.34)}.durak-back{background:linear-gradient(135deg,#172554,#020617);color:#fff;font-size:22px}.durak-trump-card{background:#f8fafc;color:#0f172a;gap:4px}.durak-trump-card.red{color:#dc2626}.durak-trump-card span{font-size:20px;line-height:1}.durak-trump-card b{font-size:24px;line-height:1}
+        .durak-board{position:relative;min-height:430px;margin:8px 0 14px;border:1px solid rgba(255,255,255,.08);border-radius:8px;background:radial-gradient(circle at 50% 50%,rgba(34,197,94,.12),rgba(2,6,23,.08) 48%,transparent 72%)}
+        .durak-seats{position:absolute;inset:0;pointer-events:none}.durak-seat{position:absolute;transform:translate(-50%,-50%);display:flex;flex-direction:column;align-items:center;gap:4px;pointer-events:auto}.durak-face{width:42px;height:42px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:rgba(15,23,42,.9);border:2px solid var(--pc);font-size:23px;box-shadow:0 0 18px color-mix(in srgb,var(--pc) 42%,transparent)}.durak-seat.turn .durak-face{background:color-mix(in srgb,var(--pc) 30%,#111827);box-shadow:0 0 0 4px rgba(251,191,36,.16),0 0 26px color-mix(in srgb,var(--pc) 70%,transparent)}.durak-seat.me .durak-face{outline:2px solid rgba(255,255,255,.56);outline-offset:2px}
+        .durak-fan{position:relative;width:104px;height:52px}.durak-fan em{position:absolute;left:50%;top:8px;transform:translateX(-50%);z-index:4;min-width:24px;height:22px;border-radius:999px;display:flex;align-items:center;justify-content:center;background:rgba(2,6,23,.88);border:1px solid var(--pc);color:#fff;font-size:12px;font-weight:950;font-style:normal}.durak-mini-card{position:absolute;left:50%;bottom:0;width:28px;height:40px;border-radius:4px;border:1px solid var(--owner);transform:translateX(calc(-50% + var(--tx))) rotate(var(--rot));transform-origin:50% 120%;background:#f8fafc;color:#0f172a;box-shadow:0 5px 12px rgba(0,0,0,.32);overflow:hidden}.durak-mini-card.back{background:linear-gradient(135deg,#172554,#020617)}.durak-mini-card.red{color:#dc2626}.durak-mini-card span,.durak-mini-card b{position:relative;z-index:1;display:block;text-align:center;line-height:1}.durak-mini-card span{font-size:10px;margin-top:7px}.durak-mini-card b{font-size:14px}
+        .durak-center{position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);width:min(620px,64vw);min-height:210px;display:flex;align-items:center;justify-content:center}.durak-table{width:100%;min-height:196px;padding:14px;border:1px dashed rgba(255,255,255,.15);border-radius:8px;background:rgba(2,6,23,.28)}.durak-trick{position:relative;width:116px;height:130px}.durak-trick>.durak-card{position:absolute;left:0;top:30px;transform:rotate(-7deg)}.durak-trick>.durak-card+.durak-card{left:42px;top:4px;transform:rotate(9deg)}.durak-trick>.durak-slot.defense{position:absolute;left:42px;top:4px;transform:rotate(9deg)}
+        .durak-slot{width:62px;height:88px;border-radius:8px;border:1px dashed rgba(255,255,255,.28);display:flex;align-items:center;justify-content:center;color:rgba(255,255,255,.32);font-weight:900}
+        .durak-card{width:62px;height:88px;border-radius:8px;border:1px solid rgba(15,23,42,.2);background:#f8fafc;color:#0f172a;font-weight:950;cursor:pointer;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;position:relative;overflow:hidden;box-shadow:0 10px 24px rgba(0,0,0,.34);transition:transform .12s ease,box-shadow .12s ease,opacity .12s ease}.durak-card.owned{border-color:var(--owner);box-shadow:0 10px 24px rgba(0,0,0,.34),0 0 0 2px color-mix(in srgb,var(--owner) 68%,transparent) inset}.durak-card.ambiguous{box-shadow:0 10px 24px rgba(0,0,0,.34),0 0 0 3px rgba(251,191,36,.78) inset,0 0 22px rgba(251,191,36,.28)}.durak-card.chosen{transform:translateY(-8px);box-shadow:0 16px 30px rgba(0,0,0,.48),0 0 0 3px #fbbf24 inset}.durak-card:not(.inert):not(:disabled):hover{transform:translateY(-6px);box-shadow:0 16px 30px rgba(0,0,0,.48)}.durak-card.inert{cursor:default;opacity:.96}.durak-card.dim{opacity:.34;cursor:default;filter:grayscale(.28)}.durak-card.red{color:#dc2626}.durak-card span,.durak-card b,.durak-trump-card span,.durak-trump-card b,.durak-back span{position:relative;z-index:1}.durak-card span{font-size:20px;line-height:1}.durak-card b{font-size:24px;line-height:1}.durak-art{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;z-index:0}.durak-card.has-art>span,.durak-card.has-art>b,.durak-trump-card.has-art>span,.durak-trump-card.has-art>b,.durak-back.has-art>span,.durak-mini-card.has-art>span,.durak-mini-card.has-art>b{display:none}
+        .durak-choice{width:max-content;max-width:min(520px,calc(100vw - 32px));margin:12px auto 0;padding:10px 12px;border-radius:8px;border:1px solid rgba(251,191,36,.55);background:rgba(15,23,42,.9);display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;box-shadow:0 12px 34px rgba(0,0,0,.38),0 0 26px rgba(251,191,36,.12)}.durak-choice b{color:#fbbf24;font-size:18px}.durak-choice span{color:rgba(255,255,255,.72);font-weight:800}.durak-choice>div{display:flex;gap:8px}
+        .durak-my-zone{border-top:1px solid rgba(255,255,255,.1);padding-top:14px}.durak-hidden{display:flex;flex-direction:column;align-items:center;gap:8px;color:#fff;background:rgba(2,6,23,.72);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:12px}.durak-hidden span{color:rgba(255,255,255,.68);font-size:13px}.durak-end{font-size:26px;font-weight:950;margin:18px 0}
+        #durakHandOverlay,.durak-private{width:100vw;height:100vh;background:#050814;color:#fff;font-family:'Montserrat','Open Sans',sans-serif;box-sizing:border-box;padding:12px}.durak-private-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;color:#fbbf24;font-weight:900}.durak-private .durak-hand{justify-content:flex-start;align-items:flex-end;min-height:104px}.durak-private .durak-actions{justify-content:flex-start;margin-top:10px}.durak-private-empty{padding:18px;color:rgba(255,255,255,.72);font-weight:800}
+        @media(max-width:700px){.durak-panel{padding:12px}.durak-top{grid-template-columns:1fr;justify-items:center}.durak-turn{font-size:22px}.durak-board{min-height:390px}.durak-center{width:min(360px,76vw)}.durak-card,.durak-back,.durak-trump-card{width:52px;height:76px}.durak-slot{width:52px;height:76px}.durak-trick{width:100px;height:114px}.durak-trick>.durak-card+.durak-card,.durak-trick>.durak-slot.defense{left:34px}}
+      `;
+      document.head.appendChild(st);
+    }
+    window.__durak = { startOrJoin, start:startLobby, join:joinLobby, state:()=>game, private:()=>console.log('[DURAK_HAND_OPEN]'), clear:()=>remove(rootRef).catch(()=>{}) };
+  })();
 </script>
 <script type="module">
   import { ref, onValue, set, push, update, remove, get } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
