@@ -1874,6 +1874,208 @@ input[type="range"]{
     to { transform: rotate(360deg); }
   }
 
+
+
+/* === DP HORROR: плавающее окно карты === */
+#dpGameMapPanel{
+  position:fixed;
+  left:auto;
+  right:16px;
+  top:96px;
+  bottom:auto;
+  width:360px;
+  height:auto !important;
+  min-width:240px;
+  min-height:0;
+  max-width:min(680px, calc(100vw - 24px));
+  max-height:none;
+  resize:none;
+  z-index:135;
+  display:none;
+  user-select:none;
+  overflow:hidden;
+}
+#dpGameMapPanel.dp-map-visible{ display:flex; }
+#dpGameMapPanel .chat-shell{ height:auto; }
+#dpGameMapPanel.collapsed{
+  height:auto !important;
+  min-height:0 !important;
+}
+#dpGameMapPanel.collapsed .dp-map-body,
+#dpGameMapPanel.collapsed .dp-map-resize-handle{
+  display:none !important;
+}
+#dpGameMapPanel .chat-header{
+  flex:0 0 auto;
+}
+#dpGameMapPanel .dp-map-body{
+  position:relative;
+  padding:12px;
+  background:rgba(0,0,0,.18);
+}
+#dpGameMapViewport{
+  --dp-map-aspect:1;
+  position:relative;
+  width:100%;
+  aspect-ratio:var(--dp-map-aspect);
+  overflow:hidden;
+  border-radius:12px;
+  cursor:crosshair;
+  touch-action:none;
+  background:#07111c;
+  border:1px solid rgba(186,213,255,.09);
+  box-shadow:
+    0 18px 40px rgba(0,0,0,.62),
+    0 0 0 1px rgba(255,255,255,.025) inset;
+}
+#dpGameMapFloor{
+  position:absolute;
+  inset:0;
+  overflow:hidden;
+  background:
+    radial-gradient(ellipse at 50% 45%, rgba(35,46,63,.26), rgba(6,11,18,0) 58%),
+    linear-gradient(180deg, rgba(9,17,29,.96), rgba(7,13,22,.98));
+  border:6px solid rgba(110,127,150,.58);
+  border-radius:8px;
+  box-shadow:
+    inset 0 0 82px rgba(0,0,0,.84),
+    inset 0 0 22px rgba(0,0,0,.56),
+    inset 0 0 0 1px rgba(215,235,255,.05);
+}
+#dpGameMapFloor::after{
+  content:"";
+  position:absolute;
+  inset:0;
+  pointer-events:none;
+  background:
+    linear-gradient(90deg, rgba(0,0,0,.22), rgba(0,0,0,0) 10%, rgba(0,0,0,0) 90%, rgba(0,0,0,.26)),
+    linear-gradient(180deg, rgba(0,0,0,.28), rgba(0,0,0,0) 10%, rgba(0,0,0,0) 90%, rgba(0,0,0,.34));
+  mix-blend-mode:multiply;
+}
+#dpGameMapFloor .dp-map-object{
+  position:absolute;
+  transform:translate(-50%,-50%);
+  min-width:5px;
+  min-height:4px;
+  border-radius:4px;
+  pointer-events:auto;
+  cursor:default;
+  background:linear-gradient(180deg, rgba(120,132,149,.86), rgba(86,96,112,.92));
+  border:1px solid rgba(214,229,255,.14);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.09),
+    0 12px 18px rgba(0,0,0,.44),
+    0 0 10px rgba(var(--acc-r),var(--acc-g),var(--acc-b),.12);
+}
+#dpGameMapFloor .dp-map-object[data-type="danger"],
+#dpGameMapFloor .dp-map-object[data-type="door"],
+#dpGameMapFloor .dp-map-object[data-type="window"],
+#dpGameMapFloor .dp-map-object[data-type="device"]{
+  background:linear-gradient(180deg, rgba(120,132,149,.86), rgba(86,96,112,.92));
+}
+#dpGameMapFloor .dp-map-player{
+  --pc:#ffffff;
+  position:absolute;
+  width:20px;
+  height:27px;
+  transform:translate(-50%,-72%);
+  color:var(--pc);
+  pointer-events:none;
+  z-index:5;
+  filter:
+    drop-shadow(0 0 4px color-mix(in srgb, var(--pc) 78%, transparent))
+    drop-shadow(0 0 8px color-mix(in srgb, var(--pc) 40%, transparent));
+  transition:left .12s linear, top .12s linear, opacity .18s ease;
+}
+#dpGameMapFloor .dp-map-player.offline{ opacity:.35; }
+#dpGameMapFloor .dp-map-player::before{
+  content:"";
+  position:absolute;
+  left:50%;
+  top:0;
+  width:7px;
+  height:7px;
+  transform:translateX(-50%);
+  border:2px solid currentColor;
+  border-radius:50%;
+  background:rgba(6,10,17,.72);
+  box-shadow:0 0 7px color-mix(in srgb, var(--pc) 55%, transparent);
+}
+#dpGameMapFloor .dp-map-player::after{
+  content:"";
+  position:absolute;
+  left:50%;
+  top:9px;
+  width:14px;
+  height:17px;
+  transform:translateX(-50%);
+  border:2px solid currentColor;
+  border-radius:8px 8px 6px 6px;
+  background:rgba(6,10,17,.42);
+  box-shadow:
+    inset 0 0 7px color-mix(in srgb, var(--pc) 18%, transparent),
+    0 0 8px color-mix(in srgb, var(--pc) 30%, transparent);
+}
+#dpGameMapFloor .dp-map-entity{
+  position:absolute;
+  transform:translate(-50%,-50%);
+  font-size:22px;
+  line-height:1;
+  pointer-events:none;
+  z-index:4;
+  opacity:.85;
+  filter:drop-shadow(0 0 8px currentColor);
+  animation:dpMapEntityGlitch .25s infinite alternate;
+}
+@keyframes dpMapEntityGlitch{
+  from{ transform:translate(-53%,-48%) skewX(-4deg); }
+  to{ transform:translate(-47%,-52%) skewX(4deg); }
+}
+#dpGameMapPanel .dp-map-resize-handle{
+  position:absolute;
+  right:2px;
+  bottom:2px;
+  width:22px;
+  height:22px;
+  z-index:4;
+  cursor:nwse-resize;
+  touch-action:none;
+}
+#dpGameMapPanel .dp-map-resize-handle::before{
+  content:"";
+  position:absolute;
+  right:4px;
+  bottom:4px;
+  width:10px;
+  height:10px;
+  border-right:2px solid rgba(var(--acc-r),var(--acc-g),var(--acc-b),.72);
+  border-bottom:2px solid rgba(var(--acc-r),var(--acc-g),var(--acc-b),.72);
+  opacity:.85;
+}
+#dpGameMapPanel .dp-map-live-dot{
+  width:7px;
+  height:7px;
+  border-radius:50%;
+  background:rgba(var(--acc-r),var(--acc-g),var(--acc-b),.92);
+  box-shadow:0 0 9px rgba(var(--acc-r),var(--acc-g),var(--acc-b),.75);
+}
+body.game-host-mode #dpGameMapPanel,
+body.native-bridge-mode #dpGameMapPanel,
+html.overlay-live #dpGameMapPanel,
+html.overlay-mode #dpGameMapPanel,
+html.component-mode #dpGameMapPanel{
+  display:none !important;
+}
+@media (max-width:700px){
+  #dpGameMapPanel{
+    top:auto;
+    right:8px;
+    bottom:72px;
+    width:min(320px, calc(100vw - 16px));
+    max-width:calc(100vw - 16px);
+  }
+}
+
 </style>
 </head>
 <body>
@@ -1988,6 +2190,29 @@ input[type="range"]{
       <button class="btn small" id="chatSend">Отправить</button>
     </div>
     </div>
+  </aside>
+
+
+  <!-- DP HORROR: плавающее окно карты -->
+  <aside class="chat-panel" id="dpGameMapPanel" aria-hidden="true">
+    <div class="chat-bg"></div>
+    <div class="chat-shell">
+      <div class="chat-header" id="dpGameMapDragHandle">
+        <div class="chat-header-left">
+          <span class="dp-map-live-dot" aria-hidden="true"></span>
+          <span>Карта</span>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button class="btn ghost small" id="dpGameMapToggle" type="button">Свернуть</button>
+        </div>
+      </div>
+      <div class="dp-map-body" id="dpGameMapBody">
+        <div id="dpGameMapViewport" aria-label="Карта текущей комнаты">
+          <div id="dpGameMapFloor"></div>
+        </div>
+      </div>
+    </div>
+    <div class="dp-map-resize-handle" id="dpGameMapResizeHandle" aria-hidden="true"></div>
   </aside>
 
   <main class="stage" id="contentWrap">
@@ -2255,6 +2480,8 @@ input[type="range"]{
 <script type="module">
   window.isOverlayHotkeys = new URLSearchParams(location.search).get('overlay')==='1';
   window.isPartyMode = new URLSearchParams(location.search).get('party')==='1';
+  // DP Horror: в этом режиме вместо VDO.Ninja в iframe запускается Godot Web build.
+  window.isGameHost = new URLSearchParams(location.search).get('gamehost')==='1';
   // Для CSS-правил, которые должны срабатывать в обычном браузере при ?overlay=1
   // (ghost_overlay.py отдельно ставит html.overlay-live — это другой кейс)
   if (window.isOverlayHotkeys) document.documentElement.classList.add('overlay-mode');
@@ -2811,6 +3038,205 @@ input[type="range"]{
   const contextReply = $('#contextReply');
   const contextEdit = $('#contextEdit');
   const contextDelete = $('#contextDelete');
+
+
+  // === DP HORROR: окно карты (перенос / сворачивание / resize с сохранением пропорций) ===
+  const dpGameMapPanel = $('#dpGameMapPanel');
+  const dpGameMapDragHandle = $('#dpGameMapDragHandle');
+  const dpGameMapToggle = $('#dpGameMapToggle');
+  const dpGameMapViewport = $('#dpGameMapViewport');
+  const dpGameMapResizeHandle = $('#dpGameMapResizeHandle');
+
+  (function setupDpGameMapWindow(){
+    if (!dpGameMapPanel || !dpGameMapDragHandle || !dpGameMapViewport) return;
+
+    const POS_KEY = 'cc_dp_map_pos_v1';
+    const WIDTH_KEY = 'cc_dp_map_width_v1';
+    const COLLAPSED_KEY = 'cc_dp_map_collapsed_v1';
+    const MIN_W = 240;
+    const MAX_W = 680;
+    let collapsed = window.ccStorage.getItem(COLLAPSED_KEY) === '1';
+
+    const clampPanel = () => {
+      if (dpGameMapPanel.classList.contains('hidden')) return;
+      const margin = 6;
+      const rect = dpGameMapPanel.getBoundingClientRect();
+      let left = Number.parseFloat(dpGameMapPanel.style.left);
+      let top = Number.parseFloat(dpGameMapPanel.style.top);
+
+      if (!Number.isFinite(left)) left = rect.left;
+      if (!Number.isFinite(top)) top = rect.top;
+
+      const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+      const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+      left = Math.max(margin, Math.min(maxLeft, left));
+      top = Math.max(margin, Math.min(maxTop, top));
+
+      dpGameMapPanel.style.right = 'auto';
+      dpGameMapPanel.style.bottom = 'auto';
+      dpGameMapPanel.style.left = Math.round(left) + 'px';
+      dpGameMapPanel.style.top = Math.round(top) + 'px';
+    };
+
+    const savePosition = () => {
+      const rect = dpGameMapPanel.getBoundingClientRect();
+      window.ccStorage.setItem(POS_KEY, JSON.stringify({
+        left: Math.round(rect.left),
+        top: Math.round(rect.top)
+      }));
+    };
+
+    const applyCollapsed = (on, persist = true) => {
+      collapsed = !!on;
+      dpGameMapPanel.classList.toggle('collapsed', collapsed);
+      if (dpGameMapToggle) {
+        dpGameMapToggle.textContent = collapsed ? 'Развернуть' : 'Свернуть';
+      }
+      if (persist) {
+        window.ccStorage.setItem(COLLAPSED_KEY, collapsed ? '1' : '0');
+      }
+      requestAnimationFrame(clampPanel);
+    };
+
+    const savedWidth = Number.parseFloat(window.ccStorage.getItem(WIDTH_KEY));
+    if (Number.isFinite(savedWidth)) {
+      dpGameMapPanel.style.width =
+        Math.max(MIN_W, Math.min(MAX_W, savedWidth)) + 'px';
+    }
+
+    try {
+      const savedPos = JSON.parse(window.ccStorage.getItem(POS_KEY) || 'null');
+      if (savedPos && Number.isFinite(savedPos.left) && Number.isFinite(savedPos.top)) {
+        dpGameMapPanel.style.right = 'auto';
+        dpGameMapPanel.style.bottom = 'auto';
+        dpGameMapPanel.style.left = savedPos.left + 'px';
+        dpGameMapPanel.style.top = savedPos.top + 'px';
+      }
+    } catch {}
+
+    applyCollapsed(collapsed, false);
+
+    if (dpGameMapToggle) {
+      dpGameMapToggle.addEventListener('pointerdown', e => e.stopPropagation());
+      dpGameMapToggle.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        applyCollapsed(!collapsed);
+      });
+    }
+
+    let dragging = false;
+    let dragStartX = 0;
+    let dragStartY = 0;
+    let dragBaseLeft = 0;
+    let dragBaseTop = 0;
+
+    dpGameMapDragHandle.addEventListener('pointerdown', e => {
+      if (e.button !== undefined && e.button !== 0) return;
+      if (e.target.closest('button')) return;
+      e.preventDefault();
+      const rect = dpGameMapPanel.getBoundingClientRect();
+      dragging = true;
+      dragStartX = e.clientX;
+      dragStartY = e.clientY;
+      dragBaseLeft = rect.left;
+      dragBaseTop = rect.top;
+      dpGameMapPanel.style.right = 'auto';
+      dpGameMapPanel.style.bottom = 'auto';
+      dpGameMapDragHandle.setPointerCapture?.(e.pointerId);
+    });
+
+    dpGameMapDragHandle.addEventListener('pointermove', e => {
+      if (!dragging) return;
+      e.preventDefault();
+      const margin = 6;
+      const rect = dpGameMapPanel.getBoundingClientRect();
+      const maxLeft = Math.max(margin, window.innerWidth - rect.width - margin);
+      const maxTop = Math.max(margin, window.innerHeight - rect.height - margin);
+      const left = Math.max(margin, Math.min(maxLeft, dragBaseLeft + e.clientX - dragStartX));
+      const top = Math.max(margin, Math.min(maxTop, dragBaseTop + e.clientY - dragStartY));
+      dpGameMapPanel.style.left = Math.round(left) + 'px';
+      dpGameMapPanel.style.top = Math.round(top) + 'px';
+    });
+
+    const stopDrag = e => {
+      if (!dragging) return;
+      dragging = false;
+      try { dpGameMapDragHandle.releasePointerCapture?.(e.pointerId); } catch {}
+      savePosition();
+    };
+    dpGameMapDragHandle.addEventListener('pointerup', stopDrag);
+    dpGameMapDragHandle.addEventListener('pointercancel', stopDrag);
+
+    if (dpGameMapResizeHandle) {
+      let resizing = false;
+      let resizeStartX = 0;
+      let resizeStartY = 0;
+      let resizeStartW = 0;
+
+      dpGameMapResizeHandle.addEventListener('pointerdown', e => {
+        if (collapsed) return;
+        if (e.button !== undefined && e.button !== 0) return;
+        e.preventDefault();
+        e.stopPropagation();
+        resizing = true;
+        resizeStartX = e.clientX;
+        resizeStartY = e.clientY;
+        resizeStartW = dpGameMapPanel.getBoundingClientRect().width;
+        dpGameMapResizeHandle.setPointerCapture?.(e.pointerId);
+      });
+
+      dpGameMapResizeHandle.addEventListener('pointermove', e => {
+        if (!resizing) return;
+        e.preventDefault();
+        const dx = e.clientX - resizeStartX;
+        const dy = e.clientY - resizeStartY;
+        const aspect = Math.max(.25, Number(
+          getComputedStyle(dpGameMapViewport)
+            .getPropertyValue('--dp-map-aspect')
+        ) || 1);
+        const delta = Math.abs(dx) >= Math.abs(dy) ? dx : dy * aspect;
+        const screenMax = Math.max(MIN_W, window.innerWidth - 18);
+        const width = Math.max(MIN_W, Math.min(MAX_W, screenMax, resizeStartW + delta));
+        dpGameMapPanel.style.width = Math.round(width) + 'px';
+        clampPanel();
+      });
+
+      const stopResize = e => {
+        if (!resizing) return;
+        resizing = false;
+        try { dpGameMapResizeHandle.releasePointerCapture?.(e.pointerId); } catch {}
+        const width = Math.round(dpGameMapPanel.getBoundingClientRect().width);
+        window.ccStorage.setItem(WIDTH_KEY, String(width));
+        savePosition();
+      };
+      dpGameMapResizeHandle.addEventListener('pointerup', stopResize);
+      dpGameMapResizeHandle.addEventListener('pointercancel', stopResize);
+    }
+
+    window.addEventListener('resize', () => requestAnimationFrame(clampPanel));
+
+    window.__dpMapWindow = {
+      show(on = true){
+        dpGameMapPanel.classList.toggle('dp-map-visible', !!on);
+        dpGameMapPanel.setAttribute('aria-hidden', on ? 'false' : 'true');
+        if (on) requestAnimationFrame(clampPanel);
+      },
+      setAspect(value){
+        const aspect = Math.max(.25, Math.min(4, Number(value) || 1));
+        dpGameMapViewport.style.setProperty('--dp-map-aspect', String(aspect));
+        requestAnimationFrame(clampPanel);
+      },
+      isCollapsed(){ return collapsed; },
+      setCollapsed(on){ applyCollapsed(on); },
+      clamp: clampPanel
+    };
+
+    // Пока игра не активна, карту вообще не показываем.
+    window.__dpMapWindow.show(false);
+  })();
+
+
 
   // === CHAT: dynamic font-size by WIDTH (resize:both, width-only scaling) ===
   // Требование: при растягивании чата по ширине текст внутри растёт/уменьшается; высота влияет только на видимость.
@@ -3615,6 +4041,8 @@ state.presence.clear();
   });
 // === CHAT — стабильная подписка по серверному времени ===
 const msgs = [];               // единый массив сообщений
+// DP Horror: game_adapter.js читает историю чата для внутриигрового ноутбука.
+window.__dpGetRealChat = () => msgs.slice(-100).map(m => ({ ...m }));
 let lastReadT = state.lastReadTs || 0; // для бейджика
 
 const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со старым полем
@@ -4082,6 +4510,14 @@ window.cleanupOldReactions = cleanupOldReactions;
   function initVideo(){
     if (isOverlayMode()) {
       $player.classList.add('hidden');
+      return;
+    }
+
+    // DP Horror: хост запускает Web-экспорт Godot прямо в том же iframe.
+    if (window.isGameHost) {
+      document.body.classList.add('game-host-mode');
+      $player.src = 'about:blank';
+      console.log('[DP game] Godot iframe ждёт ненулевой размер и готовый bridge');
       return;
     }
     
@@ -10214,8 +10650,12 @@ window.spawnEmoji = spawnEmoji;
     return Math.max(6, d*0.01);
   }
   function computeClusters(){
-    const all = [...state.points.values()];
-    if (!(state.mode === 'overlay' || state.showClustersOnSite)) return [];
+    // DP Horror: в игровом режиме рисуем только свежие точки внутри карты.
+    // На gamehost 2D-аватары полностью скрыты: там их заменяют 3D-человечки Godot.
+    const all = [...state.points.values()].filter(p =>
+      !window.__dpShouldRenderPoint || window.__dpShouldRenderPoint(p)
+    );
+    if (!(state.mode === 'overlay' || state.showClustersOnSite || window.__dpForceShowPoints?.())) return [];
     
     // Показываем всех (убрали фильтр оффлайн)
     const currentUid = (auth.currentUser&&auth.currentUser.uid)||state.id;
@@ -11479,7 +11919,13 @@ ctx.restore();
     if (state.tool==='vote'){
       e.preventDefault();
       const uid = __ccCanonicalUid();
-      const pos=normFromEvent(e);
+      const rawPos = normFromEvent(e);
+      // DP Horror V2: во время игры клик принимается только внутри карты.
+      // Аватар остаётся ровно в выбранной точке, без притягивания к пяти магнитам.
+      const pos = window.__dpTransformVote
+        ? window.__dpTransformVote(rawPos)
+        : (window.__dpApplyGameMagnet ? window.__dpApplyGameMagnet(rawPos) : rawPos);
+      if (!pos) return;
 
       // === ДУЭЛЬ: проверяем клик по чужой морде (копим триггер инициации) ===
       // Это ДО записи своего голоса — чтобы даже если юзер "клацает
@@ -11498,7 +11944,19 @@ ctx.restore();
       } catch(err){ console.warn('[duel] click detect err', err); }
 
       const isHostSelf = __ccIsHostName(state.name);
-      const p={ id:uid, name: __ccCanonicalName(getDisplayName(state))||'Чужой', x:pos.x, y:pos.y, ts:Date.now(), lastActive: Date.now(), color:isHostSelf ? HOST_IDENTITY.color : state.color, emoji: isHostSelf ? HOST_IDENTITY.emoji : (state.emoji || '') };
+      const p={
+        id:uid,
+        name: __ccCanonicalName(getDisplayName(state))||'Чужой',
+        x:pos.x,
+        y:pos.y,
+        mapX:Number.isFinite(Number(pos.mapX)) ? Number(pos.mapX) : null,
+        mapY:Number.isFinite(Number(pos.mapY)) ? Number(pos.mapY) : null,
+        targetId:pos.targetId||null,
+        ts:Date.now(),
+        lastActive:Date.now(),
+        color:isHostSelf ? HOST_IDENTITY.color : state.color,
+        emoji:isHostSelf ? HOST_IDENTITY.emoji : (state.emoji || '')
+      };
       state.points.set(uid, p);
       try { await set(ref(db, `${basePath}/points/${uid}`), p); } catch {}
       return;
@@ -14839,23 +15297,12 @@ gateColor.addEventListener('input', syncColor);
 <!-- 🔥 МОДУЛЬ ПАРТИ-РЕЖИМА (костёр-эквалайзер) -->
 <script type="module">
   // Стартуем только если ?party=1
-  if (!window.isPartyMode){
+  const partyModeHere = new URLSearchParams(location.search).get('party') === '1';
+  if (!partyModeHere){
     // ничего не делаем, оставляем обычный режим
   } else {
-    // Firebase (читаем status из той же базы)
-    const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js");
-    const { getDatabase, ref, onValue } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js");
-    const firebaseConfig = {
-      apiKey: "AIzaSyAcrLDWHWA_diaVHQwtFUeWqq3WAzMYBnc",
-      authDomain: "dpgames-66d73.firebaseapp.com",
-      databaseURL: "https://firebase-proxy.up.railway.app?ns=dpgames-66d73-default-rtdb",
-      projectId: "dpgames-66d73",
-      storageBucket: "dpgames-66d73.firebasestorage.app",
-    };
-    // Используем отдельный app name чтобы не конфликтовать с основным
-    const app = initializeApp(firebaseConfig, 'party-mode');
-    const db = getDatabase(app);
-    const musicPath = 'sessions/DepressivePasties/music';
+    window.isPartyMode = true;
+    document.documentElement.classList.add('party-mode');
 
     const statusEl = document.getElementById('party-status');
     const songEl = document.getElementById('party-song');
@@ -14869,7 +15316,7 @@ gateColor.addEventListener('input', syncColor);
 
     // === Размеры canvas ===
     function resizeCanvas(){
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       canvas.width = window.innerWidth * dpr;
       canvas.height = window.innerHeight * dpr;
       canvas.style.width = window.innerWidth + 'px';
@@ -14940,17 +15387,37 @@ gateColor.addEventListener('input', syncColor);
     }
 
     // === Слушаем status трека ===
-    onValue(ref(db, `${musicPath}/status`), (snap) => {
-      const s = snap.val();
-      if (!s){ nowPlaying.style.display = 'none'; return; }
-      nowPlaying.style.display = 'flex';
-      songEl.textContent = s.song || '—';
-      artistEl.textContent = s.artist || '';
-      if (s.cover && coverEl.src !== s.cover){
-        coverEl.src = s.cover;
-        _extractDominantColor(s.cover);
+    async function initPartyStatus(){
+      try {
+        const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js");
+        const { getDatabase, ref, onValue } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js");
+        const firebaseConfig = {
+          apiKey: "AIzaSyAcrLDWHWA_diaVHQwtFUeWqq3WAzMYBnc",
+          authDomain: "dpgames-66d73.firebaseapp.com",
+          databaseURL: "https://firebase-proxy.up.railway.app?ns=dpgames-66d73-default-rtdb",
+          projectId: "dpgames-66d73",
+          storageBucket: "dpgames-66d73.firebasestorage.app",
+        };
+        const app = initializeApp(firebaseConfig, 'party-mode');
+        const db = getDatabase(app);
+        const musicPath = 'sessions/DepressivePasties/music';
+
+        onValue(ref(db, `${musicPath}/status`), (snap) => {
+          const s = snap.val();
+          if (!s){ nowPlaying.style.display = 'none'; return; }
+          nowPlaying.style.display = 'flex';
+          songEl.textContent = s.song || '—';
+          artistEl.textContent = s.artist || '';
+          if (s.cover && coverEl.src !== s.cover){
+            coverEl.src = s.cover;
+            _extractDominantColor(s.cover);
+          }
+        });
+      } catch(e){
+        console.warn('party status fail', e);
       }
-    });
+    }
+    initPartyStatus();
 
     // === Audio Analyser через getDisplayMedia ===
     let analyser = null;
@@ -14981,7 +15448,7 @@ gateColor.addEventListener('input', syncColor);
         const source = audioCtx.createMediaStreamSource(new MediaStream(audioTracks));
         analyser = audioCtx.createAnalyser();
         analyser.fftSize = 1024;          // 512 полос — больше разрешение в басах
-        analyser.smoothingTimeConstant = 0.5; // меньше = резче реакция
+        analyser.smoothingTimeConstant = 0.28; // меньше = резче реакция
         source.connect(analyser);
         freqData = new Uint8Array(analyser.frequencyBinCount);
 
@@ -15011,10 +15478,11 @@ gateColor.addEventListener('input', syncColor);
     function readAudioLevels(){
       if (!analyser){
         const t = performance.now() / 1000;
-        smoothedLevel = 0.4 + 0.2 * Math.sin(t * 2.3);
-        smoothedBass = 0.3 + 0.3 * Math.sin(t * 1.7);
-        smoothedMid = 0.3 + 0.2 * Math.sin(t * 3.1);
-        smoothedHigh = 0.3 + 0.2 * Math.sin(t * 5.0);
+        smoothedLevel = 0.46 + 0.24 * Math.sin(t * 4.4);
+        smoothedBass = 0.38 + 0.34 * Math.sin(t * 3.6);
+        smoothedMid = 0.34 + 0.24 * Math.sin(t * 5.8);
+        smoothedHigh = 0.32 + 0.22 * Math.sin(t * 8.2);
+        beatPulse = Math.max(beatPulse * 0.78, Math.max(0, Math.sin(t * 3.8)) * 0.24);
         return;
       }
       analyser.getByteFrequencyData(freqData);
@@ -15060,7 +15528,7 @@ gateColor.addEventListener('input', syncColor);
           beatCooldownT = now + 140;
         }
       }
-      beatPulse *= 0.85;
+      beatPulse *= 0.78;
 
       // === Детектор резких скачков (для искр) ===
       // Когда общая громкость прыгает - летят искры в стороны.
@@ -15073,10 +15541,10 @@ gateColor.addEventListener('input', syncColor);
 
     // === Частицы пламени ===
     const particles = [];
-    const MAX_PARTICLES = 500;
+    const MAX_PARTICLES = 420;
     function spawnParticle(){
           const W = canvas.width, H = canvas.height;
-          const dpr = window.devicePixelRatio || 1;
+          const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
 
           // 1. ВЫСОТА ОТ ПОЛА: 0.25 означает поднять на 25% от высоты экрана вверх. 
           // Подгоняй эту цифру под свои угли (например, 0.3 или 0.15)
@@ -15086,17 +15554,17 @@ gateColor.addEventListener('input', syncColor);
           const spread = W * 0.45 * (1 + smoothedLevel * 0.4 + beatPulse * 0.7);
           const cx = W / 2 + (Math.random() - 0.5) * spread;
 
-          const power = 0.7 + smoothedBass * 1.4 + beatPulse * 1.2;
+          const power = 1.05 + smoothedBass * 1.7 + beatPulse * 1.4;
 
           // 3. ВЫСОТА ЯЗЫКОВ ПЛАМЕНИ: увеличили стартовую скорость vy (было -(2 + Math.random() * 3))
-          const vy = -(4 + Math.random() * 4) * power * dpr;
-          const vx = (Math.random() - 0.5) * (2.0 + beatPulse * 2) * dpr;
+          const vy = -(6.8 + Math.random() * 5.8) * power * dpr;
+          const vx = (Math.random() - 0.5) * (3.0 + beatPulse * 3.5) * dpr;
 
           // 4. РАЗМЕР ЧАСТИЦ: сделали сами куски огня крупнее (было 18 + Math.random() * 22)
-          const size = (35 + Math.random() * 35) * dpr * (0.7 + smoothedLevel * 0.6 + beatPulse * 0.5);
+          const size = (24 + Math.random() * 30) * dpr * (0.75 + smoothedLevel * 0.55 + beatPulse * 0.45);
           
-          // Чуть увеличили время жизни, чтобы огонь успевал долетать выше
-          const life = 80 + Math.random() * 80;
+          // Короче жизнь + выше скорость: огонь едет бодрее, но не забивает рендер.
+          const life = 42 + Math.random() * 58;
           
           particles.push({
             // Применяем отступ от пола (H - floorOffset)
@@ -15109,18 +15577,15 @@ gateColor.addEventListener('input', syncColor);
 
     function updateAndDrawParticles(){
       const W = canvas.width, H = canvas.height;
-      const dpr = window.devicePixelRatio || 1;
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
       
-      // Лёгкое затухание предыдущего кадра — создаёт "хвосты"
-      //ctx.fillStyle = 'rgba(0,0,0,0.18)';
-      ctx.fillRect(0, 0, W, H);
       ctx.clearRect(0, 0, W, H);
 
       // Аддитивный режим для свечения
       ctx.globalCompositeOperation = 'lighter';
 
       // Кол-во новых частиц зависит от уровня + резкий всплеск при бите
-      const spawnCount = Math.round(2 + smoothedLevel * 8 + smoothedBass * 6 + beatPulse * 23);
+      const spawnCount = Math.round(2 + smoothedLevel * 7 + smoothedBass * 6 + beatPulse * 18);
       for (let i = 0; i < spawnCount && particles.length < MAX_PARTICLES; i++){
         spawnParticle();
       }
@@ -15131,10 +15596,10 @@ gateColor.addEventListener('input', syncColor);
 
       for (let i = particles.length - 1; i >= 0; i--){
         const p = particles[i];
-        p.x += p.vx + Math.sin((p.life + p.seed) * 0.12) * 0.5 * dpr;
+        p.x += p.vx + Math.sin((p.life + p.seed) * 0.22) * 0.95 * dpr;
         p.y += p.vy;
-        p.vy *= 0.985; // замедление
-        p.vy -= 0.05 * dpr; // лёгкая "горячая" тяга вверх
+        p.vy *= 0.982; // замедление
+        p.vy -= 0.11 * dpr; // лёгкая "горячая" тяга вверх
         p.life--;
         if (p.life <= 0 || p.y < -50){
           particles.splice(i, 1);
@@ -15184,7 +15649,7 @@ gateColor.addEventListener('input', syncColor);
 
       // Мини-индикатор уровня (только если аудио подключено)
       if (analyser){
-        const dpr = window.devicePixelRatio || 1;
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
         const ix = 16 * dpr, iy = 70 * dpr;
         const iw = 80 * dpr, ih = 6 * dpr;
         // Бас
@@ -15211,6 +15676,9 @@ gateColor.addEventListener('input', syncColor);
     console.log('🔥 Партирежим запущен');
   }
 </script>
+
+<!-- DP Horror: мост Firebase/site ↔ Godot Web. -->
+<script type="module" src="./game_adapter.js?v=role-story-hard-checkpoint-exit-sync-v16"></script>
 
 </body>
 </html>
