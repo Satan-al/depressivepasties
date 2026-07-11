@@ -5,13 +5,14 @@ import {
 
 const SESSION_KEY = "DepressivePasties";
 const GAME_VERSION = "game_v1";
-const ADAPTER_VERSION = "native-ws-v2.17-traitor-vote-intro-finale";
+const ADAPTER_VERSION = "native-ws-v2.18-personal-tasks-blame-packages";
 const BASE_PATH = `sessions/${SESSION_KEY}/${GAME_VERSION}`;
 const POINTS_PATH = `sessions/${SESSION_KEY}/points`;
 const GAME_POINTS_PATH = `${BASE_PATH}/game_points`;
 const ENTRANCE_PATH = `${BASE_PATH}/entrance`;
 const BRIDGE_LIVE_PATH = `${BASE_PATH}/bridge_live`;
 const TRAITOR_VOTE_PATH = `${BASE_PATH}/traitor_vote`;
+const PERSONAL_TASKS_PATH = `${BASE_PATH}/personal_tasks`;
 const params = new URLSearchParams(location.search);
 const IS_GAME_HOST = params.get("gamehost") === "1";
 const IS_NATIVE_BRIDGE = params.get("nativebridge") === "1";
@@ -215,6 +216,9 @@ let state = null;
 let gamePublic = { active: false, inputMode: "map", mapRect: null, map: null };
 let traitorVoteState = {};
 let traitorVoteListenerBound = false;
+let personalTaskState = {};
+let personalTaskListenerBound = false;
+let personalTaskTimer = null;
 let dismissedTraitorRevealAt = 0;
 const gameMessages = new Map();
 const gameEntities = new Map();
@@ -274,6 +278,9 @@ const CRITICAL_GAME_EVENT_TYPES = new Set([
   "traitor_vote_reveal",
   "traitor_vote_intro_finished",
   "traitor_vote_reset",
+  "personal_task_set",
+  "personal_task_clear",
+  "personal_task_reset",
   "end_game"
 ]);
 
@@ -666,6 +673,7 @@ function buildSnapshot() {
     entities: [...gameEntities.values()],
     entrance: sortedEntranceRequests(),
     traitorVote: traitorVoteState || {},
+    personalTasks: personalTaskState || {},
     chat
   };
 }
@@ -973,6 +981,38 @@ function injectStyles() {
       #dp-traitor-vote .dp-tv-choices { grid-template-columns:1fr; }
       #dp-traitor-vote h2 { font-size:28px; }
     }
+    #dp-personal-task {
+      position:fixed; right:18px; bottom:18px; z-index:360000;
+      width:min(470px,calc(100vw - 36px)); display:none; color:#fff;
+      font-family:'Open Sans',system-ui,sans-serif; pointer-events:auto;
+    }
+    #dp-personal-task.show { display:block; }
+    #dp-personal-task .dp-pt-card {
+      padding:18px; border-radius:18px; background:rgba(7,12,20,.97);
+      border:1px solid rgba(22,199,183,.55); box-shadow:0 22px 60px rgba(0,0,0,.72),0 0 34px rgba(22,199,183,.16);
+    }
+    #dp-personal-task .dp-pt-title { font-size:14px; font-weight:950; letter-spacing:.08em; color:#16c7b7; text-transform:uppercase; }
+    #dp-personal-task .dp-pt-question { margin-top:8px; font-size:21px; line-height:1.35; font-weight:850; }
+    #dp-personal-task .dp-pt-meta { margin-top:8px; color:rgba(255,255,255,.66); font-size:13px; }
+    #dp-personal-task .dp-pt-options { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:14px; }
+    #dp-personal-task button { padding:11px 12px; border-radius:11px; border:1px solid rgba(255,255,255,.18); background:rgba(255,255,255,.07); color:#fff; cursor:pointer; font-weight:850; }
+    #dp-personal-task button:hover:not(:disabled) { border-color:#16c7b7; background:rgba(22,199,183,.13); }
+    #dp-personal-task button:disabled { opacity:.55; cursor:default; }
+    #dp-personal-task .dp-pt-answer-row { display:flex; gap:8px; margin-top:14px; }
+    #dp-personal-task input { flex:1; min-width:0; padding:11px 12px; border-radius:10px; border:1px solid rgba(255,255,255,.2); background:#0b1420; color:#fff; font-size:16px; }
+    #dp-personal-task .dp-pt-manifest { margin-top:12px; padding:12px; border-radius:12px; background:rgba(255,255,255,.055); line-height:1.55; }
+    #dp-private-map-warning {
+      position:absolute; width:34px; height:34px; border-radius:50%; z-index:50;
+      transform:translate(-50%,-50%); pointer-events:none; display:none;
+      border:3px solid #ff315f; background:rgba(255,49,95,.18);
+      box-shadow:0 0 0 8px rgba(255,49,95,.08),0 0 26px rgba(255,49,95,.9);
+      animation:dpPrivateWarningPulse .55s infinite alternate;
+    }
+    #dp-private-map-warning.show { display:block; }
+    @keyframes dpPrivateWarningPulse { from{transform:translate(-50%,-50%) scale(.82)} to{transform:translate(-50%,-50%) scale(1.18)} }
+    body.native-bridge-mode #dp-personal-task,
+    body.game-host-mode #dp-personal-task { display:none !important; }
+    @media (max-width:620px) { #dp-personal-task .dp-pt-options { grid-template-columns:1fr; } }
   `;
   document.head.appendChild(style);
 }
@@ -1014,6 +1054,21 @@ function ensureUi() {
     });
     document.body.appendChild(traitorLayer);
   }
+
+  let personalLayer = document.getElementById("dp-personal-task");
+  if (!personalLayer) {
+    personalLayer = document.createElement("div");
+    personalLayer.id = "dp-personal-task";
+    personalLayer.innerHTML = `<div class="dp-pt-card"></div>`;
+    document.body.appendChild(personalLayer);
+  }
+  let warningMarker = document.getElementById("dp-private-map-warning");
+  if (!warningMarker) {
+    warningMarker = document.createElement("div");
+    warningMarker.id = "dp-private-map-warning";
+  }
+  const mapFloor = document.getElementById("dpGameMapFloor");
+  if (mapFloor && warningMarker.parentElement !== mapFloor) mapFloor.appendChild(warningMarker);
 
   let entryLayer = document.getElementById("dp-game-entry");
   if (!entryLayer) {
@@ -2113,6 +2168,16 @@ function bindFirebase() {
     });
   }
 
+  if (!personalTaskListenerBound) {
+    personalTaskListenerBound = true;
+    onValue(ref(db, PERSONAL_TASKS_PATH), snap => {
+      const value = snap.val();
+      personalTaskState = value && typeof value === "object" ? value : {};
+      renderPersonalTask();
+      scheduleSnapshotToGame();
+    });
+  }
+
   // A tiny dedicated controller lease. Unlike the large public object it is
   // rewritten atomically every second, so a late map-capture/public update
   // cannot accidentally make the ordinary site think the game is gone.
@@ -2241,6 +2306,113 @@ function bindFirebase() {
     renderMap();
     scheduleSnapshotToGame();
   });
+}
+
+function myPersonalTask() {
+  const uid = window.__ccCanonicalUid?.() || auth?.currentUser?.uid || "";
+  if (!uid) return null;
+  const task = personalTaskState?.[uid];
+  return task && typeof task === "object" ? task : null;
+}
+
+async function submitPersonalTaskAnswer(task, answer = {}) {
+  const uid = window.__ccCanonicalUid?.() || auth?.currentUser?.uid || "";
+  if (!uid || !task?.taskId) return;
+  const path = `${PERSONAL_TASKS_PATH}/${uid}`;
+  await update(ref(db, path), {
+    ...answer,
+    responderUid: uid,
+    respondedAt: Date.now()
+  }).catch(error => console.error("[DP game] personal task answer failed", error));
+}
+
+function renderPersonalTask() {
+  ensureUi();
+  const layer = document.getElementById("dp-personal-task");
+  const marker = document.getElementById("dp-private-map-warning");
+  if (!layer) return;
+  clearInterval(personalTaskTimer);
+  personalTaskTimer = null;
+  const task = myPersonalTask();
+  if (!task || task.runId && currentRunId() && String(task.runId) !== currentRunId()) {
+    layer.classList.remove("show");
+    marker?.classList.remove("show");
+    return;
+  }
+  const kind = String(task.kind || "");
+  if (kind === "map_warning") {
+    layer.classList.remove("show");
+    const expiresAt = Number(task.expiresAt || 0);
+    if (expiresAt > 0 && Date.now() >= expiresAt) {
+      marker?.classList.remove("show");
+      return;
+    }
+    if (marker) {
+      marker.style.left = `${Math.max(0,Math.min(1,Number(task.mapX ?? .5))) * 100}%`;
+      marker.style.top = `${Math.max(0,Math.min(1,Number(task.mapY ?? .5))) * 100}%`;
+      marker.classList.add("show");
+    }
+    personalTaskTimer = setInterval(renderPersonalTask, 250);
+    return;
+  }
+  marker?.classList.remove("show");
+  const card = layer.querySelector(".dp-pt-card");
+  const responded = Number(task.respondedAt || 0) > 0;
+  if (kind === "manifest") {
+    card.innerHTML = `
+      <div class="dp-pt-title">${escapeHtml(task.title || "Посылка")}</div>
+      <div class="dp-pt-manifest"><b>Получатель:</b> ${escapeHtml(task.recipient || "?")}<br><b>Адрес:</b> ${escapeHtml(task.address || "?")}</div>
+      <div class="dp-pt-meta">${escapeHtml(task.batchHint || "Нужная коробка может появиться не сразу.")}</div>`;
+    layer.classList.add("show");
+    return;
+  }
+  const title = escapeHtml(task.title || "Личное задание");
+  const question = escapeHtml(task.question || "");
+  if (kind === "multiple_choice") {
+    const options = Array.isArray(task.options) ? task.options : [];
+    card.innerHTML = `
+      <div class="dp-pt-title">${title}</div>
+      <div class="dp-pt-question">${question}</div>
+      <div class="dp-pt-meta"><span class="dp-pt-timer"></span></div>
+      <div class="dp-pt-options">${options.map((option,index)=>`<button type="button" data-answer-index="${index}" ${responded?"disabled":""}>${escapeHtml(option)}</button>`).join("")}</div>`;
+    card.querySelectorAll("[data-answer-index]").forEach(button => {
+      button.addEventListener("click", () => {
+        card.querySelectorAll("button").forEach(item => item.disabled = true);
+        void submitPersonalTaskAnswer(task, { answerIndex: Number(button.dataset.answerIndex) });
+      });
+    });
+    const updateTimer = () => {
+      const node = card.querySelector(".dp-pt-timer");
+      if (!node) return;
+      const remain = Math.max(0, Number(task.expiresAt || 0) - Date.now());
+      node.textContent = responded ? "Ответ принят" : `Осталось: ${(remain/1000).toFixed(1)} сек.`;
+    };
+    updateTimer();
+    personalTaskTimer = setInterval(updateTimer, 100);
+    layer.classList.add("show");
+    return;
+  }
+  if (kind === "open_answer") {
+    card.innerHTML = `
+      <div class="dp-pt-title">${title}</div>
+      <div class="dp-pt-question">${question}</div>
+      <div class="dp-pt-meta">${escapeHtml(task.progress || "Ответ без учёта регистра")}</div>
+      <div class="dp-pt-answer-row"><input type="text" autocomplete="off" ${responded?"disabled":""}><button type="button" ${responded?"disabled":""}>Ответить</button></div>`;
+    const input = card.querySelector("input");
+    const button = card.querySelector("button");
+    const submit = () => {
+      const value = String(input?.value || "").trim();
+      if (!value) return;
+      if (input) input.disabled = true;
+      if (button) button.disabled = true;
+      void submitPersonalTaskAnswer(task, { answerText: value });
+    };
+    button?.addEventListener("click", submit);
+    input?.addEventListener("keydown", event => { if (event.key === "Enter") submit(); });
+    layer.classList.add("show");
+    return;
+  }
+  layer.classList.remove("show");
 }
 
 function bindPrivateEvents() {
@@ -2599,7 +2771,9 @@ async function receiveFromGame(event) {
     completedExitTombstones.clear();
     helpTargets.clear();
     traitorVoteState = {};
+    personalTaskState = {};
     renderTraitorVote();
+    renderPersonalTask();
     hostCorpseState = null;
     runtimeStates.clear();
     admissionSpawnWritten.clear();
@@ -2623,6 +2797,8 @@ async function receiveFromGame(event) {
       .catch(error => console.warn("[DP game] reset game points failed", error));
     void remove(ref(db, TRAITOR_VOTE_PATH))
       .catch(error => console.warn("[DP game] reset traitor vote failed", error));
+    void remove(ref(db, PERSONAL_TASKS_PATH))
+      .catch(error => console.warn("[DP game] reset personal tasks failed", error));
     return;
   }
 
@@ -2726,6 +2902,46 @@ async function receiveFromGame(event) {
     traitorVoteState = {};
     renderTraitorVote();
     await remove(ref(db, TRAITOR_VOTE_PATH)).catch(() => {});
+    scheduleSnapshotToGame();
+    return;
+  }
+
+  if (type === "personal_task_set") {
+    const targetUid = String(payload.targetUid || "");
+    if (!targetUid) return;
+    const task = {
+      ...(payload || {}),
+      targetUid,
+      runId: currentRunId(),
+      runStartedAt: currentRunStartedAt(),
+      createdAt: Date.now(),
+      respondedAt: 0
+    };
+    delete task.answerIndex;
+    delete task.answerText;
+    personalTaskState = { ...(personalTaskState || {}), [targetUid]: task };
+    await set(ref(db, `${PERSONAL_TASKS_PATH}/${targetUid}`), task);
+    renderPersonalTask();
+    scheduleSnapshotToGame();
+    return;
+  }
+
+  if (type === "personal_task_clear") {
+    const targetUid = String(payload.targetUid || "");
+    if (!targetUid) return;
+    const next = { ...(personalTaskState || {}) };
+    delete next[targetUid];
+    personalTaskState = next;
+    await remove(ref(db, `${PERSONAL_TASKS_PATH}/${targetUid}`)).catch(() => {});
+    renderPersonalTask();
+    scheduleSnapshotToGame();
+    return;
+  }
+
+  if (type === "personal_task_reset") {
+    personalTaskState = {};
+    await remove(ref(db, PERSONAL_TASKS_PATH)).catch(() => {});
+    renderPersonalTask();
     scheduleSnapshotToGame();
     return;
   }
@@ -3066,7 +3282,7 @@ async function receiveFromGame(event) {
     }).catch(() => {});
     await update(ref(db, BASE_PATH), {
       public: null, messages: null, private: null, entities: null, entrance: null,
-      game_points: null, traitor_vote: null
+      game_points: null, traitor_vote: null, personal_tasks: null
     });
   }
 }
@@ -3414,7 +3630,7 @@ function installEmergencyKey() {
     event.preventDefault();
     await update(ref(db, BASE_PATH), {
       public: null, messages: null, private: null, entities: null, entrance: null,
-      game_points: null, traitor_vote: null
+      game_points: null, traitor_vote: null, personal_tasks: null
     });
     showGameToast({ name: "SYSTEM", text: "\u0418\u0433\u0440\u043E\u0432\u043E\u0439 \u0440\u0435\u0436\u0438\u043C \u0430\u0432\u0430\u0440\u0438\u0439\u043D\u043E \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D", emoji: "\u26D4", color: "#ff547f" });
   });
