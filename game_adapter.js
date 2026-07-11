@@ -5,12 +5,13 @@ import {
 
 const SESSION_KEY = "DepressivePasties";
 const GAME_VERSION = "game_v1";
-const ADAPTER_VERSION = "native-ws-v2.16-role-story-hard-checkpoint-exit-sync";
+const ADAPTER_VERSION = "native-ws-v2.17-traitor-vote-intro-finale";
 const BASE_PATH = `sessions/${SESSION_KEY}/${GAME_VERSION}`;
 const POINTS_PATH = `sessions/${SESSION_KEY}/points`;
 const GAME_POINTS_PATH = `${BASE_PATH}/game_points`;
 const ENTRANCE_PATH = `${BASE_PATH}/entrance`;
 const BRIDGE_LIVE_PATH = `${BASE_PATH}/bridge_live`;
+const TRAITOR_VOTE_PATH = `${BASE_PATH}/traitor_vote`;
 const params = new URLSearchParams(location.search);
 const IS_GAME_HOST = params.get("gamehost") === "1";
 const IS_NATIVE_BRIDGE = params.get("nativebridge") === "1";
@@ -212,6 +213,9 @@ let db = null;
 let auth = null;
 let state = null;
 let gamePublic = { active: false, inputMode: "map", mapRect: null, map: null };
+let traitorVoteState = {};
+let traitorVoteListenerBound = false;
+let dismissedTraitorRevealAt = 0;
 const gameMessages = new Map();
 const gameEntities = new Map();
 const entranceRequests = new Map();
@@ -265,6 +269,11 @@ const CRITICAL_GAME_EVENT_TYPES = new Set([
   "admit_player",
   "complete_exit",
   "exit_complete",
+  "traitor_vote_start",
+  "traitor_vote_host_choice_ready",
+  "traitor_vote_reveal",
+  "traitor_vote_intro_finished",
+  "traitor_vote_reset",
   "end_game"
 ]);
 
@@ -656,6 +665,7 @@ function buildSnapshot() {
     players: allParticipants(),
     entities: [...gameEntities.values()],
     entrance: sortedEntranceRequests(),
+    traitorVote: traitorVoteState || {},
     chat
   };
 }
@@ -906,6 +916,63 @@ function injectStyles() {
     }
     #overlay { z-index:30; }
     #fx-layer { z-index:35; }
+    #dp-traitor-vote {
+      position:fixed; inset:0; z-index:390000; display:none; place-items:center;
+      padding:24px; background:rgba(2,5,10,.82); color:#fff;
+      font-family:'Open Sans',system-ui,sans-serif; backdrop-filter:blur(9px);
+    }
+    #dp-traitor-vote.show { display:grid; }
+    #dp-traitor-vote .dp-tv-card {
+      width:min(760px,calc(100vw - 32px)); padding:26px; border-radius:20px;
+      background:linear-gradient(145deg,rgba(15,23,34,.98),rgba(7,12,20,.99));
+      border:1px solid rgba(255,74,112,.48);
+      box-shadow:0 28px 90px rgba(0,0,0,.74),0 0 46px rgba(255,43,91,.18);
+    }
+    #dp-traitor-vote h2 { margin:0 0 10px; text-align:center; font-size:34px; }
+    #dp-traitor-vote .dp-tv-warning {
+      margin:0 auto 20px; max-width:650px; color:rgba(255,255,255,.76);
+      text-align:center; font-size:17px; line-height:1.5;
+    }
+    #dp-traitor-vote .dp-tv-choices {
+      display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px;
+    }
+    #dp-traitor-vote .dp-tv-choice {
+      min-height:58px; padding:12px 14px; border-radius:13px; cursor:pointer;
+      border:1px solid rgba(255,255,255,.16); color:#fff; text-align:left;
+      background:rgba(255,255,255,.055); font:900 18px/1.25 'Open Sans',system-ui,sans-serif;
+      transition:transform .12s ease,border-color .12s ease,background .12s ease;
+    }
+    #dp-traitor-vote .dp-tv-choice:hover:not(:disabled) {
+      transform:translateY(-1px); border-color:rgba(255,74,112,.7);
+      background:rgba(255,74,112,.12);
+    }
+    #dp-traitor-vote .dp-tv-choice.selected {
+      border-color:#ff4a70; background:rgba(255,74,112,.19);
+      box-shadow:0 0 24px rgba(255,74,112,.18);
+    }
+    #dp-traitor-vote .dp-tv-choice:disabled { cursor:default; opacity:.72; }
+    #dp-traitor-vote .dp-tv-status {
+      margin-top:18px; min-height:24px; text-align:center;
+      color:#fbbf24; font-weight:850;
+    }
+    #dp-traitor-vote .dp-tv-result {
+      display:none; margin-top:18px; padding:18px; border-radius:14px;
+      background:rgba(0,0,0,.28); border:1px solid rgba(255,255,255,.12);
+      text-align:center; font-size:20px; line-height:1.55;
+    }
+    #dp-traitor-vote.reveal .dp-tv-result { display:block; }
+    #dp-traitor-vote .dp-tv-close {
+      display:none; margin:18px auto 0; padding:10px 18px; border-radius:10px;
+      border:1px solid rgba(255,255,255,.2); background:rgba(255,255,255,.08);
+      color:#fff; cursor:pointer; font-weight:850;
+    }
+    #dp-traitor-vote.reveal .dp-tv-close { display:block; }
+    body.native-bridge-mode #dp-traitor-vote,
+    body.game-host-mode #dp-traitor-vote { display:none !important; }
+    @media (max-width:620px) {
+      #dp-traitor-vote .dp-tv-choices { grid-template-columns:1fr; }
+      #dp-traitor-vote h2 { font-size:28px; }
+    }
   `;
   document.head.appendChild(style);
 }
@@ -926,6 +993,28 @@ function ensureUi() {
     privateLayer.querySelector("button").addEventListener("click", () => privateLayer.classList.remove("show"));
     document.body.appendChild(privateLayer);
   }
+  let traitorLayer = document.getElementById("dp-traitor-vote");
+  if (!traitorLayer) {
+    traitorLayer = document.createElement("div");
+    traitorLayer.id = "dp-traitor-vote";
+    traitorLayer.innerHTML = `
+      <div class="dp-tv-card">
+        <h2>Кто предатель?</h2>
+        <div class="dp-tv-warning"></div>
+        <div class="dp-tv-choices"></div>
+        <div class="dp-tv-status"></div>
+        <div class="dp-tv-result"></div>
+        <button class="dp-tv-close" type="button">Я увидел(а)</button>
+      </div>`;
+    traitorLayer.querySelector(".dp-tv-close")?.addEventListener("click", () => {
+      dismissedTraitorRevealAt = Number(
+        traitorVoteState?.revealedAt || traitorVoteState?.finishedAt || Date.now()
+      );
+      traitorLayer.classList.remove("show");
+    });
+    document.body.appendChild(traitorLayer);
+  }
+
   let entryLayer = document.getElementById("dp-game-entry");
   if (!entryLayer) {
     entryLayer = document.createElement("div");
@@ -978,6 +1067,161 @@ function showPrivateEvent(event) {
     color: "#ff547f",
     emoji: "🔒"
   }, false);
+}
+
+
+function normalizeIdList(value) {
+  if (Array.isArray(value)) return value.map(item => String(item || "")).filter(Boolean);
+  if (value && typeof value === "object") {
+    return Object.entries(value)
+      .filter(([, enabled]) => enabled !== false && enabled !== null)
+      .map(([key, raw]) => {
+        if (typeof raw === "string") return raw;
+        if (raw && typeof raw === "object" && raw.uid) return String(raw.uid);
+        return String(key);
+      })
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function normalizeCandidates(value) {
+  const rows = Array.isArray(value)
+    ? value
+    : (value && typeof value === "object" ? Object.values(value) : []);
+  return rows
+    .filter(row => row && typeof row === "object")
+    .map(row => ({
+      characterId: String(row.characterId || row.uid || ""),
+      role: String(row.role || "guest"),
+      name: String(row.name || row.displayName || row.role || "Чужой"),
+      color: String(row.color || "#ffffff")
+    }))
+    .filter(row => row.characterId && row.role);
+}
+
+function currentViewerTraitorVote() {
+  const identity = currentViewerIdentity();
+  const votes = traitorVoteState?.votes || {};
+  return votes && typeof votes === "object" ? (votes[identity.uid] || null) : null;
+}
+
+async function submitTraitorVote(candidate) {
+  if (!db || IS_GAME_CONTROLLER || !candidate) return;
+  const identity = currentViewerIdentity();
+  if (!identity.uid || window.__ccIsHostName?.(identity.name)) return;
+  const eligible = normalizeIdList(traitorVoteState?.eligibleVoterIds);
+  if (!eligible.includes(identity.uid)) return;
+  if (String(traitorVoteState?.phase || "") !== "voting") return;
+  if (currentViewerTraitorVote()) return;
+
+  const vote = {
+    uid: identity.uid,
+    voterName: identity.name,
+    candidateId: String(candidate.characterId || ""),
+    candidateRole: String(candidate.role || "guest"),
+    candidateName: String(candidate.name || candidate.role || "Чужой"),
+    runId: String(traitorVoteState?.runId || currentRunId()),
+    createdAt: Date.now(),
+    t: serverTimestamp()
+  };
+
+  traitorVoteState = {
+    ...(traitorVoteState || {}),
+    votes: { ...(traitorVoteState?.votes || {}), [identity.uid]: vote }
+  };
+  renderTraitorVote();
+  try {
+    await set(ref(db, `${TRAITOR_VOTE_PATH}/votes/${identity.uid}`), vote);
+  } catch (error) {
+    console.error("[DP game] traitor vote failed", error);
+    const votes = { ...(traitorVoteState?.votes || {}) };
+    delete votes[identity.uid];
+    traitorVoteState = { ...(traitorVoteState || {}), votes };
+    renderTraitorVote();
+  }
+}
+
+function renderTraitorVote() {
+  ensureUi();
+  const layer = document.getElementById("dp-traitor-vote");
+  if (!layer) return;
+  if (IS_GAME_CONTROLLER || !auth?.currentUser || !state?.authed) {
+    layer.classList.remove("show", "reveal");
+    return;
+  }
+
+  const identity = currentViewerIdentity();
+  const isHost = Boolean(window.__ccIsHostName?.(identity.name));
+  const voteRunId = String(traitorVoteState?.runId || "");
+  const activeRun = String(currentRunId() || gamePublic?.runId || "");
+  const phase = String(traitorVoteState?.phase || "idle");
+  const active = Boolean(traitorVoteState?.active);
+  const eligible = normalizeIdList(traitorVoteState?.eligibleVoterIds);
+  const isEligible = eligible.includes(identity.uid);
+
+  if (!active || isHost || !isEligible || (voteRunId && activeRun && voteRunId !== activeRun)) {
+    layer.classList.remove("show", "reveal");
+    return;
+  }
+  const revealStamp = Number(traitorVoteState?.revealedAt || traitorVoteState?.finishedAt || 0);
+  if ((phase === "reveal" || phase === "finished") && revealStamp > 0 && revealStamp === dismissedTraitorRevealAt) {
+    layer.classList.remove("show");
+    return;
+  }
+
+  const candidates = normalizeCandidates(traitorVoteState?.candidates);
+  const myVote = currentViewerTraitorVote();
+  const choices = layer.querySelector(".dp-tv-choices");
+  const warning = layer.querySelector(".dp-tv-warning");
+  const statusEl = layer.querySelector(".dp-tv-status");
+  const resultEl = layer.querySelector(".dp-tv-result");
+  const titleEl = layer.querySelector("h2");
+  if (!choices || !warning || !statusEl || !resultEl || !titleEl) return;
+
+  titleEl.textContent = String(traitorVoteState?.title || "Кто предатель?");
+  warning.textContent = String(
+    traitorVoteState?.warning ||
+    "Если вы правы, вы проживёте дольше. Если нет — выбранный Лёхой человек лишится одной руки помощи."
+  );
+
+  choices.replaceChildren();
+  for (const candidate of candidates) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "dp-tv-choice";
+    button.textContent = candidate.name;
+    button.style.borderColor = `${candidate.color}66`;
+    const selected = String(myVote?.candidateRole || "") === candidate.role;
+    if (selected) button.classList.add("selected");
+    button.disabled = Boolean(myVote) || phase !== "voting";
+    button.addEventListener("click", () => void submitTraitorVote(candidate));
+    choices.appendChild(button);
+  }
+
+  layer.classList.add("show");
+  layer.classList.toggle("reveal", phase === "reveal" || phase === "finished");
+
+  if (phase === "voting") {
+    statusEl.textContent = myVote
+      ? `Твой голос: ${String(myVote.candidateName || myVote.candidateRole || "принят")}. Ждём остальных.`
+      : "Выбери одного человека. После отправки изменить голос нельзя.";
+    resultEl.textContent = "";
+  } else if (phase === "host_choice") {
+    statusEl.textContent = "Все голоса собраны. Теперь выбирает Лёха.";
+    resultEl.textContent = "";
+  } else {
+    const majorityName = String(traitorVoteState?.majorityName || "Никто");
+    const hostChoiceName = String(traitorVoteState?.hostChoiceName || "неизвестно кого");
+    const penaltyText = String(
+      traitorVoteState?.penaltyText || `${hostChoiceName} лишится одной руки помощи.`
+    );
+    statusEl.textContent = "Решение принято.";
+    resultEl.innerHTML = `
+      <div><b>Большинство выбрало:</b> ${escapeHtml(majorityName)}</div>
+      <div><b>Лёха выбрал:</b> ${escapeHtml(hostChoiceName)}</div>
+      <div style="margin-top:10px;color:#ff9bad">${escapeHtml(penaltyText)}</div>`;
+  }
 }
 
 function currentViewerIdentity() {
@@ -1859,6 +2103,16 @@ function bindFirebase() {
 
   onValue(publicRef, snap => applyPublicState(snap.val()));
 
+  if (!traitorVoteListenerBound) {
+    traitorVoteListenerBound = true;
+    onValue(ref(db, TRAITOR_VOTE_PATH), snap => {
+      const value = snap.val();
+      traitorVoteState = value && typeof value === "object" ? value : {};
+      renderTraitorVote();
+      scheduleSnapshotToGame();
+    });
+  }
+
   // A tiny dedicated controller lease. Unlike the large public object it is
   // rewritten atomically every second, so a late map-capture/public update
   // cannot accidentally make the ordinary site think the game is gone.
@@ -1990,6 +2244,7 @@ function bindFirebase() {
 }
 
 function bindPrivateEvents() {
+  renderTraitorVote();
   const uid = window.__ccCanonicalUid?.() || auth?.currentUser?.uid;
   if (!uid || uid === privateBoundUid) return;
   privateBoundUid = uid;
@@ -2343,6 +2598,8 @@ async function receiveFromGame(event) {
     entranceRequests.clear();
     completedExitTombstones.clear();
     helpTargets.clear();
+    traitorVoteState = {};
+    renderTraitorVote();
     hostCorpseState = null;
     runtimeStates.clear();
     admissionSpawnWritten.clear();
@@ -2364,6 +2621,112 @@ async function receiveFromGame(event) {
       .catch(error => console.warn("[DP game] reset help targets failed", error));
     void remove(ref(db, GAME_POINTS_PATH))
       .catch(error => console.warn("[DP game] reset game points failed", error));
+    void remove(ref(db, TRAITOR_VOTE_PATH))
+      .catch(error => console.warn("[DP game] reset traitor vote failed", error));
+    return;
+  }
+
+
+  if (type === "traitor_vote_start") {
+    traitorVoteState = {
+      active: true,
+      phase: "voting",
+      runId: currentRunId(),
+      runStartedAt: currentRunStartedAt(),
+      title: String(payload.title || "Кто предатель?"),
+      warning: String(
+        payload.warning ||
+        "Если вы правы, вы проживёте дольше. Если нет — выбранный Лёхой человек лишится одной руки помощи."
+      ),
+      candidates: Array.isArray(payload.candidates) ? payload.candidates : Object.values(payload.candidates || {}),
+      eligibleVoterIds: Array.isArray(payload.eligibleVoterIds)
+        ? payload.eligibleVoterIds
+        : Object.values(payload.eligibleVoterIds || {}),
+      startedAt: Number(payload.startedAt || Date.now()),
+      votes: {}
+    };
+    await set(ref(db, TRAITOR_VOTE_PATH), traitorVoteState);
+    renderTraitorVote();
+    scheduleSnapshotToGame();
+    return;
+  }
+
+  if (type === "traitor_vote_host_choice_ready") {
+    traitorVoteState = {
+      ...(traitorVoteState || {}),
+      active: true,
+      phase: "host_choice",
+      receivedVotes: Number(payload.receivedVotes || 0),
+      requiredVotes: Number(payload.requiredVotes || 0),
+      hostChoiceReadyAt: Date.now()
+    };
+    await update(ref(db, TRAITOR_VOTE_PATH), {
+      active: true,
+      phase: "host_choice",
+      receivedVotes: traitorVoteState.receivedVotes,
+      requiredVotes: traitorVoteState.requiredVotes,
+      hostChoiceReadyAt: traitorVoteState.hostChoiceReadyAt
+    });
+    renderTraitorVote();
+    scheduleSnapshotToGame();
+    return;
+  }
+
+  if (type === "traitor_vote_reveal") {
+    traitorVoteState = {
+      ...(traitorVoteState || {}),
+      active: true,
+      phase: "reveal",
+      majorityRole: String(payload.majorityRole || ""),
+      majorityName: String(payload.majorityName || "Никто"),
+      hostChoiceRole: String(payload.hostChoiceRole || ""),
+      hostChoiceName: String(payload.hostChoiceName || ""),
+      counts: payload.counts || {},
+      penaltyApplied: Boolean(payload.penaltyApplied),
+      penaltyText: String(payload.penaltyText || ""),
+      revealedAt: Date.now()
+    };
+    await update(ref(db, TRAITOR_VOTE_PATH), {
+      active: true,
+      phase: "reveal",
+      majorityRole: traitorVoteState.majorityRole,
+      majorityName: traitorVoteState.majorityName,
+      hostChoiceRole: traitorVoteState.hostChoiceRole,
+      hostChoiceName: traitorVoteState.hostChoiceName,
+      counts: traitorVoteState.counts,
+      penaltyApplied: traitorVoteState.penaltyApplied,
+      penaltyText: traitorVoteState.penaltyText,
+      revealedAt: traitorVoteState.revealedAt
+    });
+    renderTraitorVote();
+    scheduleSnapshotToGame();
+    return;
+  }
+
+  if (type === "traitor_vote_intro_finished") {
+    traitorVoteState = {
+      ...(traitorVoteState || {}),
+      active: true,
+      phase: "finished",
+      finishedAt: Date.now(),
+      victimId: String(payload.victimId || "")
+    };
+    await update(ref(db, TRAITOR_VOTE_PATH), {
+      active: true,
+      phase: "finished",
+      finishedAt: traitorVoteState.finishedAt,
+      victimId: traitorVoteState.victimId
+    });
+    renderTraitorVote();
+    scheduleSnapshotToGame();
+    return;
+  }
+
+  if (type === "traitor_vote_reset") {
+    traitorVoteState = {};
+    renderTraitorVote();
+    await remove(ref(db, TRAITOR_VOTE_PATH)).catch(() => {});
+    scheduleSnapshotToGame();
     return;
   }
 
@@ -2702,7 +3065,8 @@ async function receiveFromGame(event) {
       bridgeHeartbeatAt: Date.now()
     }).catch(() => {});
     await update(ref(db, BASE_PATH), {
-      public: null, messages: null, private: null, entities: null, entrance: null, game_points: null
+      public: null, messages: null, private: null, entities: null, entrance: null,
+      game_points: null, traitor_vote: null
     });
   }
 }
@@ -3049,7 +3413,8 @@ function installEmergencyKey() {
     if (event.code !== "F10") return;
     event.preventDefault();
     await update(ref(db, BASE_PATH), {
-      public: null, messages: null, private: null, entities: null, entrance: null, game_points: null
+      public: null, messages: null, private: null, entities: null, entrance: null,
+      game_points: null, traitor_vote: null
     });
     showGameToast({ name: "SYSTEM", text: "\u0418\u0433\u0440\u043E\u0432\u043E\u0439 \u0440\u0435\u0436\u0438\u043C \u0430\u0432\u0430\u0440\u0438\u0439\u043D\u043E \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D", emoji: "\u26D4", color: "#ff547f" });
   });
