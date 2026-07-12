@@ -2823,14 +2823,6 @@ html.component-mode #dpGameMapPanel{
   const SESSION_KEY = "DepressivePasties";
   const VDO_DEFAULT_VIEW_ID = "DepressivePasties";
   let _currentVdoViewId = normalizeVdoViewId(window.ccStorage.getItem('cc_vdo_view_id')) || VDO_DEFAULT_VIEW_ID;
-  const VDO_DEFAULTS = {
-    bitrate: 9000,
-    width: 1920,
-    height: 1080,
-    framerate: 30,
-    buffer: 0,
-    scale: 100
-  };
 
   function normalizeVdoViewId(value){
     const raw = String(value || '').trim();
@@ -2843,26 +2835,40 @@ html.component-mode #dpGameMapPanel{
     const url = new URL('https://vdo.ninja/');
     url.searchParams.set('view', normalizeVdoViewId(viewId) || VDO_DEFAULT_VIEW_ID);
 
-    const bitrate = Number(params.get('vdoBitrate') || window.ccStorage.getItem('cc_vdo_bitrate') || VDO_DEFAULTS.bitrate);
-    const width = Number(params.get('vdoWidth') || window.ccStorage.getItem('cc_vdo_width') || VDO_DEFAULTS.width);
-    const height = Number(params.get('vdoHeight') || window.ccStorage.getItem('cc_vdo_height') || VDO_DEFAULTS.height);
-    const fps = Number(params.get('vdoFps') || window.ccStorage.getItem('cc_vdo_fps') || VDO_DEFAULTS.framerate);
-    const buffer = Number(params.get('vdoBuffer') ?? window.ccStorage.getItem('cc_vdo_buffer') ?? VDO_DEFAULTS.buffer);
-    const scale = Number(params.get('vdoScale') || window.ccStorage.getItem('cc_vdo_scale') || VDO_DEFAULTS.scale);
-    const codec = params.get('vdoCodec') || window.ccStorage.getItem('cc_vdo_codec') || '';
+    // По умолчанию ссылка намеренно повторяет обычный ?view=... режим VDO.Ninja.
+    // Не форсируем 9 Мбит/с каждому зрителю: VDO работает P2P, поэтому такой
+    // запрос быстро забивает upload отправителя и вызывает одновременно мыло,
+    // потерю кадров и лаги. width/height/framerate здесь тоже не нужны: это
+    // параметры стороны отправителя (&push), а не зрителя (&view).
+    //
+    // Для разового A/B-теста параметры всё ещё можно передать в URL сайта:
+    // ?vdoBitrate=4500&vdoBuffer=200&vdoScale=100&vdoCodec=vp9&vdoStats=1
+    const optionalNumber = (name, { min = 0, allowZero = false } = {}) => {
+      if (!params.has(name)) return null;
+      const value = Number(params.get(name));
+      if (!Number.isFinite(value)) return null;
+      if (allowZero ? value < min : value <= min) return null;
+      return Math.round(value);
+    };
 
-    if (Number.isFinite(bitrate) && bitrate > 0) url.searchParams.set('bitrate', String(Math.round(bitrate)));
-    if (Number.isFinite(width) && width > 0) url.searchParams.set('width', String(Math.round(width)));
-    if (Number.isFinite(height) && height > 0) url.searchParams.set('height', String(Math.round(height)));
-    if (Number.isFinite(fps) && fps > 0) url.searchParams.set('framerate', String(Math.round(fps)));
-    if (Number.isFinite(buffer) && buffer >= 0) url.searchParams.set('buffer', String(Math.round(buffer)));
-    if (Number.isFinite(scale) && scale > 0) url.searchParams.set('scale', String(Math.round(scale)));
-    if (codec) url.searchParams.set('codec', codec);
+    const bitrate = optionalNumber('vdoBitrate');
+    const buffer = optionalNumber('vdoBuffer', { min: 0, allowZero: true });
+    const scale = optionalNumber('vdoScale');
+    const viewWidth = optionalNumber('vdoViewWidth');
+    const viewHeight = optionalNumber('vdoViewHeight');
+    const codec = String(params.get('vdoCodec') || '').trim().toLowerCase();
+
+    if (bitrate !== null) url.searchParams.set('videobitrate', String(bitrate));
+    if (buffer !== null) url.searchParams.set('buffer', String(buffer));
+    if (scale !== null) url.searchParams.set('scale', String(scale));
+    if (viewWidth !== null) url.searchParams.set('viewwidth', String(viewWidth));
+    if (viewHeight !== null) url.searchParams.set('viewheight', String(viewHeight));
+    if (/^(vp8|vp9|h264|av1)$/.test(codec)) url.searchParams.set('codec', codec);
 
     url.searchParams.set('autohide', '');
     url.searchParams.set('cleanoutput', '');
     url.searchParams.set('noheader', '');
-    url.searchParams.set('stats', '0');
+    url.searchParams.set('stats', params.get('vdoStats') === '1' ? '1' : '0');
     return url.toString();
   }
 
@@ -2872,11 +2878,15 @@ html.component-mode #dpGameMapPanel{
     _currentVdoViewId = clean;
     window.ccStorage.setItem('cc_vdo_view_id', clean);
     const player = document.getElementById('player');
-    if (!player || isOverlayMode()) return changed;
+    // Firebase может прислать viewId ещё до прохождения gate. Не создаём
+    // скрытое WebRTC-подключение от неавторизованной/брошенной вкладки.
+    if (!player || isOverlayMode() || !window.state?.authed) return changed;
     const src = buildVdoViewUrl(clean);
     if (changed || !player.src || player.src === 'about:blank' || opts.force){
-      player.src = src;
-      console.log('[VDO] switched view:', clean, src);
+      if (player.src !== src){
+        player.src = src;
+        console.log('[VDO] switched view:', clean, src);
+      }
     }
     return changed;
   }
@@ -4521,11 +4531,13 @@ window.cleanupOldReactions = cleanupOldReactions;
       return;
     }
     
-    // High-quality viewer URL. Do not pass quality=2 here: in VDO it is a low 360p preset.
-    let src = buildVdoViewUrl();
-    
-    $player.src = src;
-    console.log('[VDO] iframe src:', src);
+    // Автоматический viewer URL: те же настройки, с которыми простая ссылка
+    // VDO.Ninja работает устойчиво. Ручные тестовые overrides читает builder.
+    const src = buildVdoViewUrl();
+    if ($player.src !== src){
+      $player.src = src;
+      console.log('[VDO] iframe src:', src);
+    }
   }
   // === KEEP IFRAME ALIVE ===
   // Браузер может "усыплять" iframe если он перекрыт canvas-ом
@@ -4552,7 +4564,6 @@ window.cleanupOldReactions = cleanupOldReactions;
     if (!player || isOverlayMode()) return;
     
     console.log('[VDO] reloading iframe...');
-    const oldSrc = player.src;
     player.src = 'about:blank';
     setTimeout(() => {
       // Не используем старый src (мог быть с битыми параметрами)
