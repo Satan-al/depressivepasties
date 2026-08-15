@@ -2499,31 +2499,6 @@ html.component-mode #dpGameMapPanel{
   };
   // ===== Обработка component-параметра (чат / эмодзибар / музыка) =====
   window.overlayComponent = new URLSearchParams(location.search).get('component');
-
-  // ===== LITE-РЕЖИМ ДЛЯ ПАНЕЛЕЙ ОВЕРЛЕЯ (лечит лаги хоста) =====
-  // Ghost Overlay открывает ~12 отдельных QWebEngine-окон, и КАЖДОЕ раньше
-  // грузило сайт целиком: Godot-мост game_adapter.js, дуэли, снайпер, гонки,
-  // хоккей, цитаты, дурак, холст со штрихами, чат, VDO-iframe. Маленькое окно
-  // ≠ маленькая страница: 12 полноценных браузеров с десятками Firebase-подписок
-  // и RAF-циклов — вот откуда лаги.
-  // Функционал не режем: каждое окно грузит ровно то, ради чего его открыли.
-  {
-    const _c = window.overlayComponent || '';
-    window.__ccLite       = !!_c;
-    window.__ccNeedGames  = !_c;                                   // дуэль/снайпер/гонки/хоккей/цитаты
-    window.__ccNeedDurak  = !_c || _c === 'durak_hand';
-    window.__ccNeedCanvas = !_c;                                   // холст, штрихи, заливка, кластеры
-    window.__ccNeedChat   = !_c || _c === 'chat';
-    window.__ccNeedEmoji  = !_c || _c === 'emojibar';
-    window.__ccNeedMusic  = !_c || _c.indexOf('music_') === 0;
-    window.__ccNeedGameAdapter = !_c;
-    if (_c) console.log('[lite] component=' + _c, {
-      games: window.__ccNeedGames, durak: window.__ccNeedDurak,
-      canvas: window.__ccNeedCanvas, chat: window.__ccNeedChat,
-      emoji: window.__ccNeedEmoji, music: window.__ccNeedMusic
-    });
-  }
-
   if (window.overlayComponent) {
     document.documentElement.classList.add('component-mode');
     const componentGuardStyle = document.createElement('style');
@@ -2581,16 +2556,7 @@ html.component-mode #dpGameMapPanel{
     };
     window.__ccSuppressComponentGames = suppressComponentGames;
     suppressComponentGames();
-    // Игровые модули в панелях теперь вообще не стартуют (см. __ccNeedGames),
-    // поэтому вечный интервал каждые 250мс в 12 окнах не нужен: подчищаем
-    // несколько раз после загрузки и выключаемся.
-    {
-      let _sweeps = 0;
-      const _sweep = setInterval(() => {
-        suppressComponentGames();
-        if (++_sweeps >= 12) clearInterval(_sweep);
-      }, 250);
-    }
+    setInterval(suppressComponentGames, 250);
     document.body.style.background = 'transparent';
     document.body.style.margin = '0';
     document.body.style.padding = '0';
@@ -2717,13 +2683,9 @@ html.component-mode #dpGameMapPanel{
           zoneEl.style.transform = 'none';
 
           // Держим кнопки в оверлее полупрозрачными, как на обычном сайте.
-          // backdrop-filter здесь убран намеренно: окно зоны прозрачное, размывать
-          // ему нечего, а Chromium под каждый такой блюр заводит отдельную
-          // render-surface и пересчитывает её каждый кадр — в 4 окнах это заметный
-          // расход GPU впустую.
           zoneEl.style.background = 'rgba(15, 23, 34, 0.46)';
-          zoneEl.style.backdropFilter = 'none';
-          zoneEl.style.webkitBackdropFilter = 'none';
+          zoneEl.style.backdropFilter = 'blur(4px)';
+          zoneEl.style.webkitBackdropFilter = 'blur(4px)';
           zoneEl.style.animation = 'none';
           zoneEl.style.transition = 'none';
           zoneEl.style.border = '2px solid rgba(22,199,183,0.42)';
@@ -3710,7 +3672,7 @@ setInterval(heartbeat, 8000);
 })();
 
   /* ======= TELEGRAM LINKS INDEX (tgUserId -> uid) ======= */
-  if (!window.__ccLite) onValue(tgLinksRoot, (snap)=>{
+  onValue(tgLinksRoot, (snap)=>{
     const all = snap.val() || {};
     const idx = new Map();
     for (const [k,info] of Object.entries(all)){
@@ -4077,12 +4039,12 @@ state.presence.clear();
   // === STROKES — инкрементальная подписка ===
   // Штрихи только добавляются и удаляются; их не редактируют после создания.
   // При каждом изменении помечаем кэш грязным — drawFrame пересоберёт offscreen-слои.
-  if (window.__ccNeedCanvas) onChildAdded(strokesRoot, (snap)=>{
+  onChildAdded(strokesRoot, (snap)=>{
     state.strokes.set(snap.key, snap.val() || {});
     state._strokesDirty = true;
     state._strokesSortedCache = null;
   });
-  if (window.__ccNeedCanvas) onChildRemoved(strokesRoot, (snap)=>{
+  onChildRemoved(strokesRoot, (snap)=>{
     state.strokes.delete(snap.key);
     state._strokesDirty = true;
     state._strokesSortedCache = null;
@@ -4096,9 +4058,6 @@ let lastReadT = state.lastReadTs || 0; // для бейджика
 const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со старым полем
 
 (function setupChat(){
-  // Панелям без чата (зоны голосования, кнопки, плеер, рука дурака) история
-  // на 100 сообщений и её рендер не нужны — это лишние подписки в каждом окне.
-  if (!window.__ccNeedChat) return;
   // ВАЖНО: в rules должно быть .indexOn: ["t"]
   const q = query(chatRoot, orderByChild('t'), limitToLast(100));
 
@@ -4213,7 +4172,7 @@ async function sendReaction(reaction) {
 }
 
 // === REACTIONS — стабильный стрим + логи ===
-if (!window.__reactionsBound && (window.__ccNeedGames || window.__ccNeedEmoji)) {
+if (!window.__reactionsBound) {
   window.__reactionsBound = true;
 
   console.log('[rx] binding reactions stream on', `${basePath}/reactions`);
@@ -4296,7 +4255,7 @@ async function cleanupOldReactions(force=false){
 }
 
 setTimeout(() => cleanupOldReactions(), 15000 + Math.random() * 10000);
-if (!window.__ccLite) setInterval(() => cleanupOldReactions(), REACTIONS_CLEANUP_INTERVAL_MS + Math.random() * 15000);
+setInterval(() => cleanupOldReactions(), REACTIONS_CLEANUP_INTERVAL_MS + Math.random() * 15000);
 window.cleanupOldReactions = cleanupOldReactions;
 
 
@@ -4364,51 +4323,16 @@ window.cleanupOldReactions = cleanupOldReactions;
       return;
     }
 
-    // Быстрая локальная проверка (если бан уже был в этой сессии)
-    if (window.ccStorage.getItem('cc_banned') === 'true') {
-      document.body.innerHTML = '<h1 style="color:white; text-align:center; margin-top:20%;">⚰️ ТЫ МЕРТВ И ИЗГНАН ⚰️</h1>';
-      return;
-    }
-
     try {
       console.log("LOG: Начинаем вход...");
 
-      // 1. СНАЧАЛА АВТОРИЗАЦИЯ
-      // Теперь база будет знать, что мы "свои", и даст прочитать список банов
+      // 1. АВТОРИЗАЦИЯ
       await signInAnonymously(auth);
       const uid = auth.currentUser.uid;
       const profileUid = __ccIsHostName(inputName) ? HOST_IDENTITY.uid : uid;
       console.log("LOG: Авторизация успешна, UID:", uid);
 
-      // 2. ПОЛУЧАЕМ IP
-      let userIP = null;
-      try {
-        const ipRes = await fetch('https://api.ipify.org?format=json');
-        const ipData = await ipRes.json();
-        userIP = ipData.ip;
-        console.log("LOG: Ваш IP:", userIP);
-      } catch (e) { console.warn("Не удалось получить IP"); }
-
-      // 3. ПРОВЕРКА ГЛОБАЛЬНОГО БАНА ПО IP
-      if (userIP) {
-        const ipKey = userIP.replaceAll('.', '_');
-        // Пытаемся прочитать бан. Теперь Permission Denied быть не должно!
-        const banRef = ref(db, `${basePath}/banned_ips/${ipKey}`);
-        const banSnap = await get(banRef);
-        
-        if (banSnap.exists()) {
-          const banData = banSnap.val();
-          if (Date.now() < banData.bannedUntil) {
-            window.ccStorage.setItem('cc_banned', 'true');
-            alert(`ВАШ IP ЗАБЛОКИРОВАН. ⚰️`);
-            await signOut(auth); // Выходим, раз бан подтвержден
-            location.reload();
-            return;
-          }
-        }
-      }
-
-      // 4. ПОЛУЧЕНИЕ ДАННЫХ ПРОФИЛЯ
+      // 2. ПОЛУЧЕНИЕ ДАННЫХ ПРОФИЛЯ
       const userRef = ref(db, `${basePath}/users/${profileUid}`);
       const userSnap = await get(userRef);
       const userData = userSnap.val();
@@ -4432,33 +4356,12 @@ window.cleanupOldReactions = cleanupOldReactions;
         state.activity = {};
       }
 
-      // 5. ПРОВЕРКА НА 4 ЧЕРЕПА (СМЕРТЬ)
-      if (typeof getSkullLevel === 'function' && getSkullLevel(state) >= 4) {
-        window.ccStorage.setItem('cc_banned', 'true');
-        
-        if (userIP) {
-          const ipKey = userIP.replaceAll('.', '_');
-          await set(ref(db, `${basePath}/banned_ips/${ipKey}`), {
-            uid: uid,
-            name: state.name,
-            bannedAt: serverTimestamp(),
-            bannedUntil: Date.now() + (7 * 24 * 60 * 60 * 1000)
-          });
-        }
-        
-        alert("ТЫ МЕРТВ. Вход воспрещен. ⚰️");
-        await signOut(auth);
-        location.reload();
-        return;
-      }
-
-      // 6. ОБНОВЛЕНИЕ БАЗЫ
+      // 3. ОБНОВЛЕНИЕ БАЗЫ
       const now = new Date();
       const dateKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
       
       const updates = {
         lastSeen: serverTimestamp(),
-        lastIP: userIP || 'unknown',
         name: state.name,
         color: state.color,
       emoji: state.emoji || '',
@@ -4475,7 +4378,7 @@ window.cleanupOldReactions = cleanupOldReactions;
         window.ccStorage.setItem('cc_id', profileUid);
       }
 
-      // 7. ФИНАЛИЗАЦИЯ
+      // 4. ФИНАЛИЗАЦИЯ
       saveState();
       state.authed = true;
       gate.classList.add('hidden');
@@ -5137,110 +5040,6 @@ if (txt === '/random') {
       return;
   } // Чтобы сообщение не улетело в чат
 
-// 2. Команда накопительного очерепнения с IP-баном: /id skull
-  if (txt.startsWith('/') && txt.endsWith(' skull')) {
-    chatInputOverlay.value = '';
-    const targetId = txt.replace('/', '').replace(' skull', '').trim();
-    
-    if (targetId) {
-      const userRef = ref(db, `${basePath}/users/${targetId}`);
-      const snap = await get(userRef);
-      
-      if (!snap.exists()) {
-        console.error("Пользователь не найден в базе");
-        // no return here; handled by else
-      } else {
-
-      const data = snap.val();
-      const activity = data.activity || {};
-      let currentCreatedAt = data.createdAt || Date.now();
-
-      let d = new Date();
-      // 1. Находим ближайшую прошедшую (или текущую) субботу
-      while (d.getDay() !== 6) { d.setDate(d.getDate() - 1); }
-
-      // 2. Ищем первую субботу в прошлом, которая еще НЕ является черепом
-      let found = false;
-      for (let i = 0; i < 52; i++) {
-        const dateKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        
-        // Считаем субботу "чистой", если дата регистрации была позже неё 
-        // ИЛИ если в этот день есть отметка об активности
-        const isAlreadySkull = (currentCreatedAt <= d.getTime()) && !activity[dateKey];
-
-        if (!isAlreadySkull) {
-          const updates = {};
-          
-          // Удаляем отметку о присутствии
-          updates[`activity/${dateKey}`] = null; 
-          
-          // Подвигаем дату регистрации, если нужно, чтобы суббота попала в отчетный период
-          if (currentCreatedAt > d.getTime()) {
-            updates[`createdAt`] = d.getTime() - (24 * 60 * 60 * 1000);
-            currentCreatedAt = updates[`createdAt`]; // Обновляем для локального расчета ниже
-          }
-          
-          // Применяем изменения в профиль пользователя
-          await update(userRef, updates);
-          console.log(`Добавлен череп пользователю ${targetId} за дату ${dateKey}`);
-          
-          // 3. ПРОВЕРКА НА КРИТИЧЕСКИЙ УРОВЕНЬ (БАН ПО IP)
-          // Создаем временный объект, чтобы посчитать новый уровень черепов
-          const updatedState = {
-            ...data,
-            createdAt: currentCreatedAt,
-            activity: { ...activity, [dateKey]: null }
-          };
-
-          const newLevel = typeof getSkullLevel === 'function' ? getSkullLevel(updatedState) : 0;
-          
-          if (newLevel >= 4) {
-            console.log("УРОВЕНЬ 4 ДОСТИГНУТ. Инициируем IP-бан...");
-            
-            // Если у нас есть IP этого пользователя (сохраненный при входе)
-            if (data.lastIP && data.lastIP !== 'unknown') {
-              const ipKey = data.lastIP.replaceAll('.', '_');
-              await set(ref(db, `${basePath}/banned_ips/${ipKey}`), {
-                uid: targetId,
-                name: data.name || 'Чужой',
-                bannedAt: serverTimestamp(),
-                bannedUntil: Date.now() + (7 * 24 * 60 * 60 * 1000), // Бан на неделю
-                reason: "Executed by admin"
-              });
-              console.log(`IP ${data.lastIP} успешно забанен в базе.`);
-            } else {
-              console.warn("IP пользователя неизвестен, бан применится только по ID.");
-            }
-          }
-
-          found = true;
-          break; 
-        }
-        d.setDate(d.getDate() - 7);
-      }
-      
-      if (!found) console.warn("Не удалось добавить череп: достигнут лимит за год");
-    }
-      }
-    return;
-  }
-
-  // 3. Команда помилования: /вернуть id
-  if (txt.startsWith('/вернуть ')) {
-    chatInputOverlay.value = '';
-    const targetId = txt.replace('/вернуть ', '').trim();
-    
-    if (targetId) {
-      const userRef = ref(db, `${basePath}/users/${targetId}`);
-      await update(userRef, {
-        isForgiven: true, // Наша функция getDisplayName это проверит и уберет черепа
-        createdAt: Date.now() // Сбрасываем счетчик суббот на текущий момент
-      });
-      console.log(`Пользователь ${targetId} помилован`);
-    }
-    return;
-  }
-
   // СООБЩЕНИЕ ТОЛЬКО НА СЕРВЕРНОМ ВРЕМЕНИ
   const msg = {
     uid: __ccCanonicalUid(),
@@ -5875,7 +5674,7 @@ document.head.appendChild(ratAnimStyle);
   }
 
   // === Подписка на активную дуэль ===
-  if (window.__ccNeedGames) onValue(duelActiveRef, (snap)=>{
+  onValue(duelActiveRef, (snap)=>{
     if (window.overlayComponent) return;
     // Хелпер: есть ли признаки хост-режима (любой подходит)
     const _isHostHere = () => (
@@ -6557,7 +6356,7 @@ document.head.appendChild(ratAnimStyle);
   }
 
   // === Подписка на состояние ===
-  if (window.__ccNeedGames) onValue(sniperRootRef, (snap)=>{
+  onValue(sniperRootRef, (snap)=>{
     if (window.overlayComponent) return;
     if (!snap.exists()){
       if (currentSniper){
@@ -6828,37 +6627,23 @@ document.head.appendChild(ratAnimStyle);
       body.sniper-active canvas {
         pointer-events: none !important;
       }
-      /* ВАЖНО: эти правила действуют ТОЛЬКО пока реально идёт снайпер.
-         Раньше они были без body.sniper-active, поэтому в оверлее вверху
-         по центру всегда висела пустая плашка #sniperCard (min-width:320px,
-         border-radius:14px) прямо рядом с уведомлениями. */
-      html.overlay-live body.sniper-active #sniperOverlay,
-      html.overlay-mode body.sniper-active #sniperOverlay {
+      html.overlay-live #sniperOverlay,
+      html.overlay-mode #sniperOverlay {
         display: block !important;
         position: fixed !important;
         inset: 0 !important;
         z-index: 2147482900 !important;
         pointer-events: none !important;
       }
-      html.overlay-live body.sniper-active #sniperBall,
-      html.overlay-live body.sniper-active #sniperCard,
-      html.overlay-mode body.sniper-active #sniperBall,
-      html.overlay-mode body.sniper-active #sniperCard {
+      html.overlay-live #sniperBall,
+      html.overlay-live #sniperCard,
+      html.overlay-mode #sniperBall,
+      html.overlay-mode #sniperCard {
         display: block !important;
         visibility: visible !important;
         opacity: 1 !important;
         z-index: 2147483000 !important;
       }
-      /* Нет снайпера — нет и следов от него, чем бы их ни включили. */
-      body:not(.sniper-active) #sniperCard,
-      body:not(.sniper-active) #sniperBall,
-      body:not(.sniper-active) #sniperOverlay {
-        display: none !important;
-        visibility: hidden !important;
-        opacity: 0 !important;
-        pointer-events: none !important;
-      }
-      #sniperCard:empty { display: none !important; }
       #sniperCard {
         position: fixed; left: 50%; top: 12px;
         transform: translateX(-50%);
@@ -8013,7 +7798,7 @@ document.head.appendChild(ratAnimStyle);
   }
 
   // Подписка на состояние
-  if (window.__ccNeedGames) onValue(raceRootRef, (snap) => {
+  onValue(raceRootRef, (snap) => {
     if (window.overlayComponent) return;
     if (!snap.exists()){
       if (currentRace){
@@ -8780,7 +8565,7 @@ document.head.appendChild(ratAnimStyle);
     }
   }
 
-  if (window.__ccNeedGames) onValue(hockeyRootRef, (snap) => {
+  onValue(hockeyRootRef, (snap) => {
     if (window.overlayComponent) return;
     if (!snap.exists()){
       if (currentHockey) _onHockeyEnd();
@@ -9614,7 +9399,7 @@ document.head.appendChild(ratAnimStyle);
     _quoteResultRenderKey = '';
   }
 
-  if (window.__ccNeedGames) onValue(quoteGameRootRef, (snap) => {
+  onValue(quoteGameRootRef, (snap) => {
     if (window.overlayComponent) return;
     if (!snap.exists()){
       if (currentQuoteGame) _quoteEndLocal();
@@ -10625,69 +10410,10 @@ window.spawnEmoji = spawnEmoji;
 
   /* ======= CLUSTERING & RENDER ======= */
 
-  // Функция для определения уровня "проклятия" (черепов)
-  function getSkullLevel(userData) {
-    if (!userData || !userData.createdAt) return 0;
-    if (userData.isForgiven) return 0; // Если админ простил
-
-    const start = new Date(userData.createdAt);
-    const end = new Date();
-    let missedSaturdays = 0;
-
-    // Считаем все субботы с момента регистрации до сегодня
-    for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-      if (d.getDay() === 6) { // 6 = Суббота
-        const dateKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-        // Если в эту субботу не заходил (нет записи в activity)
-        if (!userData.activity || !userData.activity[dateKey]) {
-          missedSaturdays++;
-        }
-      }
-    }
-    // Уровни: 0 (ок), 1-3 (черепа), 4 (смерть/бан)
-    return Math.min(missedSaturdays, 4);
-  }
-
-  // Массив эмодзи для уровней
-  const SKULL_EMOJIS = ["", "💀", "💀💀", "💀💀💀", "⚰️"];
-
   function getDisplayName(it) {
     if (!it) return 'Чужой';
-    
-    // Берем имя, если его нет — ищем в глобальном state
-    let rawName = it.name || (it === state ? state.name : 'Чужой');
-    
-    // Если даты нет или она еще не число (serverTimestamp), просто отдаем имя
-    if (!it.createdAt || typeof it.createdAt !== 'number') {
-      return rawName;
-    }
-
-    try {
-      const start = new Date(it.createdAt);
-      const end = new Date();
-      if (isNaN(start.getTime())) return rawName; // Защита от кривых дат
-
-      let missedSaturdays = 0;
-      // Клонируем дату, чтобы не испортить оригинал
-      let d = new Date(start.getTime());
-      while (d <= end) {
-        if (d.getDay() === 6) { // Суббота
-          const dateKey = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
-          if (!it.activity || !it.activity[dateKey]) {
-            missedSaturdays++;
-          }
-        }
-        d.setDate(d.getDate() + 1);
-      }
-
-      const level = Math.min(missedSaturdays, 4);
-      const skulls = ["", "💀", "💀💀", "💀💀💀", "⚰️"];
-      return rawName + (skulls[level] ? " " + skulls[level] : "");
-    } catch (e) {
-      return rawName;
-    }
+    return it.name || (it === state ? state.name : 'Чужой');
   }
-
 
   const CLUSTER_DIST_FACTOR = 5.0; // увеличил с 3.3 для лучшего слипания
   const clusterAnim = new Map();
@@ -10742,27 +10468,9 @@ window.spawnEmoji = spawnEmoji;
     const br = baseRadiusPx();
     const CLUSTER_DIST = br * CLUSTER_DIST_FACTOR;
 
-    // === ОБМАНКИ МУЗ-ГОЛОСОВАНИЯ ===
-    // Пока висит обманка, морда рисуется НЕ там, где стоит человек, а там,
-    // куда мы её «поставили»: центр (ожидание) или угол «Исключение».
-    // Реальные координаты в Firebase не трогаем — это чисто отрисовка.
-    const _decoyMap = window.__ccVoteDecoys;
-    const _decoyNow = Date.now();
-    const _easeOut = (t) => 1 - Math.pow(1 - t, 3);
     const items = filtered.map(p=>{
-      const pid = p.id || p.uid;
-      const decoy = (_decoyMap && _decoyMap.size) ? _decoyMap.get(pid) : null;
-      let nx = p.x, ny = p.y;
-      if (decoy){
-        // Плавный переезд, а не телепорт: 700мс ease-out от текущего места.
-        const k = _easeOut(Math.max(0, Math.min(1, (_decoyNow - (decoy.t0 || 0)) / 700)));
-        const fx = (decoy.fromX == null) ? p.x : decoy.fromX;
-        const fy = (decoy.fromY == null) ? p.y : decoy.fromY;
-        nx = fx + (decoy.x - fx) * k;
-        ny = fy + (decoy.y - fy) * k;
-      }
-      const P = pxFromNorm(nx, ny);
-      return { id:pid, name:p.name||'', emoji:p.emoji||'', nx, ny, x:P.x, y:P.y, color:p.color||DEFAULT_COLOR, decoy: decoy ? decoy.reason : null };
+      const P = pxFromNorm(p.x,p.y);
+      return { id:p.id||p.uid, name:p.name||'', emoji:p.emoji||'', nx:p.x, ny:p.y, x:P.x, y:P.y, color:p.color||DEFAULT_COLOR };
     });
 
 
@@ -13323,10 +13031,6 @@ gateColor.addEventListener('input', syncColor);
   import { ref, onValue, set, update, remove, get } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
   (function initDurakModule(){
-    // Дурак живёт только в главном окне оверлея и в приватном окне руки.
-    // Зонам голосования / кнопкам / плееру он не нужен, а стоил каждому окну
-    // подписки, ежесекундного render() и предзагрузки 37 PNG-карт.
-    if (!window.__ccNeedDurak) return;
     if (!window.db || !window.auth || !window.state) {
       setTimeout(initDurakModule, 100);
       return;
@@ -13986,42 +13690,6 @@ gateColor.addEventListener('input', syncColor);
           : `<div class="durak-slot defense">${i+1}</div>`);
       return `<div class="durak-trick ${pair.defense ? 'defended' : 'open'}">${pair.attack ? cardHtml(pair.attack,{ inert:true, inspectable:true, peek:true, ownerColor:attackColor }) : '<div class="durak-slot"></div>'}${defenseSlot}</div>`;
     }
-    // === Компактный стол для ПРИВАТНОГО окна руки ===
-    // Приватное окно (component=durak_hand) — это ОТДЕЛЬНАЯ страница со своим JS.
-    // selectedCard там живёт локально, а стол раньше рисовался только в главном
-    // окне оверлея — поэтому подсказка «выбери на столе какую карту бить»
-    // появлялась, а кликать было не по чему. Теперь стол есть прямо здесь.
-    function privateTrickHtml(pair, i, v, myId){
-      const attackColor = colorOf(v, pair.by);
-      const defenseColor = colorOf(v, pair.defenseBy);
-      const targets = selectedCard ? defenseTargets(v, myId, selectedCard) : [];
-      const canTarget = !pair.defense && targets.includes(i);
-      const selected = canTarget && selectedDefenseIndex === i;
-      const attackCard = pair.attack
-        ? (canTarget
-            // Вся пара кликабельна как цель: попадать в маленькую кнопку неудобно.
-            ? `<button type="button" class="durak-card inert owned" style="--owner:${attr(attackColor)}" data-da="target-${i}">${cardArt(pair.attack)}<span>${esc(rank(pair.attack))}</span><b>${D.label[suit(pair.attack)] || ''}</b></button>`
-            : cardHtml(pair.attack, { inert:true, inspectable:true, peek:true, ownerColor:attackColor }))
-        : '<div class="durak-slot"></div>';
-      const defenseSlot = pair.defense
-        ? cardHtml(pair.defense, { inert:true, inspectable:true, peek:true, ownerColor:defenseColor })
-        : (canTarget
-          ? `<button type="button" class="durak-slot defense target ${selected ? 'selected' : ''}" data-da="target-${i}">${selected ? '✓' : 'Бить'}</button>`
-          : `<div class="durak-slot defense">${i + 1}</div>`);
-      return `<div class="durak-trick ${pair.defense ? 'defended' : 'open'} ${canTarget ? 'targetable' : ''} ${selected ? 'target-picked' : ''}">${attackCard}${defenseSlot}</div>`;
-    }
-    function privateTableHtml(v, id){
-      const table = v.table || [];
-      const targets = selectedCard ? defenseTargets(v, id, selectedCard) : [];
-      const needsPick = targets.length > 1 && !targets.includes(selectedDefenseIndex);
-      const hint = needsPick
-        ? `<span class="durak-table-hint pick">Выбери, какую карту бить (${targets.length} варианта)</span>`
-        : (targets.length ? '<span class="durak-table-hint ok">Цель выбрана — жми большую карту</span>' : '');
-      const body = table.length
-        ? table.map((p, i) => privateTrickHtml(p, i, v, id)).join('')
-        : '<span class="durak-muted">Стол пуст</span>';
-      return `<div class="durak-private-table ${needsPick ? 'needs-pick' : ''}"><div class="durak-table">${body}</div>${hint}</div>`;
-    }
     function modePicker(v){
       const active = v.mode || 'podkidnoy';
       if (!amHost(v)) return `<div class="durak-mode-read">${modeLabel(v)}</div>`;
@@ -14119,7 +13787,7 @@ gateColor.addEventListener('input', syncColor);
         if (!inGame) {
           el.innerHTML = `${privateHead}<div class="durak-private-empty">Ты пока не в партии</div>${v.state === 'lobby' ? '<div class="durak-actions"><button class="btn small" data-da="join">Вписаться</button></div>' : ''}`;
         } else {
-          el.innerHTML = `${privateHead}${previewHtml(v,id)}${v.state === 'playing' ? privateTableHtml(v,id) : ''}<div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), inspectable:true, ambiguous:needsPlayChoice(v,id,c), chosen:selectedCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}${controls(v,id)}`;
+          el.innerHTML = `${privateHead}${previewHtml(v,id)}<div class="durak-hand">${hand.map(c => cardHtml(c,{ playable:canPlayCard(v,id,c), inspectable:true, ambiguous:needsPlayChoice(v,id,c), chosen:selectedCard === c })).join('') || '<span class="durak-muted">Карт нет</span>'}</div>${choiceHtml(v,id)}${controls(v,id)}`;
         }
         wire(el);
         return;
@@ -14298,26 +13966,6 @@ gateColor.addEventListener('input', syncColor);
         .durak-my-zone{border-top:1px solid rgba(255,255,255,.1);padding-top:14px}.durak-hidden{display:flex;flex-direction:column;align-items:center;gap:8px;color:#fff;background:rgba(2,6,23,.72);border:1px solid rgba(251,191,36,.4);border-radius:8px;padding:12px}.durak-hidden span{color:rgba(255,255,255,.68);font-size:13px}.durak-end{font-size:26px;font-weight:950;margin:18px 0}
         #durakHandOverlay,.durak-private{width:100vw;height:100vh;background:#050814;color:#fff;font-family:'Montserrat','Open Sans',sans-serif;box-sizing:border-box;padding:12px;overflow:auto}.durak-private-head{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;color:#fbbf24;font-weight:900}.durak-private .durak-preview-card{width:clamp(150px,34vh,270px)}.durak-private .durak-hand{justify-content:flex-start;align-items:flex-end;min-height:126px}.durak-private .durak-actions{justify-content:flex-start;margin-top:10px}.durak-private-empty{padding:18px;color:rgba(255,255,255,.72);font-weight:800}
         #durakOverlay{pointer-events:none;background:transparent}#durakOverlay .durak-panel{pointer-events:auto}.durak-panel{overflow:visible}.durak-turn small,.durak-private-head small{display:block;margin-top:2px;color:#fbbf24;font-size:13px;line-height:1}.durak-slot.target{cursor:pointer;color:#fbbf24;border-color:rgba(251,191,36,.72);background:rgba(251,191,36,.1);box-shadow:0 0 18px rgba(251,191,36,.22)}.durak-slot.target.selected{background:rgba(34,197,94,.22);border-color:#22c55e;color:#fff;box-shadow:0 0 22px rgba(34,197,94,.34)}.durak-preview{position:fixed;left:50%;top:clamp(72px,12vh,126px);transform:translateX(-50%);z-index:100220;margin:0;pointer-events:auto}.durak-preview-card{width:clamp(150px,20vmin,250px)}html.overlay-live #durakOverlay .durak-preview,html.overlay-mode #durakOverlay .durak-preview{top:12px}.durak-action-state{display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:6px 12px;border-radius:8px;border:1px solid rgba(255,255,255,.14);color:rgba(255,255,255,.62);font-weight:900}.durak-private{display:flex;flex-direction:column;justify-content:flex-end;background:transparent;overflow:hidden;padding:8px 10px}.durak-private-head{position:fixed;left:10px;right:10px;top:8px;z-index:2;margin:0;padding:6px 8px;border-radius:8px;background:rgba(5,8,20,.48);backdrop-filter:blur(5px);gap:8px}.durak-private-head b{min-width:120px}.durak-private-head span{font-size:12px;color:rgba(255,255,255,.72);flex:1;text-align:center}.durak-private-toggle{padding:6px 10px}.durak-private .durak-hand{margin-top:auto;max-height:132px;overflow:visible;flex-wrap:wrap;align-content:flex-end;justify-content:center;gap:7px;padding:0 86px 0 4px}.durak-private .durak-hand .durak-card{width:72px;height:102px}.durak-private .durak-actions{position:fixed;right:12px;bottom:12px;z-index:3;margin:0;justify-content:flex-end}.durak-private .durak-choice{position:fixed;left:50%;bottom:124px;transform:translateX(-50%);z-index:3;margin:0}.durak-private .durak-preview{top:44px}.durak-private .durak-preview-card{width:clamp(130px,36vh,220px)}.durak-private-empty{align-self:center;margin-bottom:60px;background:rgba(5,8,20,.5);border-radius:8px}
-        /* === Стол внутри приватного окна руки === */
-        .durak-private-table{margin-top:auto;display:flex;flex-direction:column;align-items:center;gap:4px;padding:6px 4px 2px;border-radius:8px;background:rgba(2,6,23,.42);border:1px solid rgba(255,255,255,.07)}
-        .durak-private-table.needs-pick{border-color:rgba(251,191,36,.6);background:rgba(30,22,4,.5);box-shadow:0 0 22px rgba(251,191,36,.16)}
-        .durak-private-table .durak-table{width:100%;min-height:0;padding:2px 4px;border:none;background:transparent;flex-wrap:nowrap;overflow-x:auto;overflow-y:hidden;justify-content:flex-start;gap:6px}
-        .durak-private-table .durak-table::-webkit-scrollbar{height:5px}
-        .durak-private-table .durak-trick{flex:0 0 auto;width:84px;height:96px}
-        .durak-private-table .durak-card,.durak-private-table .durak-slot{width:46px;height:66px;border-radius:6px}
-        .durak-private-table .durak-card span,.durak-private-table .durak-slot{font-size:14px}
-        .durak-private-table .durak-card b{font-size:17px}
-        .durak-private-table .durak-trick>.durak-card{top:22px}
-        .durak-private-table .durak-trick>.durak-card+.durak-card,.durak-private-table .durak-trick>.durak-slot.defense{left:32px;top:2px}
-        .durak-private-table .durak-slot.defense.target{font-size:11px;letter-spacing:.02em}
-        .durak-private-table .durak-trick.targetable>.durak-card:first-child{box-shadow:0 8px 20px rgba(0,0,0,.4),0 0 0 2px rgba(251,191,36,.85) inset;cursor:pointer;animation:durakTargetPulse 1.1s ease-in-out infinite}
-        .durak-private-table .durak-trick.target-picked>.durak-card:first-child{box-shadow:0 8px 20px rgba(0,0,0,.4),0 0 0 2px #22c55e inset;animation:none}
-        @keyframes durakTargetPulse{0%,100%{filter:brightness(1)}50%{filter:brightness(1.22)}}
-        .durak-table-hint{font-size:11px;font-weight:800;line-height:1.2;text-align:center}
-        .durak-table-hint.pick{color:#fbbf24}
-        .durak-table-hint.ok{color:#22c55e}
-        .durak-private .durak-private-table+.durak-hand{margin-top:6px;max-height:112px}
-        .durak-private .durak-private-table .durak-muted{padding:18px 8px;font-size:12px}
         @media(max-width:700px){.durak-panel{padding:12px}.durak-top{grid-template-columns:1fr;justify-items:center}.durak-turn{font-size:22px}.durak-board{min-height:390px}.durak-center{width:min(360px,76vw)}.durak-card,.durak-back,.durak-trump-card{width:52px;height:76px}.durak-hand .durak-card{width:68px;height:96px}.durak-preview-card{width:clamp(140px,44vw,220px)}.durak-slot{width:52px;height:76px}.durak-trick{width:100px;height:114px}.durak-trick>.durak-card+.durak-card,.durak-trick>.durak-slot.defense{left:34px}.durak-fan{width:116px;height:58px}.durak-mini-card{width:30px;height:42px}}
       `;
       document.head.appendChild(st);
@@ -14331,10 +13979,6 @@ gateColor.addEventListener('input', syncColor);
   const GONE_AFTER_MS = 30 * 60 * 1000;
 
   function initMusicModule() {
-    // Чату, эмодзи-панели и приватной руке дурака музыкальный модуль не нужен:
-    // это ещё 6 Firebase-подписок и 5 интервалов на каждое такое окно.
-    if (!window.__ccNeedMusic) return;
-
     const music_db = window.db;
 
     if (!music_db) {
@@ -14795,13 +14439,6 @@ gateColor.addEventListener('input', syncColor);
       for (const [uid, p] of window.state.points.entries()){
         if (!p) continue;
         if (uid !== selfUid) continue;
-        // Пока на человеке висит обманка «ожидание» — он ещё не проголосовал,
-        // даже если физически стоит в зоне. Чтобы засчитать голос, надо реально
-        // сдвинуться (обманка тогда сама снимется).
-        if (window.__ccVoteDecoys?.get?.(uid)?.reason === 'waiting'){
-          _voteHoldStart.delete(uid);
-          continue;
-        }
         const zone = _detectZone(p);
 
         if (!zone || zone === 'time'){
@@ -14882,13 +14519,10 @@ gateColor.addEventListener('input', syncColor);
         .filter(Boolean));
       const activeNames = new Set();
       const now = Date.now();
-      // ВАЖНО: знаменатель — это ВСЕ активные люди, а не только те, кто нажал.
-      // Раньше "исключённые" (exc) вылетали из знаменателя, из-за чего один
-      // "НЕТ" при пятерых в ожидании проходил как большинство.
-      // Теперь exc остаётся в знаменателе — это и есть защита от скипа.
       const addActiveName = (rawName, item = {}) => {
         const name = window.__ccCanonicalName?.(rawName) || rawName;
         if (!name) return;
+        if (excNames.has(name)) return;
         const state = item.state || 'online';
         if (state === 'gone' || state === 'offline') return;
         const lastSeen = Number(item.lastActive || item.ts || 0);
@@ -14913,10 +14547,10 @@ gateColor.addEventListener('input', syncColor);
           addActiveName(p.name, p);
         }
       } catch {}
-      // Проголосовавшие тоже активны по определению (в т.ч. exc).
-      for (const name of allVoteNames) activeNames.add(name);
+      for (const name of allVoteNames) {
+        if (!excNames.has(name)) activeNames.add(name);
+      }
       const total = activeNames.size;
-      const excCount = excNames.size;
       if (!total || total < 2) {
         try { await remove(ref(music_db, `${musicPath}/vote_result`)); } catch {}
         _lastDecisionKey = '';
@@ -14933,11 +14567,6 @@ gateColor.addEventListener('input', syncColor);
         trackId,
         total,
         needed,
-        excCount,
-        activeNames: [...activeNames],
-        // Отпечаток состава: spotify_host.py по нему понимает, что результат
-        // свежий и относится к текущему треку, а не залежался с прошлого.
-        source: 'host-browser',
         playlist: { count: playlistVoters.length, voters: playlistVoters, passed: playlistPassed },
         skip: { count: skipVoters.length, voters: skipVoters, passed: skipPassed },
         updatedAt: Date.now()
@@ -15031,17 +14660,9 @@ gateColor.addEventListener('input', syncColor);
 
     // Рендер лучиков для зоны
     // Рендер SVG-кольца по контуру зоны: каждый голосующий = дуга цвета
-    function _dropRingPaths(zoneEl){
-      const list = window.__ccZoneRingPaths;
-      if (!list || !list.length) return;
-      for (let i = list.length - 1; i >= 0; i--) {
-        if (!list[i].isConnected || zoneEl.contains(list[i])) list.splice(i, 1);
-      }
-    }
     function _renderRays(zoneEl, voters, zoneId) {
       const N = voters.length;
       let svg = zoneEl.querySelector('.zone-ring-svg');
-      _dropRingPaths(zoneEl);
       if (N === 0) {
         if (svg) svg.remove();
         const badge = zoneEl.querySelector('.zone-count');
@@ -15101,20 +14722,13 @@ gateColor.addEventListener('input', syncColor);
         path.setAttribute('stroke-dasharray', `${dashLen} ${PL - dashLen}`);
         const startOffset = -i * segLen;
         path.setAttribute('stroke-dashoffset', String(startOffset));
-        const duration = Math.max(2.4, 5.5 - N * 0.35);
         path.dataset.startOffset = String(startOffset);
         path.dataset.pathLength = String(PL);
-        path.dataset.duration = String(duration);
-        // Числа кладём прямо на элемент — чтобы в цикле анимации не парсить
-        // строки из dataset 30 раз в секунду.
-        path.__ringStart = startOffset;
-        path.__ringLen = PL;
-        path.__ringDur = duration;
+        path.dataset.duration = String(Math.max(2.4, 5.5 - N * 0.35));
         path.style.setProperty('--zone-ring-start', String(startOffset));
-        path.style.animation = `zoneRingOrbit ${duration}s linear infinite`;
+        path.style.animation = `zoneRingOrbit ${path.dataset.duration}s linear infinite`;
         path.style.filter = `drop-shadow(0 0 6px ${color})`;
         g.appendChild(path);
-        window.__ccZoneRingPaths.push(path);
       }
 
       // Счётчик голосов
@@ -15141,34 +14755,17 @@ gateColor.addEventListener('input', syncColor);
       document.head.appendChild(st);
     }
 
-    // Анимация колец.
-    // Было: RAF 60 раз в секунду + document.querySelectorAll на каждый кадр,
-    // и так в КАЖДОМ из ~12 окон оверлея, даже если колец в окне ноль.
-    // Стало: кэшированный список путей (обновляет _renderRays), 30 fps,
-    // и полная остановка цикла, когда рисовать нечего.
-    window.__ccZoneRingPaths = window.__ccZoneRingPaths || [];
+    // Обновляем каждые 300мс (можно чаще, но дешевле)
     if (!window.__zoneRingRaf) {
       window.__zoneRingRaf = true;
-      let _ringLastTs = 0;
       const animateZoneRings = (now) => {
-        const paths = window.__ccZoneRingPaths;
-        if (!paths.length) {
-          // Ничего не крутим — уходим в дешёвый таймер вместо RAF.
-          setTimeout(() => requestAnimationFrame(animateZoneRings), 400);
-          return;
-        }
-        if (now - _ringLastTs >= 33) {
-          _ringLastTs = now;
-          for (let i = paths.length - 1; i >= 0; i--) {
-            const path = paths[i];
-            if (!path.isConnected) { paths.splice(i, 1); continue; }
-            const start = path.__ringStart;
-            const len = path.__ringLen;
-            const dur = path.__ringDur;
-            const phase = (now / 1000) % dur / dur;
-            path.setAttribute('stroke-dashoffset', String(start - phase * len));
-          }
-        }
+        document.querySelectorAll('.zone-ring-path').forEach(path => {
+          const start = parseFloat(path.dataset.startOffset || '0');
+          const len = parseFloat(path.dataset.pathLength || '1000');
+          const dur = Math.max(0.2, parseFloat(path.dataset.duration || '4'));
+          const phase = (now / 1000) % dur / dur;
+          path.setAttribute('stroke-dashoffset', String(start - phase * len));
+        });
         requestAnimationFrame(animateZoneRings);
       };
       requestAnimationFrame(animateZoneRings);
@@ -15184,10 +14781,6 @@ gateColor.addEventListener('input', syncColor);
       for (const zoneId of zoneIds){
         const zoneEl = document.getElementById('zone_' + zoneId);
         if (!zoneEl) continue;
-        // В главном окне оверлея зоны спрятаны (их показывает Python отдельными
-        // окнами) — не плодим для них SVG-кольца, которые всё равно никто не
-        // увидит, но которые крутятся в цикле анимации.
-        if (!zoneEl.offsetWidth && !zoneEl.offsetHeight) continue;
         const voters = grouped[zoneId] || [];
         const renderKey = voters.slice().sort().join('|');
         const hasRing = !!zoneEl.querySelector('.zone-ring-svg');
@@ -15245,8 +14838,6 @@ gateColor.addEventListener('input', syncColor);
         _voteHoldStart.clear();
         _voteCommitted.clear();
         _yankMyPointToCenter();
-        // Насильно двигать чужие морды мы не можем — рисуем обманки в центре.
-        window.__ccStartWaitingDecoys?.();
         if (isFirst) console.log('🎵 Трек — морды в центр, пауза 5 сек');
         else console.log('🎵 Новый трек — морды в центр, пауза 5 сек');
       }
@@ -15359,142 +14950,80 @@ gateColor.addEventListener('input', syncColor);
       circle.style.strokeDashoffset = String(C * (1 - progress));
     }, 200);
 
-    // === 3. ОБМАНКИ + АВТО-ИСКЛЮЧЕНИЕ ===
-    //
-    // Задача: в начале каждого трека все должны "перемешаться в центр, в ожидание".
-    // Насильно двигать чужие морды мы не имеем права (координаты пишет сам клиент),
-    // поэтому делаем визуальный трюк:
-    //   1) на смене трека каждому рисуем ОБМАНКУ в центре (реальная морда на
-    //      холсте не рисуется, вместо неё едет копия в центр);
-    //   2) как только человек реально сдвинулся — обманка снимается, и он снова
-    //      виден там, где стоит;
-    //   3) кто торчит вне точек голоса дольше 30 секунд (не важно где) — его морда
-    //      с холста убирается, вместо неё обманка в углу «Исключение», и голос
-    //      exc засчитывается: цвет уходит в рамочку зоны.
-    //
-    // Всё считается локально из одних и тех же данных, поэтому у хоста и у зрителей
-    // картинка совпадает без дополнительной синхронизации.
-    const ZONE_CENTERS = {
-      da_no: { x: 0.11, y: 0.13 },
-      exc:   { x: 0.89, y: 0.13 },
-      da:    { x: 0.11, y: 0.87 },
-      no:    { x: 0.89, y: 0.87 },
-      time:  { x: 0.50, y: 0.50 }
-    };
-    const DECOY_MOVE_EPS = 0.02;     // насколько надо сдвинуться, чтобы обманка спала
-    const OUTSIDE_LIMIT_MS = 30000;  // 30 секунд вне точки голоса → исключение
-
-    window.__ccVoteDecoys = window.__ccVoteDecoys || new Map(); // uid → {x,y,reason}
-    const _decoys = window.__ccVoteDecoys;
-    const _waitAnchors = new Map();  // uid → {x,y}  позиция на момент смены трека
-    const _outsideSince = new Map(); // uid → ts     когда человек последний раз покинул зону
-
-    function _clearAllDecoys(){
-      _decoys.clear();
-      _waitAnchors.clear();
-      _outsideSince.clear();
-    }
-
-    // Вызывается на каждой смене трека
-    window.__ccStartWaitingDecoys = function(){
-      _clearAllDecoys();
-      const pts = window.state?.points;
-      if (!pts) return;
-      const now = Date.now();
-      for (const [uid, p] of pts.entries()){
-        if (!p) continue;
-        if (window.__ccIsHostName?.(p.name)) continue; // хоста в ожидание не тащим
-        _waitAnchors.set(uid, { x: Number(p.x) || 0, y: Number(p.y) || 0 });
-        _outsideSince.set(uid, now);
-        _decoys.set(uid, {
-          x: ZONE_CENTERS.time.x, y: ZONE_CENTERS.time.y, reason: 'waiting',
-          fromX: Number(p.x) || 0.5, fromY: Number(p.y) || 0.5, t0: now
-        });
-      }
-      if (_decoys.size) console.log(`🎭 Обманки в центр: ${_decoys.size}`);
-    };
-
-    // Право писать чужие голоса есть только у главного окна хоста:
-    // иначе 12 панелей и все зрители полезут писать одно и то же.
-    function _canWriteForeignVotes(){
-      return _isHostHere() && !window.overlayComponent;
-    }
-
-    async function _commitExc(uid, p){
-      const voterName = window.__ccCanonicalName?.(p.name) || p.name || uid.slice(0, 6);
-      const voterColor = p.color || currentVoteColors[voterName] || '#16c7b7';
-      // Локально показываем сразу, не дожидаясь round-trip до Firebase.
-      autoExcVotes.set(voterName, 'exc');
-      autoExcColors.set(voterName, voterColor);
-      currentVotes = { ...currentVotes, [voterName]: 'exc' };
-      currentVoteColors = { ...currentVoteColors, [voterName]: voterColor };
-      _voteCommitted.set(uid, { zone: 'exc', t: Date.now() });
-      const selfUid = window.__ccCanonicalUid?.() || window.auth?.currentUser?.uid || window.state?.id;
-      if (!_canWriteForeignVotes() && uid !== selfUid) return;
-      try {
-        await update(ref(music_db), {
-          [`${musicPath}/votes/${voterName}`]: 'exc',
-          [`${musicPath}/vote_colors/${voterName}`]: voterColor
-        });
-        console.log(`💤 ${voterName} → exc (30с вне точек)`);
-      } catch(e){ console.warn('auto-exc fail', e); }
-    }
-
+    // === 3. Автотранспорт неактивных в Исключение ===
+    // Если морда стоит вне зон 10+ секунд и не двигается — пишем ей голос "exc"
+    const _inactiveTracker = new Map(); // uid → { x, y, sinceT }
     setInterval(async () => {
       if (!document.body.classList.contains('music-active')) {
-        if (_decoys.size) _clearAllDecoys();
+        _inactiveTracker.clear();
         return;
       }
-      const pts = window.state?.points;
-      if (!pts) return;
+      if (!_clockHidden) {
+        _inactiveTracker.clear();
+        return;
+      }
+      if (!window.state || !window.state.points) return;
+      if (_isHostHere()) return;
+
       const now = Date.now();
-
-      // Обманки чистим для тех, кого уже нет на доске
-      for (const uid of [..._decoys.keys()]) if (!pts.has(uid)) _decoys.delete(uid);
-
-      for (const [uid, p] of pts.entries()){
+      const selfUid = window.__ccCanonicalUid?.() || window.auth?.currentUser?.uid || window.state?.id;
+      for (const [uid, p] of window.state.points.entries()){
         if (!p) continue;
-        if (window.__ccIsHostName?.(p.name)) { _decoys.delete(uid); continue; }
-
+        if (uid !== selfUid) continue;
         const voterName = window.__ccCanonicalName?.(p.name) || p.name || uid.slice(0, 6);
-        const zone = _detectZone(p);
-        const inVotePoint = !!zone && zone !== 'time';
-
-        // --- 1. Обманка «ожидание»: снимаем, как только человек сдвинулся ---
-        const decoy = _decoys.get(uid);
-        const anchor = _waitAnchors.get(uid);
-        if (decoy && decoy.reason === 'waiting' && anchor){
-          const moved = Math.hypot((p.x || 0) - anchor.x, (p.y || 0) - anchor.y);
-          if (moved > DECOY_MOVE_EPS){
-            _decoys.delete(uid);
-            _waitAnchors.delete(uid);
-          }
-        }
-
-        // --- 2. Счётчик «вне точки голоса» ---
-        if (inVotePoint){
-          _outsideSince.delete(uid);
-          // Вернулся в зону — обманка исключения больше не нужна
-          const d = _decoys.get(uid);
-          if (d && d.reason === 'exc') _decoys.delete(uid);
+        const alreadyVoted = ['da', 'da_no', 'no', 'exc'].includes(currentVotes[voterName]);
+        if (alreadyVoted){
+          _inactiveTracker.delete(uid);
           continue;
         }
-        if (!_outsideSince.has(uid)) _outsideSince.set(uid, now);
 
-        // Уже проголосовал руками — не трогаем
-        if (['da', 'da_no', 'no', 'exc'].includes(currentVotes[voterName])) continue;
+        // После исчезновения часов центр/time уже не защищает искусственную морду от исключения.
+        const inZone = _detectZone(p);
+        if (inZone && inZone !== 'time'){
+          _inactiveTracker.delete(uid);
+          continue;
+        }
 
-        // --- 3. 30 секунд вне точек → морда убирается, обманка в «Исключение» ---
-        if (now - _outsideSince.get(uid) < OUTSIDE_LIMIT_MS) continue;
+        // Уже засчитан "exc" недавно?
         const last = _voteCommitted.get(uid);
-        if (last && last.zone === 'exc' && (now - last.t) < OUTSIDE_LIMIT_MS) continue;
+        if (last && last.zone === 'exc' && (now - last.t) < 30000){
+          _inactiveTracker.delete(uid);
+          continue;
+        }
 
-        _waitAnchors.delete(uid);
-        _decoys.set(uid, {
-          x: ZONE_CENTERS.exc.x, y: ZONE_CENTERS.exc.y, reason: 'exc',
-          fromX: Number(p.x) || 0.5, fromY: Number(p.y) || 0.5, t0: now
-        });
-        await _commitExc(uid, p);
+        const track = _inactiveTracker.get(uid);
+        if (!track){
+          _inactiveTracker.set(uid, { x: p.x, y: p.y, sinceT: now });
+          continue;
+        }
+        const moved = Math.hypot(p.x - track.x, p.y - track.y);
+        if (moved > 0.015){
+          // Двинулся — сбрасываем якорь
+          track.x = p.x; track.y = p.y; track.sinceT = now;
+          continue;
+        }
+        // Не переносим хоста (Лёха) в исключения
+        if (window.__ccIsHostName?.(p.name)) continue;
+        if (now - track.sinceT < 10000) continue;
+      
+        // 10+ сек без движения вне зон — отправляем в Исключение
+        try {
+          const voterColor = p.color || currentVoteColors[voterName] || '#16c7b7';
+          await update(ref(music_db), {
+            [`${musicPath}/votes/${voterName}`]: 'exc',
+            [`${musicPath}/vote_colors/${voterName}`]: voterColor
+          });
+          autoExcVotes.set(voterName, 'exc');
+          autoExcColors.set(voterName, voterColor);
+          currentVotes = { ...currentVotes, [voterName]: 'exc' };
+          currentVoteColors = { ...currentVoteColors, [voterName]: voterColor };
+          _voteCommitted.set(uid, { zone: 'exc', t: now });
+          _inactiveTracker.delete(uid);
+          try { await update(ref(music_db, `${pointsPath}/${uid}`), { state: 'lost' }); } catch {}
+          try { await remove(ref(music_db, `${pointsPath}/${uid}`)); } catch {}
+          try { window.state.points.delete(uid); } catch {}
+          console.log(`💤 ${voterName} → exc (неактивен)`);
+        } catch(e){ console.warn('auto-exc fail', e); }
       }
     }, 1000);
   }
@@ -15715,19 +15244,6 @@ gateColor.addEventListener('input', syncColor);
         source.connect(analyser);
         freqData = new Uint8Array(analyser.frequencyBinCount);
 
-        // Пользователь может остановить шаринг кнопкой браузера — ловим это.
-        audioTracks[0].addEventListener('ended', () => {
-          console.warn('[party] аудио-трек закрыт');
-          try { analyser?.disconnect(); } catch(e){}
-          analyser = null;
-          freqData = null;
-          _lastSoundAt = 0;
-          statusEl.style.opacity = '1';
-          statusEl.textContent = '⚠️ Шаринг звука остановлен — жми 🔊';
-          audioBtn.style.background = '';
-          audioBtn.textContent = '🔊';
-        });
-        _lastSoundAt = performance.now();
         statusEl.textContent = '🔥 Огонь живой!';
         audioBtn.style.background = 'rgba(34,197,94,0.4)';
         audioBtn.textContent = '✓';
@@ -15749,10 +15265,8 @@ gateColor.addEventListener('input', syncColor);
     let lastBass = 0;
     let lastMid = 0;
     let lastLevel = 0;
-    let beatPulse = 0;     // короткий "всплеск" при бите
+    let beatPulse = 0;     // короткий "всплеск" при бите, угасает за пару кадров
     let surgePulse = 0;    // резкий скачок ОБЩЕЙ громкости (для искр)
-    let _pulseLastT = 0;   // для затухания импульсов по реальному времени
-    let _lastSoundAt = 0;  // когда последний раз реально слышали звук
     function readAudioLevels(){
       if (!analyser){
         const t = performance.now() / 1000;
@@ -15760,9 +15274,7 @@ gateColor.addEventListener('input', syncColor);
         smoothedBass = 0.38 + 0.34 * Math.sin(t * 3.6);
         smoothedMid = 0.34 + 0.24 * Math.sin(t * 5.8);
         smoothedHigh = 0.32 + 0.22 * Math.sin(t * 8.2);
-        beatPulse = Math.max(beatPulse * 0.9, Math.max(0, Math.sin(t * 3.8)) * 0.24);
-        surgePulse = Math.max(0, Math.sin(t * 1.7)) * 0.18;
-        _pulseLastT = performance.now();
+        beatPulse = Math.max(beatPulse * 0.78, Math.max(0, Math.sin(t * 3.8)) * 0.24);
         return;
       }
       analyser.getByteFrequencyData(freqData);
@@ -15808,11 +15320,7 @@ gateColor.addEventListener('input', syncColor);
           beatCooldownT = now + 140;
         }
       }
-      // Затухание по времени, а не по кадрам: на 144 Гц импульс раньше
-      // гас втрое быстрее, чем на 60 — отсюда «вялая» реакция на бит.
-      const _dtP = Math.min(0.1, Math.max(0.001, (now - (_pulseLastT || now)) / 1000));
-      _pulseLastT = now;
-      beatPulse *= Math.pow(0.05, _dtP);
+      beatPulse *= 0.78;
 
       // === Детектор резких скачков (для искр) ===
       // Когда общая громкость прыгает - летят искры в стороны.
@@ -15820,311 +15328,128 @@ gateColor.addEventListener('input', syncColor);
       if (levelDelta > 0.06 && now > beatCooldownT - 50){
         surgePulse = Math.max(surgePulse, Math.min(1, levelDelta * 4));
       }
-      surgePulse *= Math.pow(0.12, _dtP);
-
-      // --- Сторож тишины ---
-      // Если поток есть, но по нему давно ничего не идёт (закрыли вкладку
-      // Spotify, сменили устройство) — раньше костёр просто замирал.
-      // Теперь честно отваливаемся на автономную анимацию и зовём переподключиться.
-      if (total > 0.012) _lastSoundAt = now;
-      else if (_lastSoundAt && now - _lastSoundAt > 6000){
-        console.warn('[party] звук пропал — отключаю анализатор');
-        try { analyser.disconnect(); } catch(e){}
-        analyser = null;
-        freqData = null;
-        _lastSoundAt = 0;
-        statusEl.style.opacity = '1';
-        statusEl.textContent = '⚠️ Звук пропал — жми 🔊 ещё раз';
-        audioBtn.style.background = '';
-        audioBtn.textContent = '🔊';
-      }
+      surgePulse *= 0.82;
     }
 
-    // === ПЛАМЯ (переписано) ===
-    //
-    // Что было не так:
-    //  • на КАЖДУЮ частицу КАЖДЫЙ кадр создавался ctx.createRadialGradient —
-    //    это самая дорогая операция canvas2d, 400 градиентов в кадр убивали fps;
-    //  • жёсткий потолок MAX_PARTICLES=420 при спавне до 33 штук за кадр:
-    //    массив мгновенно упирался в лимит, спавн вставал, и огонь «медленно
-    //    кидал частицы» — то самое подтормаживание;
-    //  • физика считалась в кадрах, а не в секундах: просел fps — просело и пламя;
-    //  • если поток звука обрывался (закрыл вкладку Spotify), анализатор молча
-    //    отдавал тишину и костёр «забывал подстраиваться».
-    //
-    // Что стало: частицы рисуются готовым спрайтом (градиент запечён один раз в
-    // offscreen-канвас и тонируется), шаг по delta-time, авто-подстройка бюджета
-    // частиц под реальный fps, плюс искры, угли, дым и живое дыхание пламени.
+    // === Частицы пламени ===
+    const particles = [];
+    const MAX_PARTICLES = 420;
+    function spawnParticle(){
+          const W = canvas.width, H = canvas.height;
+          const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
 
-    // --- Запечённый спрайт частицы: белое ядро → прозрачные края ---
-    const SPRITE_SIZE = 128;
-    function makeSprite(stops){
-      const c = document.createElement('canvas');
-      c.width = c.height = SPRITE_SIZE;
-      const g = c.getContext('2d');
-      const grad = g.createRadialGradient(
-        SPRITE_SIZE/2, SPRITE_SIZE/2, 0,
-        SPRITE_SIZE/2, SPRITE_SIZE/2, SPRITE_SIZE/2
-      );
-      for (const [pos, col] of stops) grad.addColorStop(pos, col);
-      g.fillStyle = grad;
-      g.fillRect(0, 0, SPRITE_SIZE, SPRITE_SIZE);
-      return c;
-    }
-    // Мягкий язык пламени
-    const SPRITE_FLAME = makeSprite([
-      [0.00, 'rgba(255,255,255,1)'],
-      [0.22, 'rgba(255,255,255,0.72)'],
-      [0.55, 'rgba(255,255,255,0.22)'],
-      [1.00, 'rgba(255,255,255,0)']
-    ]);
-    // Плотная искра — почти точка со свечением
-    const SPRITE_SPARK = makeSprite([
-      [0.00, 'rgba(255,255,255,1)'],
-      [0.12, 'rgba(255,255,255,0.9)'],
-      [0.40, 'rgba(255,255,255,0.28)'],
-      [1.00, 'rgba(255,255,255,0)']
-    ]);
-    // Дым — широкий и вялый
-    const SPRITE_SMOKE = makeSprite([
-      [0.00, 'rgba(255,255,255,0.5)'],
-      [0.45, 'rgba(255,255,255,0.2)'],
-      [1.00, 'rgba(255,255,255,0)']
-    ]);
+          // 1. ВЫСОТА ОТ ПОЛА: 0.25 означает поднять на 25% от высоты экрана вверх. 
+          // Подгоняй эту цифру под свои угли (например, 0.3 или 0.15)
+          const floorOffset = H * 0.20; 
 
-    // Тонировочные слои: спрайт белый, цвет накладываем через отдельный
-    // маленький канвас — так мы не пересчитываем градиенты в рантайме.
-    const tintCache = new Map();
-    function tintedSprite(sprite, r, g, b){
-      // Квантуем цвет до 16 уровней на канал: визуально не отличить,
-      // зато кэш не разрастается на каждый кадр.
-      const key = `${sprite.__id}|${r >> 4}|${g >> 4}|${b >> 4}`;
-      let c = tintCache.get(key);
-      if (c) return c;
-      c = document.createElement('canvas');
-      c.width = c.height = SPRITE_SIZE;
-      const cx = c.getContext('2d');
-      cx.drawImage(sprite, 0, 0);
-      cx.globalCompositeOperation = 'source-in';
-      cx.fillStyle = `rgb(${r},${g},${b})`;
-      cx.fillRect(0, 0, SPRITE_SIZE, SPRITE_SIZE);
-      if (tintCache.size > 220) tintCache.clear();
-      tintCache.set(key, c);
-      return c;
-    }
-    SPRITE_FLAME.__id = 'f';
-    SPRITE_SPARK.__id = 's';
-    SPRITE_SMOKE.__id = 'm';
+          // 2. ШИРИНА ПЛАМЕНИ: было 0.18, стало 0.45 (огонь станет намного шире)
+          const spread = W * 0.45 * (1 + smoothedLevel * 0.4 + beatPulse * 0.7);
+          const cx = W / 2 + (Math.random() - 0.5) * spread;
 
-    const flames = [];
-    const sparks = [];
-    const smoke = [];
-    // Бюджет подстраивается под железо: если кадр не укладывается — снижаем.
-    let particleBudget = 380;
-    const BUDGET_MIN = 130, BUDGET_MAX = 620;
-    let spawnCarry = 0;      // накопитель дробных частиц между кадрами
-    let sparkCarry = 0;
-    let smokeCarry = 0;
-    let flicker = 0;         // низкочастотное «дыхание» костра
-    let flickerVel = 0;
+          const power = 1.05 + smoothedBass * 1.7 + beatPulse * 1.4;
 
-    function dprNow(){ return Math.min(window.devicePixelRatio || 1, 1.5); }
+          // 3. ВЫСОТА ЯЗЫКОВ ПЛАМЕНИ: увеличили стартовую скорость vy (было -(2 + Math.random() * 3))
+          const vy = -(6.8 + Math.random() * 5.8) * power * dpr;
+          const vx = (Math.random() - 0.5) * (3.0 + beatPulse * 3.5) * dpr;
 
-    function spawnFlame(){
+          // 4. РАЗМЕР ЧАСТИЦ: сделали сами куски огня крупнее (было 18 + Math.random() * 22)
+          const size = (24 + Math.random() * 30) * dpr * (0.75 + smoothedLevel * 0.55 + beatPulse * 0.45);
+          
+          // Короче жизнь + выше скорость: огонь едет бодрее, но не забивает рендер.
+          const life = 42 + Math.random() * 58;
+          
+          particles.push({
+            // Применяем отступ от пола (H - floorOffset)
+            x: cx, y: (H - floorOffset) + (Math.random() * 25 * dpr),
+            vx, vy,
+            size, life, maxLife: life,
+            seed: Math.random() * 1000,
+          });
+        }
+
+    function updateAndDrawParticles(){
       const W = canvas.width, H = canvas.height;
-      const dpr = dprNow();
-      const floorOffset = H * 0.20;
-
-      // Ядро уже краёв: частицы у центра летят выше и живут дольше —
-      // из этого получается характерный «язык», а не ровный столб.
-      const bias = Math.pow(Math.random(), 0.65) * (Math.random() < 0.5 ? -1 : 1);
-      const spread = W * 0.45 * (1 + smoothedLevel * 0.4 + beatPulse * 0.7);
-      const cx = W / 2 + bias * spread * 0.5;
-      const core = 1 - Math.min(1, Math.abs(bias));   // 1 в центре, 0 по краям
-
-      const power = 1.05 + smoothedBass * 1.7 + beatPulse * 1.4 + flicker * 0.3;
-      const vy = -(360 + Math.random() * 320) * power * dpr * (0.65 + core * 0.6);
-      const vx = (Math.random() - 0.5) * (150 + beatPulse * 220) * dpr;
-      const size = (24 + Math.random() * 30) * dpr *
-                   (0.75 + smoothedLevel * 0.55 + beatPulse * 0.45) * (0.6 + core * 0.6);
-
-      flames.push({
-        x: cx, y: (H - floorOffset) + (Math.random() * 25 * dpr),
-        vx, vy, size,
-        life: (0.75 + Math.random() * 0.95) * (0.7 + core * 0.6),
-        age: 0,
-        seed: Math.random() * 6.28,
-        spin: (Math.random() - 0.5) * 1.4
-      });
-    }
-
-    function spawnSpark(){
-      const W = canvas.width, H = canvas.height;
-      const dpr = dprNow();
-      const a = -Math.PI/2 + (Math.random() - 0.5) * 1.9;
-      const sp = (280 + Math.random() * 620) * dpr * (0.6 + surgePulse);
-      sparks.push({
-        x: W/2 + (Math.random() - 0.5) * W * 0.22,
-        y: H - H * 0.22 + (Math.random() - 0.5) * 30 * dpr,
-        vx: Math.cos(a) * sp,
-        vy: Math.sin(a) * sp,
-        size: (2.2 + Math.random() * 3.4) * dpr,
-        life: 0.9 + Math.random() * 1.5,
-        age: 0
-      });
-    }
-
-    function spawnSmoke(){
-      const W = canvas.width, H = canvas.height;
-      const dpr = dprNow();
-      smoke.push({
-        x: W/2 + (Math.random() - 0.5) * W * 0.30,
-        y: H - H * 0.30,
-        vx: (Math.random() - 0.5) * 40 * dpr,
-        vy: -(90 + Math.random() * 120) * dpr,
-        size: (55 + Math.random() * 70) * dpr,
-        life: 2.2 + Math.random() * 1.8,
-        age: 0
-      });
-    }
-
-    // Живой fps-метр: по нему двигаем бюджет частиц.
-    let fpsAvg = 60;
-    function adaptBudget(dt){
-      const fps = 1 / Math.max(dt, 0.0005);
-      fpsAvg = fpsAvg * 0.94 + Math.min(fps, 144) * 0.06;
-      if (fpsAvg < 46) particleBudget = Math.max(BUDGET_MIN, particleBudget - 6);
-      else if (fpsAvg > 57) particleBudget = Math.min(BUDGET_MAX, particleBudget + 3);
-    }
-
-    function updateAndDrawParticles(dt){
-      const W = canvas.width, H = canvas.height;
-      const dpr = dprNow();
-      const base = fireBaseColor;
-
-      adaptBudget(dt);
-
-      // Дыхание костра: медленная пружина, чтобы пламя не стояло столбом
-      // даже на ровной громкости.
-      flickerVel += (Math.random() - 0.5) * 6 * dt - flicker * 3.4 * dt;
-      flickerVel *= 0.94;
-      flicker += flickerVel * dt;
-      flicker = Math.max(-0.6, Math.min(0.6, flicker));
-
+      const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+      
       ctx.clearRect(0, 0, W, H);
 
-      // ---------- ДЫМ (под пламенем, обычным смешиванием) ----------
-      ctx.globalCompositeOperation = 'source-over';
-      smokeCarry += (2.2 + smoothedLevel * 2.4) * dt * 3.2;
-      while (smokeCarry >= 1){
-        smokeCarry -= 1;
-        if (smoke.length < 22) spawnSmoke();
-      }
-      const smokeSprite = tintedSprite(SPRITE_SMOKE, 40, 34, 32);
-      for (let i = smoke.length - 1; i >= 0; i--){
-        const p = smoke[i];
-        p.age += dt;
-        if (p.age >= p.life){ smoke.splice(i, 1); continue; }
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
-        p.vy *= (1 - 0.5 * dt);
-        p.size += 38 * dpr * dt;
-        const k = p.age / p.life;
-        ctx.globalAlpha = Math.sin(k * Math.PI) * 0.16;
-        ctx.drawImage(smokeSprite, p.x - p.size, p.y - p.size, p.size * 2, p.size * 2);
-      }
-
-      // ---------- ПЛАМЯ (аддитивно) ----------
+      // Аддитивный режим для свечения
       ctx.globalCompositeOperation = 'lighter';
-      const wantPerSec = (140 + smoothedLevel * 420 + smoothedBass * 360 + beatPulse * 900) *
-                         (0.6 + 0.4 * (particleBudget / BUDGET_MAX));
-      spawnCarry += wantPerSec * dt;
-      while (spawnCarry >= 1){
-        spawnCarry -= 1;
-        // Ключевой момент: при переполнении не «затыкаемся», а вытесняем
-        // самые старые частицы. Огонь остаётся живым при любом бюджете.
-        if (flames.length >= particleBudget) flames.shift();
-        spawnFlame();
+
+      // Кол-во новых частиц зависит от уровня + резкий всплеск при бите
+      const spawnCount = Math.round(2 + smoothedLevel * 7 + smoothedBass * 6 + beatPulse * 18);
+      for (let i = 0; i < spawnCount && particles.length < MAX_PARTICLES; i++){
+        spawnParticle();
+      }
+      
+
+      // Цвет: основной из обложки, но в верхней части пламя желтее (горячее)
+      const base = fireBaseColor;
+
+      for (let i = particles.length - 1; i >= 0; i--){
+        const p = particles[i];
+        p.x += p.vx + Math.sin((p.life + p.seed) * 0.22) * 0.95 * dpr;
+        p.y += p.vy;
+        p.vy *= 0.982; // замедление
+        p.vy -= 0.11 * dpr; // лёгкая "горячая" тяга вверх
+        p.life--;
+        if (p.life <= 0 || p.y < -50){
+          particles.splice(i, 1);
+          continue;
+        }
+        const lifeFrac = p.life / p.maxLife;
+        const alpha = lifeFrac * 0.7;
+        // Чем "холоднее" (старее, ниже lifeFrac) — тем БЛЕДНЕЕ (к белому-яркому).
+        // Раньше делали желтоватый перекос — это убивало синие/фиолетовые обложки.
+        // Сейчас просто осветляем к ярко-белому ядру.
+        const hot = 1 - lifeFrac; // 0 = свежая (внизу), 1 = старая (вверху)
+        // Базовый цвет частицы — обложечный. Ядро (свежие частицы внизу) — к белому
+        const whiteBoost = lifeFrac * 0.65; // ВНИЗУ ярче, ВВЕРХУ оригинал
+        const r = Math.min(255, base.r + (255 - base.r) * whiteBoost);
+        const g = Math.min(255, base.g + (255 - base.g) * whiteBoost);
+        const b = Math.min(255, base.b + (255 - base.b) * whiteBoost);
+
+        const radius = p.size * (0.8 + lifeFrac * 0.6);
+        const grad = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, radius);
+        grad.addColorStop(0, `rgba(${r|0},${g|0},${b|0},${alpha})`);
+        grad.addColorStop(0.5, `rgba(${(base.r)|0},${(base.g)|0},${(base.b)|0},${alpha*0.5})`);
+        grad.addColorStop(1, `rgba(${base.r|0},${(base.g*0.3)|0},${(base.b*0.3)|0},0)`);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
+        ctx.fill();
       }
 
-      for (let i = flames.length - 1; i >= 0; i--){
-        const p = flames[i];
-        p.age += dt;
-        if (p.age >= p.life || p.y < -60){ flames.splice(i, 1); continue; }
+      // Снизу — толстый "глоу" от костра, тоже реагирует на басы
+      ctx.globalCompositeOperation = 'lighter';
+      const glowR = W * (0.28 + smoothedBass * 0.48);
+      
+      // Используем тот же отступ от пола, что и у частиц (25% высоты)
+      const floorOffset = H * 0.35; 
+      const fireBaseY = H - floorOffset;
 
-        const wobble = Math.sin(p.age * 6.5 + p.seed) * 40 * dpr * p.spin;
-        p.x += (p.vx + wobble) * dt;
-        p.y += p.vy * dt;
-        p.vy *= (1 - 0.9 * dt);          // сопротивление
-        p.vy -= 210 * dpr * dt;          // горячая тяга вверх
-        p.vx *= (1 - 1.2 * dt);
+      const glow = ctx.createRadialGradient(W/2, fireBaseY, 0, W/2, fireBaseY, glowR);
+      const glowA = 0.45 + smoothedBass * 0.5;
+      glow.addColorStop(0, `rgba(${base.r},${base.g},${base.b},${glowA})`);
+      glow.addColorStop(0.5, `rgba(${Math.round(base.r*0.6)},${Math.round(base.g*0.4)},${Math.round(base.b*0.4)},${glowA*0.4})`);
+      glow.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.fillStyle = glow;
+      // Отрисовываем свечение вокруг новой оси огня
+      ctx.fillRect(0, fireBaseY - glowR, W, glowR * 2);
 
-        const lifeFrac = 1 - p.age / p.life;
-        const alpha = Math.sin(lifeFrac * Math.PI * 0.85) * 0.62;
-        if (alpha <= 0.005) continue;
-
-        // Внизу (свежая частица) — почти белое ядро, выше уходит в цвет обложки.
-        const whiteBoost = lifeFrac * 0.7;
-        const r = Math.min(255, base.r + (255 - base.r) * whiteBoost) | 0;
-        const g = Math.min(255, base.g + (255 - base.g) * whiteBoost) | 0;
-        const b = Math.min(255, base.b + (255 - base.b) * whiteBoost) | 0;
-
-        const radius = p.size * (0.55 + lifeFrac * 0.85);
-        ctx.globalAlpha = alpha;
-        ctx.drawImage(tintedSprite(SPRITE_FLAME, r, g, b),
-          p.x - radius, p.y - radius, radius * 2, radius * 2);
-      }
-
-      // ---------- ИСКРЫ ----------
-      sparkCarry += (surgePulse * 90 + beatPulse * 40 + 4) * dt * 6;
-      while (sparkCarry >= 1){
-        sparkCarry -= 1;
-        if (sparks.length < 180) spawnSpark();
-      }
-      const sparkSprite = tintedSprite(SPRITE_SPARK,
-        Math.min(255, base.r + 60) | 0,
-        Math.min(255, base.g + 40) | 0,
-        Math.min(255, base.b + 20) | 0);
-      for (let i = sparks.length - 1; i >= 0; i--){
-        const p = sparks[i];
-        p.age += dt;
-        if (p.age >= p.life){ sparks.splice(i, 1); continue; }
-        p.x += p.vx * dt;
-        p.y += p.vy * dt;
-        p.vy += 120 * dpr * dt;          // искры тяжелее — падают
-        p.vx *= (1 - 0.7 * dt);
-        p.vy *= (1 - 0.25 * dt);
-        const k = 1 - p.age / p.life;
-        ctx.globalAlpha = k * k * 0.95;
-        const s = p.size * (0.5 + k);
-        ctx.drawImage(sparkSprite, p.x - s, p.y - s, s * 2, s * 2);
-      }
-
-      // ---------- ГЛОУ ОТ УГЛЕЙ ----------
-      // Один спрайт вместо createRadialGradient каждый кадр.
-      const glowR = W * (0.28 + smoothedBass * 0.48 + flicker * 0.05);
-      const fireBaseY = H - H * 0.35;
-      ctx.globalAlpha = 0.42 + smoothedBass * 0.5 + beatPulse * 0.12;
-      ctx.drawImage(tintedSprite(SPRITE_FLAME, base.r, base.g, base.b),
-        W/2 - glowR, fireBaseY - glowR, glowR * 2, glowR * 2);
-
-      // Раскалённое ядро в основании
-      const coreR = glowR * 0.30;
-      ctx.globalAlpha = 0.5 + beatPulse * 0.35;
-      ctx.drawImage(tintedSprite(SPRITE_FLAME, 255, 240, 210),
-        W/2 - coreR, fireBaseY - coreR * 0.7 - coreR, coreR * 2, coreR * 2);
-
-      ctx.globalAlpha = 1;
       ctx.globalCompositeOperation = 'source-over';
 
       // Мини-индикатор уровня (только если аудио подключено)
       if (analyser){
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
         const ix = 16 * dpr, iy = 70 * dpr;
         const iw = 80 * dpr, ih = 6 * dpr;
+        // Бас
         ctx.fillStyle = 'rgba(255,255,255,0.15)';
         ctx.fillRect(ix, iy, iw, ih);
         ctx.fillStyle = `rgba(${base.r},${base.g},${base.b},0.9)`;
         ctx.fillRect(ix, iy, iw * smoothedBass, ih);
+        // Бит-индикатор
         if (beatPulse > 0.1){
           ctx.fillStyle = `rgba(255,255,255,${beatPulse * 0.9})`;
           ctx.fillRect(ix + iw + 6*dpr, iy - 1*dpr, 8*dpr, ih + 2*dpr);
@@ -16133,17 +15458,9 @@ gateColor.addEventListener('input', syncColor);
     }
 
     // === Главный цикл ===
-    // Шаг по реальному времени: пламя одинаково живое и на 144 Гц, и на 40 fps.
-    // Плюс страховка на случай, когда вкладку свернули и rAF замирал.
-    let _lastTick = 0;
-    function tick(ts){
-      if (!_lastTick) _lastTick = ts;
-      let dt = (ts - _lastTick) / 1000;
-      _lastTick = ts;
-      if (!(dt > 0)) dt = 1/60;
-      if (dt > 0.1) dt = 0.1;   // после сворачивания не «выстреливаем» всем сразу
+    function tick(){
       readAudioLevels();
-      updateAndDrawParticles(dt);
+      updateAndDrawParticles();
       requestAnimationFrame(tick);
     }
     requestAnimationFrame(tick);
@@ -16153,17 +15470,7 @@ gateColor.addEventListener('input', syncColor);
 </script>
 
 <!-- DP Horror: мост Firebase/site ↔ Godot Web. -->
-<!-- Грузим ТОЛЬКО в полноценных окнах. Раньше этот модуль (3700+ строк,
-     BroadcastChannel, WebSocket-мост, десятки подписок, рендер карты)
-     стартовал в каждой из ~12 панелей оверлея — главный источник лагов. -->
-<script type="module">
-  if (!new URLSearchParams(location.search).get('component')) {
-    import('./game_adapter.js?v=personal-tasks-packages-blame-v18')
-      .catch(e => console.warn('[game_adapter] load failed', e));
-  } else {
-    console.log('[lite] game_adapter.js пропущен');
-  }
-</script>
+<script type="module" src="./game_adapter.js?v=personal-tasks-packages-blame-v18"></script>
 
 </body>
 </html>
