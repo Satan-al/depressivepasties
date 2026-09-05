@@ -1,0 +1,159 @@
+{
+  "rules": {
+    ".read": false,
+    ".write": false,
+    "access": {
+      ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'",
+      "$uid": {
+        ".read": "(auth != null && auth.token.firebase.sign_in_provider === 'password') && $uid === auth.uid",
+        ".write": "(auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host') && $uid !== auth.uid && !data.exists() && newData.exists()",
+        ".validate": "newData.hasChildren(['name','role','enabled','version','createdAt']) && newData.child('role').val() === 'member' && newData.child('enabled').val() === true && newData.child('version').val() === 1 && newData.child('name').isString() && newData.child('name').val().length > 0 && newData.child('name').val().length <= 32"
+      }
+    },
+    "sessions": {
+      "DepressivePasties": {
+        "points": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          "$uid": {
+            ".write": "(auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1) && ($uid === auth.uid || (auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'))",
+            "color": {
+              ".validate": "newData.isString() && newData.val().matches(/^#[a-fA-F0-9]{6}$/)"
+            },
+            "name": {
+              ".validate": "newData.isString() && newData.val().length <= 64 && !newData.val().matches(/.*[<>\"'].*/)"
+            },
+            "emoji": {
+              ".validate": "newData.isString() && newData.val().length <= 32 && !newData.val().matches(/.*[<>].*/)"
+            }
+          },
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'"
+        },
+        "presence": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          "$uid": {
+            ".write": "(auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1) && ($uid === auth.uid || (auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'))",
+            "color": {
+              ".validate": "newData.isString() && newData.val().matches(/^#[a-fA-F0-9]{6}$/)"
+            },
+            "name": {
+              ".validate": "newData.isString() && newData.val().length <= 64 && !newData.val().matches(/.*[<>\"'].*/)"
+            },
+            "emoji": {
+              ".validate": "newData.isString() && newData.val().length <= 32 && !newData.val().matches(/.*[<>].*/)"
+            }
+          },
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'"
+        },
+        "users": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          "$uid": {
+            ".write": "(auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1) && ($uid === auth.uid || (auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'))",
+            ".validate": "newData.hasChild('name') && (newData.child('name').val() === root.child('access').child($uid).child('name').val() || (auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host') )",
+            "name": {
+              ".validate": "newData.isString() && newData.val().length > 0 && newData.val().length <= 32"
+            },
+            "color": {
+              ".validate": "newData.isString() && newData.val().matches(/^#[0-9a-fA-F]{6}$/)"
+            },
+            "emoji": {
+              ".validate": "newData.isString() && newData.val().length <= 32"
+            },
+            "settings": {
+              "emojis": {
+                "$slot": {
+                  ".validate": "(newData.isString() && newData.val().length <= 64) || (newData.hasChildren(['type','src']) && newData.child('type').val() === 'png' && newData.child('src').isString() && newData.child('src').val().length <= 100000 && newData.child('src').val().matches(/^data:image\\/png;base64,[a-zA-Z0-9+\\/=]+$/))"
+                }
+              }
+            }
+          },
+          ".indexOn": [
+            "name"
+          ]
+        },
+        "chat": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".indexOn": [
+            "t"
+          ],
+          "$messageId": {
+            ".write": "(auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1) && ((!data.exists() && newData.child('uid').val() === auth.uid) || (data.child('uid').val() === auth.uid || root.child('sessions/DepressivePasties/identity_aliases').child(data.child('uid').val()).val() === auth.uid) || (auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'))",
+            ".validate": "newData.hasChildren(['uid','name','text','t']) && newData.child('uid').isString() && newData.child('name').isString() && newData.child('name').val().length <= 80 && newData.child('text').isString() && newData.child('text').val().length <= 8000 && newData.child('t').isNumber() && (!data.exists() || newData.child('uid').val() === data.child('uid').val())",
+            "color": {
+              ".validate": "newData.isString() && newData.val().matches(/^#[0-9a-fA-F]{6}$/)"
+            }
+          }
+        },
+        "reactions": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".indexOn": [
+            "t"
+          ],
+          "$id": {
+            ".write": "(auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1) && ((!data.exists() && newData.child('uid').val() === auth.uid) || (!newData.exists() && (data.child('uid').val() === auth.uid || (auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'))))",
+            ".validate": "newData.hasChildren(['uid','t']) && newData.child('t').isNumber()"
+          }
+        },
+        "telegram_links": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          "$uid": {
+            ".write": "(auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1) && !newData.exists() && ($uid === auth.uid || (auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'))"
+          }
+        },
+        "link_codes": {
+          "$code": {
+            ".read": "(auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1) && (data.child('userId').val() === auth.uid || (auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'))",
+            ".write": "(auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1) && ((!data.exists() && newData.child('userId').val() === auth.uid) || (data.child('userId').val() === auth.uid && !newData.exists()))",
+            ".validate": "newData.hasChildren(['userId','name','color','createdAt','expiresAt','used']) && newData.child('used').val() === false && newData.child('expiresAt').isNumber() && newData.child('expiresAt').val() <= now + 360000 && newData.child('expiresAt').val() > now"
+          }
+        },
+        "strokes": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          "$stroke": {
+            ".validate": "newData.hasChild('uid') && newData.child('uid').isString()"
+          }
+        },
+        "duels": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1"
+        },
+        "games": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1"
+        },
+        "quote_game": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1"
+        },
+        "commands": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1"
+        },
+        "rat_mode": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1"
+        },
+        "music": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1"
+        },
+        "game_v1": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1"
+        },
+        "vdo": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".write": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'"
+        },
+        "identity_aliases": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1",
+          ".write": false
+        },
+        "_migrations": {
+          ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'",
+          ".write": false
+        }
+      }
+    }
+  }
+}

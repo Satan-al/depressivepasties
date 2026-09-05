@@ -2,7 +2,7 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DepressivePasties</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -2077,6 +2077,8 @@ html.component-mode #dpGameMapPanel{
 }
 
 </style>
+  <link rel="stylesheet" href="./room.css?v=1">
+  <meta name="referrer" content="strict-origin-when-cross-origin">
 </head>
 <body>
 
@@ -2390,9 +2392,9 @@ html.component-mode #dpGameMapPanel{
 <!-- ВХОДНОЙ ГЕЙТ -->
 <div class="gate" id="gate">
   <div class="gate-card" id="gateCard">
-    <div class="gate-title">DepressivePasties</div>
-    <div class="gate-sub">Введи Имя, выбери Цвет и ПИН. Контент пока под замком 👀</div>
-    <div class="gate-hint" id="gateHint"></div>
+    <div class="gate-mark" aria-hidden="true">🥟</div><div class="gate-title">Депрессивные<br>пирожки<span class="gate-wordmark">DepressivePasties</span></div>
+    <div class="gate-sub">Твоя компания. Твой цвет. Твой вечер.</div>
+    <div class="gate-hint" id="gateHint" role="status" aria-live="polite"></div>
     <!-- === EMOJI SETUP === -->
     <div class="emoji-setup-container">
       <div class="preview-container">
@@ -2402,11 +2404,12 @@ html.component-mode #dpGameMapPanel{
     </div>
 
 <div class="gate-form">
-      <div class="field"><label for="gateName">Имя</label><input id="gateName" class="in big" placeholder="Твоё имя"/></div>
+      <div class="field"><label for="gateName">Имя</label><input id="gateName" class="in big" placeholder="Твоё имя" autocomplete="username" autocapitalize="none" spellcheck="false" maxlength="32"/></div>
       <div class="field"><label for="gateColor">Цвет</label><input id="gateColor" type="color" class="in" value="#16c7b7"/></div>
-      <div class="field"><label for="gatePin">ПИН</label><input id="gatePin" class="in big" placeholder="••••" inputmode="numeric" pattern="[0-9]*" maxlength="8"/></div>
-      <div class="field"><span></span><button class="btn" id="gateEnter" type="button">Войти</button></div>
+      <div class="field"><label for="gatePin">Пароль</label><input id="gatePin" type="password" class="in big" placeholder="Твой пароль" autocomplete="current-password" minlength="4" maxlength="128"/></div>
+      <div class="field"><span></span><button class="btn" id="gateEnter" type="button">Войти в комнату</button></div>
     </div>
+    <div class="gate-footnote">Первый раз? Попроси хоста добавить тебя.</div>
   </div>
 </div>
 
@@ -2499,6 +2502,17 @@ html.component-mode #dpGameMapPanel{
   };
   // ===== Обработка component-параметра (чат / эмодзибар / музыка) =====
   window.overlayComponent = new URLSearchParams(location.search).get('component');
+  {
+    const component = window.overlayComponent || '';
+    window.__ccLite = !!component;
+    window.__ccNeedGames = !component;
+    window.__ccNeedDurak = !component || component === 'durak_hand';
+    window.__ccNeedCanvas = !component;
+    window.__ccNeedChat = !component || component === 'chat';
+    window.__ccNeedReactions = !component || component === 'emojibar';
+    window.__ccNeedTelegram = !component || component === 'chat';
+    window.__ccNeedMusic = !component || component.startsWith('music_');
+  }
   if (window.overlayComponent) {
     document.documentElement.classList.add('component-mode');
     const componentGuardStyle = document.createElement('style');
@@ -2556,7 +2570,11 @@ html.component-mode #dpGameMapPanel{
     };
     window.__ccSuppressComponentGames = suppressComponentGames;
     suppressComponentGames();
-    setInterval(suppressComponentGames, 250);
+    let sweeps = 0;
+    const sweepTimer = setInterval(() => {
+      suppressComponentGames();
+      if (++sweeps >= 12) clearInterval(sweepTimer);
+    }, 250);
     document.body.style.background = 'transparent';
     document.body.style.margin = '0';
     document.body.style.padding = '0';
@@ -2817,9 +2835,14 @@ html.component-mode #dpGameMapPanel{
       }, 300);
   });  
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
-  import { getDatabase, ref, onValue, set, remove, push, update, child, query, orderByChild, limitToLast, serverTimestamp, onChildAdded, onChildChanged, onChildRemoved, get, goOffline, goOnline } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
-  import { getAuth, signInAnonymously, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
+  import { getDatabase, ref, onValue, set, remove, push, update, child, query, orderByChild, limitToLast, serverTimestamp, onChildAdded, onChildChanged, onChildRemoved, get, goOffline, goOnline } from "./dp-realtime.js";
+  import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
 
+  import { onValue as authOnValue } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+  import { setRealtimeAuthorized, onDisconnect } from "./dp-realtime.js";
+  import { loginCredentials, registerMember, authErrorMessage, safeColor, safeImageSource } from "./dp-auth.js";
+  window.__dpSafeColor = safeColor;
+  window.__dpSafeImageSource = safeImageSource;
   const SESSION_KEY = "DepressivePasties";
   const VDO_DEFAULT_VIEW_ID = "DepressivePasties";
   let _currentVdoViewId = normalizeVdoViewId(window.ccStorage.getItem('cc_vdo_view_id')) || VDO_DEFAULT_VIEW_ID;
@@ -3292,16 +3315,8 @@ html.component-mode #dpGameMapPanel{
   window.auth = auth;
 
 
-  // ── Чебурнет-фикс: переподключение через long-polling ──
-  // Если WebSocket заблокирован провайдером, 
-  // Firebase автоматически переключится на HTTP long-polling
-  goOffline(db);
-  setTimeout(() => {
-      goOnline(db);
-      console.log('[Firebase] Переподключение через long-polling');
-  }, 300);
-
-
+  // The SDK handles transport fallback itself; forcing a disconnect on every load
+  // interrupted pending subscriptions and did not select long polling.
   const DEFAULT_COLOR = '#16c7b7';
   
   // ПРОВЕРКА URL ПАРАМЕТРА ?overlay=1 ДЛЯ АВТОМАТИЧЕСКОГО ВКЛЮЧЕНИЯ OVERLAY РЕЖИМА
@@ -3321,11 +3336,12 @@ html.component-mode #dpGameMapPanel{
     tool: window.ccStorage.getItem('cc_tool') || 'vote',
     showClustersOnSite: (window.ccStorage.getItem('cc_show_clusters') === '1' || window.ccStorage.getItem('cc_show_clusters') === '1'),
     authed: false,
+    account: null,
     points: new Map(),
     strokes: new Map(),
     presence: new Map(),
     tgIndex: new Map(),
-    localChat: JSON.parse(window.ccStorage.getItem('cc_chat_cache')||'[]'),
+    localChat: [],
     notifications: window.ccStorage.getItem('cc_notifications') !== 'false',
     unreadCount: 0,
     lastReadTs: Date.now(),
@@ -3356,6 +3372,7 @@ html.component-mode #dpGameMapPanel{
   }
 
   function __ccApplyHostIdentity(){
+    if (!window.__dpIsHost?.()) return;
     state.id = HOST_IDENTITY.uid;
     state.name = HOST_IDENTITY.name;
     state.color = HOST_IDENTITY.color;
@@ -3368,9 +3385,12 @@ html.component-mode #dpGameMapPanel{
   }
 
   function __ccCanonicalUid(fallback){
-    const raw = fallback || auth?.currentUser?.uid || state.id;
-    return __ccIsHostName(state.name || window.ccStorage.getItem('cc_name')) ? HOST_IDENTITY.uid : raw;
+    return state.authed ? auth.currentUser?.uid : (fallback || null);
   }
+
+  // Names and URL flags are presentation, never host authorization.
+  window.__dpIsHost = () => !!(state.authed && state.account?.enabled && state.account.role === 'host'
+    && state.account.uid === auth.currentUser?.uid);
 
   function __ccCanonicalName(fallback){
     return __ccIsHostName(fallback || state.name || window.ccStorage.getItem('cc_name'))
@@ -3532,6 +3552,12 @@ window.addEventListener('cc_emoji_changed', async (e) => {
   const ratModeRef = ref(db, `${basePath}/rat_mode`);  // Флаг RAT режима
   const tgLinksRoot = ref(db, `${basePath}/telegram_links`);
   const vdoViewRef = ref(db, `${basePath}/vdo/viewId`);
+  const identityAliases = new Map();
+  function resolveIdentity(uid){ return identityAliases.get(uid) || uid; }
+  onValue(ref(db, `${basePath}/identity_aliases`), snap => {
+    identityAliases.clear();
+    for (const [oldId,uid] of Object.entries(snap.val() || {})) identityAliases.set(oldId,uid);
+  });
   // Подписка на telegram_links единая — ниже в блоке TELEGRAM LINKS INDEX
 
   onValue(vdoViewRef, (snap) => {
@@ -3539,52 +3565,6 @@ window.addEventListener('cc_emoji_changed', async (e) => {
     if (!id) return;
     applyVdoViewId(id);
   });
-
-  async function __ccMergeHostProfiles(authUid){
-    try{
-      const hostUid = HOST_IDENTITY.uid;
-      const usersRef = ref(db, `${basePath}/users`);
-      const usersSnap = await get(usersRef);
-      const users = usersSnap.val() || {};
-      const keep = users[hostUid] || {};
-      const mergedActivity = { ...(keep.activity || {}) };
-      let createdAt = Number(keep.createdAt || Date.now());
-      let savedEmojiSettings = keep.settings?.emojis || null;
-
-      for (const [uid, data0] of Object.entries(users)){
-        const data = data0 || {};
-        const isHostRecord = uid === hostUid || uid === authUid || __ccIsHostName(data.name || data.displayName);
-        if (!isHostRecord) continue;
-        Object.assign(mergedActivity, data.activity || {});
-        createdAt = Math.min(createdAt, Number(data.createdAt || createdAt || Date.now()));
-        if (!savedEmojiSettings && data.settings?.emojis) savedEmojiSettings = data.settings.emojis;
-        if (uid !== hostUid){
-          try { await remove(ref(db, `${basePath}/users/${uid}`)); } catch {}
-          try { await remove(ref(db, `${basePath}/points/${uid}`)); } catch {}
-          try { await remove(ref(db, `${basePath}/presence/${uid}`)); } catch {}
-          state.points.delete(uid);
-          state.presence.delete(uid);
-        }
-      }
-
-      const hostProfile = {
-        ...keep,
-        name: HOST_IDENTITY.name,
-        color: HOST_IDENTITY.color,
-        emoji: HOST_IDENTITY.emoji,
-        activity: mergedActivity,
-        createdAt,
-        lastSeen: serverTimestamp(),
-        mergedAt: Date.now()
-      };
-      if (savedEmojiSettings) {
-        hostProfile.settings = { ...(keep.settings || {}), emojis: savedEmojiSettings };
-      }
-      await update(ref(db, `${basePath}/users/${hostUid}`), hostProfile);
-    }catch(e){
-      console.warn('host profile merge failed', e);
-    }
-  }
 
   /* ======= PRESENCE ======= */
 // lastActive должен отражать РЕАЛЬНУЮ активность (клики/клавиши), а не heartbeat.
@@ -3597,7 +3577,7 @@ const GONE_AFTER_MS = 30 * 60 * 1000;
 function __ccIsHidden(){ return document.hidden || document.visibilityState === 'hidden'; }
 
 async function __ccWritePresence(partial){
-  if (!auth.currentUser) return;
+  if (!state.authed || !auth.currentUser) return;
   const uid = __ccCanonicalUid();
   try{ await update(ref(db, `${basePath}/presence/${uid}`), partial); }catch{}
 }
@@ -3605,6 +3585,7 @@ async function __ccWritePresence(partial){
 async function __ccWritePoint(partial){
   if (!auth.currentUser) return;
   const uid = __ccCanonicalUid();
+  if (!state.authed || !state.points.has(uid)) return;
   try {
     const prev = state.points.get(uid);
     if (prev) state.points.set(uid, { ...prev, ...partial });
@@ -3624,7 +3605,7 @@ async function __ccMarkActive(force=false){
 window.__ccMarkActive = __ccMarkActive;
 
 // Activity signals
-['pointerdown','pointermove','keydown','wheel','touchstart'].forEach(evt=>{
+['pointerdown','keydown','wheel','touchstart'].forEach(evt=>{
   window.addEventListener(evt, ()=>__ccMarkActive(false), {passive:true});
 });
 
@@ -3639,7 +3620,7 @@ document.addEventListener('visibilitychange', ()=>{
 });
 
 async function heartbeat(){
-  if (!auth.currentUser) return;
+  if (!state.authed || !auth.currentUser) return;
   const uid = __ccCanonicalUid();
   const nowTs = Date.now();
   const nm = __ccCanonicalName(getDisplayName(state)) || 'Гость';
@@ -3652,27 +3633,24 @@ async function heartbeat(){
     ts: nowTs,
     state: __ccIsHidden() ? 'away' : 'online'
   });
-  // точки обновляем минимально, чтобы цвет/имя/эмодзи синхрились, но lastActive не трогаем
-  await __ccWritePoint({
-    color: __ccIsHostName(nm) ? HOST_IDENTITY.color : state.color,
-    name: nm,
-    emoji: __ccIsHostName(nm) ? HOST_IDENTITY.emoji : (state.emoji||'')
-  });
+  const identity = {color: state.color, name: nm, emoji: state.emoji || ''};
+  const point = state.points.get(uid);
+  if (point && Object.entries(identity).some(([key,value]) => point[key] !== value)) await __ccWritePoint(identity);
 }
 setInterval(heartbeat, 8000);
 
-// onDisconnect: помечаем оффлайн (насколько это возможно в RTDB)
-(async ()=>{
-  try{
-    const uid = auth.currentUser ? __ccCanonicalUid() : null;
-    if (!uid) return;
-    const pRef = ref(db, `${basePath}/presence/${uid}`);
-    onDisconnect(pRef).update({ state:'offline', ts: Date.now() });
-  }catch{}
-})();
+// Each connection installs its own server-side presence cleanup.
+onValue(ref(db, '.info/connected'), async snapshot => {
+  if (!snapshot.val() || !state.authed) return;
+  const uid = __ccCanonicalUid();
+  try {
+    await onDisconnect(ref(db, `${basePath}/presence/${uid}`)).update({ state:'offline', ts:serverTimestamp() });
+    await heartbeat();
+  } catch {}
+});
 
   /* ======= TELEGRAM LINKS INDEX (tgUserId -> uid) ======= */
-  onValue(tgLinksRoot, (snap)=>{
+  if (window.__ccNeedTelegram) onValue(tgLinksRoot, (snap)=>{
     const all = snap.val() || {};
     const idx = new Map();
     for (const [k,info] of Object.entries(all)){
@@ -3809,9 +3787,11 @@ state.presence.clear();
   //   "👍"                                    — обычная эмодзи (строка)
   //   {type:'png', src:'data:image/png;base64,...'}  — кастомная PNG-картинка
 
+  let emojiUnsubscribe = null;
   function setupEmojiListener(uid) {
+    emojiUnsubscribe?.();
     const emojiRef = ref(db, `${basePath}/users/${uid}/settings/emojis`);
-    onValue(emojiRef, (snap) => {
+    emojiUnsubscribe = onValue(emojiRef, (snap) => {
       const val = snap.val();
       // RTDB может прислать массив или объект (если были "дырки") — нормализуем
       if (Array.isArray(val)) {
@@ -3963,14 +3943,17 @@ state.presence.clear();
       const saved = userEmojis[i];
       // PNG-слот?
       if (saved && typeof saved === 'object' && saved.type === 'png' && saved.src){
-        btn.innerHTML = `<img src="${saved.src}" alt="" style="width:32px;height:32px;vertical-align:middle;">`;
+        btn.replaceChildren();
+        const img = document.createElement('img');
+        img.src = safeImageSource(saved.src); img.alt = ''; img.width = 32; img.height = 32;
+        btn.appendChild(img);
         btn.setAttribute('data-reaction-type', 'png');
         btn.setAttribute('data-reaction-src', saved.src);
         btn.removeAttribute('data-emo');
       } else {
         // Обычная эмодзи
         const emo = (saved && typeof saved === 'string' && saved.trim()) ? saved : (DEFAULT_EMOJIS[i] || '◯');
-        btn.innerHTML = emo;
+        btn.textContent = emo;
         btn.setAttribute('data-emo', emo);
         btn.removeAttribute('data-reaction-type');
         btn.removeAttribute('data-reaction-src');
@@ -4039,12 +4022,12 @@ state.presence.clear();
   // === STROKES — инкрементальная подписка ===
   // Штрихи только добавляются и удаляются; их не редактируют после создания.
   // При каждом изменении помечаем кэш грязным — drawFrame пересоберёт offscreen-слои.
-  onChildAdded(strokesRoot, (snap)=>{
+  if (window.__ccNeedCanvas) onChildAdded(strokesRoot, (snap)=>{
     state.strokes.set(snap.key, snap.val() || {});
     state._strokesDirty = true;
     state._strokesSortedCache = null;
   });
-  onChildRemoved(strokesRoot, (snap)=>{
+  if (window.__ccNeedCanvas) onChildRemoved(strokesRoot, (snap)=>{
     state.strokes.delete(snap.key);
     state._strokesDirty = true;
     state._strokesSortedCache = null;
@@ -4058,6 +4041,7 @@ let lastReadT = state.lastReadTs || 0; // для бейджика
 const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со старым полем
 
 (function setupChat(){
+  if (!window.__ccNeedChat) return;
   // ВАЖНО: в rules должно быть .indexOn: ["t"]
   const q = query(chatRoot, orderByChild('t'), limitToLast(100));
 
@@ -4092,9 +4076,16 @@ const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со ста
 
     // локальный кэш (без смешивания с удалёнными!)
     state.localChat = msgs.slice(-100);
-    window.ccStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
+    
   });
   
+  onChildChanged(q, snap => {
+    const message = { key: snap.key, ...snap.val() };
+    const i = msgs.findIndex(m => m.key === message.key);
+    if (i >= 0) msgs[i] = message;
+    else msgs.push(message);
+    addOrUpdateChatMessage(message, msgs);
+  });
   // Слушаем удаление сообщений
   onChildRemoved(q, (snap)=>{
     const removedKey = snap.key;
@@ -4103,7 +4094,7 @@ const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со ста
       msgs.splice(index, 1);
       removeChatMessageFromDOM(removedKey);
       state.localChat = msgs.slice(-100);
-      window.ccStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
+      
     }
   });
 })();
@@ -4138,7 +4129,7 @@ async function sendReaction(reaction) {
 
     // 2) данные под правила
     const isHostSelf = __ccIsHostName(state?.name || window.ccStorage.getItem('cc_name'));
-    const color = isHostSelf ? HOST_IDENTITY.color : ((state?.color && String(state.color).trim()) || '#16c7b7');
+    const color = isHostSelf ? HOST_IDENTITY.color : safeColor(state?.color, '#16c7b7');
     const item = {
       uid: __ccCanonicalUid(),
       name: isHostSelf ? HOST_IDENTITY.name : (getDisplayName(state) || state.name || ''),
@@ -4172,7 +4163,7 @@ async function sendReaction(reaction) {
 }
 
 // === REACTIONS — стабильный стрим + логи ===
-if (!window.__reactionsBound) {
+if (!window.__reactionsBound && window.__ccNeedReactions) {
   window.__reactionsBound = true;
 
   console.log('[rx] binding reactions stream on', `${basePath}/reactions`);
@@ -4213,14 +4204,7 @@ const REACTIONS_KEEP_LAST = 80;
 const REACTIONS_CLEANUP_INTERVAL_MS = 120000;
 let _lastReactionsCleanupAt = 0;
 
-function _shouldRunReactionsCleanup(){
-  return !!(
-    window.isOverlayHotkeys ||
-    document.documentElement.classList.contains('overlay-live') ||
-    document.documentElement.classList.contains('overlay-mode') ||
-    window.__ccIsHostName?.(state?.name || window.ccStorage.getItem('cc_name'))
-  );
-}
+function _shouldRunReactionsCleanup(){ return window.__dpIsHost(); }
 
 async function cleanupOldReactions(force=false){
   const now = Date.now();
@@ -4255,189 +4239,168 @@ async function cleanupOldReactions(force=false){
 }
 
 setTimeout(() => cleanupOldReactions(), 15000 + Math.random() * 10000);
-setInterval(() => cleanupOldReactions(), REACTIONS_CLEANUP_INTERVAL_MS + Math.random() * 15000);
+if (!window.__ccLite) setInterval(() => cleanupOldReactions(), REACTIONS_CLEANUP_INTERVAL_MS + Math.random() * 15000);
 window.cleanupOldReactions = cleanupOldReactions;
 
 
-  /* ======= AUTH GATE + АВТОЛОГИН ======= */
-  function setBlur(on){ document.querySelector('.app').classList.toggle('blur-wrap', on); }
-  function isOverlayMode(){ return (window.ccStorage.getItem('cc_mode')||'watch')==='overlay'; }
-
-  // АВТОЛОГИН ДЛЯ OVERLAY РЕЖИМА
-  const AUTO_LOGIN_NAME = 'Лёха';
-  const AUTO_LOGIN_COLOR = '#1e40af'; // насыщенно синий
-  const AUTO_LOGIN_PIN = '1111';
-
-  gateEnter.addEventListener('click', doGateLogin);
-  gatePin.addEventListener('keydown', e=>{ if(e.key==='Enter') doGateLogin(); });
-
-  // Функция загрузки состояния и проверки автологина
-  function checkAutoLogin() {
-    const savedName = window.ccStorage.getItem('cc_name');
-    const isAuth = window.ccStorage.getItem('cc_auth') === 'true';
-
-    // Если человек нажал "Выйти", cc_auth будет удален, и мы просто стоим на месте
-    if (!isAuth || !savedName) {
-      console.log('No active session found.');
-      gate.classList.remove('hidden');
-      setBlur(true);
-      return; 
-    }
-
-    // Если сессия есть - заходим мгновенно
-    gate.classList.add('hidden'); 
-    setBlur(false);
-    
-    state.name = savedName;
-    state.color = window.ccStorage.getItem('cc_color') || '#16c7b7';
-    state.emoji = window.ccStorage.getItem('cc_emoji') || state.emoji || '';
-    if (__ccIsHostName(savedName)) __ccApplyHostIdentity();
-    if (window.__neoApplyAccent) window.__neoApplyAccent(state.color);
-    
-    setTimeout(() => {
-      const gateNameEl = document.getElementById('gateName');
-      if (gateNameEl) gateNameEl.value = state.name;
-      if (gateColor) gateColor.value = state.color;
-      // Подставляем ПИН только для системного входа
-      gatePin.value = '1111'; 
-      doGateLogin();
-    }, 10);
+  /* ======= CLOSED MEMBERSHIP + FIREBASE PASSWORD AUTH ======= */
+  function setBlur(on){
+    const surface = document.querySelector('.app');
+    surface.classList.toggle('blur-wrap', on);
+    surface.inert = on;
+    document.documentElement.classList.toggle('signed-out', on);
   }
+  function isOverlayMode(){ return (window.ccStorage.getItem('cc_mode')||'watch') === 'overlay'; }
 
-  // Запускаем проверку сразу
-  checkAutoLogin();
+  let loginInFlight = null;
+  let finishingLogin = null;
+  let accountUnsubscribe = null;
+  let loginPreferences = null;
+  gateName.value = state.name;
+  gateColor.value = safeColor(state.color);
+  window.ccStorage.removeItem('cc_auth');
+  window.ccStorage.removeItem('cc_chat_cache');
+  gateColor.addEventListener('input', () => { window.__dpColorPicked = true; });
 
-  async function doGateLogin() {
-    const pin = gatePin.value.trim();
-    const storedName = window.ccStorage.getItem('cc_name') || '';
-    const inputName = document.getElementById('gateName').value.trim() || storedName || 'Чужой';
-    const inputColor = gateColor.value;
-
-    if (pin !== '1111') {
-      gateHint.textContent = 'Неверный ПИН';
-      gateHint.classList.add('show');
-      gatePin.classList.add('error');
-      gateCard.classList.remove('error');
-      requestAnimationFrame(() => gateCard.classList.add('error'));
-      gatePin.select();
-      return;
-    }
-
-    try {
-      console.log("LOG: Начинаем вход...");
-
-      // 1. АВТОРИЗАЦИЯ
-      await signInAnonymously(auth);
-      const uid = auth.currentUser.uid;
-      const profileUid = __ccIsHostName(inputName) ? HOST_IDENTITY.uid : uid;
-      console.log("LOG: Авторизация успешна, UID:", uid);
-
-      // 2. ПОЛУЧЕНИЕ ДАННЫХ ПРОФИЛЯ
-      const userRef = ref(db, `${basePath}/users/${profileUid}`);
-      const userSnap = await get(userRef);
-      const userData = userSnap.val();
-
-      // Синхронизируем состояние
-      if (__ccIsHostName(inputName)) {
-        __ccApplyHostIdentity();
-        state.createdAt = userData?.createdAt || Date.now();
-        state.activity = userData?.activity || {};
-      } else if (userData) {
-        state.name = (inputName !== 'Чужой') ? inputName : (userData.name || 'Чужой');
-        state.createdAt = userData.createdAt;
-        state.activity = userData.activity || {};
-        state.color = userData.color || inputColor;
-        if (window.__neoApplyAccent) window.__neoApplyAccent(state.color);
-      } else {
-        state.name = inputName;
-        state.color = inputColor;
-        if (window.__neoApplyAccent) window.__neoApplyAccent(state.color);
-        state.createdAt = Date.now();
-        state.activity = {};
+  async function finishMemberLogin(user) {
+    if (state.authed && state.id === user.uid) return true;
+    if (finishingLogin) return finishingLogin;
+    finishingLogin = (async () => {
+      const account = (await get(ref(db, `access/${user.uid}`))).val();
+      if (!account?.enabled || account.version !== 1 || user.isAnonymous) {
+        throw Object.assign(new Error('Аккаунт не допущен'), { code: 'permission-denied' });
       }
-
-      // 3. ОБНОВЛЕНИЕ БАЗЫ
+      const userRef = ref(db, `${basePath}/users/${user.uid}`);
+      const profile = (await get(userRef)).val() || {};
+      if (auth.currentUser?.uid !== user.uid) return false;
+      state.id = user.uid;
+      state.account = { ...account, uid: user.uid };
+      state.name = account.name;
+      state.color = safeColor(loginPreferences?.color ?? profile.color ?? state.color);
+      state.emoji = loginPreferences?.emoji ?? profile.emoji ?? state.emoji;
+      state.createdAt = profile.createdAt || Date.now();
+      state.activity = profile.activity || {};
+      if (account.role === 'host') {
+        HOST_IDENTITY.uid = user.uid;
+        HOST_IDENTITY.color = state.color;
+        HOST_IDENTITY.emoji = state.emoji;
+      }
       const now = new Date();
       const dateKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-      
-      const updates = {
-        lastSeen: serverTimestamp(),
-        name: state.name,
-        color: state.color,
-      emoji: state.emoji || '',
-        [`activity/${dateKey}`]: serverTimestamp()
-      };
-      if (!userData || !userData.createdAt) updates.createdAt = serverTimestamp();
-
-      await update(userRef, updates);
-      if (__ccIsHostName(state.name)) {
-        await __ccMergeHostProfiles(uid);
-        __ccApplyHostIdentity();
-      } else {
-        state.id = profileUid;
-        window.ccStorage.setItem('cc_id', profileUid);
-      }
-
-      // 4. ФИНАЛИЗАЦИЯ
-      saveState();
+      await update(userRef, { name: state.name, color: state.color, emoji: state.emoji || '', lastSeen: serverTimestamp(), [`activity/${dateKey}`]: serverTimestamp() });
       state.authed = true;
+      window.__dpAuthResolved = true;
+      window.ccStorage.setItem('cc_id', user.uid);
+      saveState();
+      gatePin.value = '';
+      gateHint.textContent = '';
+      gateHint.classList.remove('show');
       gate.classList.add('hidden');
       setBlur(false);
-
-      if (window.$statusText) $statusText.textContent = 'Онлайн';
-      console.log("FINAL STATE CHECK:", state.name);
-
-      if (typeof initVideo === 'function') initVideo();
-      if (typeof heartbeat === 'function') heartbeat();
-
-    } catch (e) {
-      console.error('Ошибка входа:', e);
-      // Если всё еще пишет Permission Denied, значит нужно проверить правила в консоли Firebase
-      if (e.message.toLowerCase().includes('permission denied')) {
-        alert("Ошибка доступа к базе. Проверь Rules в консоли Firebase.");
-      } else {
-        alert('Ошибка: ' + e.message);
-      }
-    }
+      gateColor.value = state.color;
+      window.__neoApplyAccent?.(state.color);
+      window.dispatchEvent(new CustomEvent('cc_identity_loaded', { detail: { emoji: state.emoji } }));
+      setRealtimeAuthorized(true);
+      accountUnsubscribe?.();
+      accountUnsubscribe = authOnValue(ref(db, `access/${user.uid}`), snap => {
+        const next = snap.val();
+        if (!next?.enabled || next.version !== 1) { void logoutMember(); return; }
+        state.account = { ...next, uid: user.uid };
+      }, () => { void logoutMember(); });
+      $statusText.textContent = 'Онлайн';
+      $dotAuth.classList.add('ok');
+      $dotAuth.classList.remove('warn');
+      window.dispatchEvent(new CustomEvent('cc_authenticated', { detail: { uid: user.uid } }));
+      if (!urlParams.has('hostLogin')) initVideo();
+      await heartbeat();
+      return true;
+    })();
+    try { return await finishingLogin; }
+    finally { finishingLogin = null; loginPreferences = null; }
   }
 
-  // Экспортируем, чтобы Python мог вызвать автологин
-  window.doGateLogin = doGateLogin;
-
-
-  // LOGOUT
-  logoutBtn.addEventListener('click', async ()=>{
-    console.log('Logging out and clearing session...');
-    // Удаляем свою морду (кластер) сразу, чтобы не висела как зомби
-    try{
-      const uid = __ccCanonicalUid();
-      if (uid) {
-        await remove(ref(db, `${basePath}/points/${uid}`));
-        await remove(ref(db, `${basePath}/presence/${uid}`));
-      }
-    }catch(e){}
-    try { await signOut(auth); } catch(e) {}
-
-    // ПОЛНАЯ ОЧИСТКА: удаляем всё, что связано с авторизацией
-    window.ccStorage.removeItem('cc_auth');
-    window.ccStorage.removeItem('cc_name');
-    window.ccStorage.removeItem('cc_color');
-
-    state.authed = false;
-    state.name = '';
-    
-    // Сбрасываем поля в интерфейсе, чтобы они были пустыми
-    document.getElementById('gateName').value = '';
-    gatePin.value = '';
-    gateColor.value = '#16c7b7';
-
-    $statusText.textContent = 'Оффлайн';
-    $dotAuth.classList.remove('ok');
-    $dotAuth.classList.add('warn');
-
-    gate.classList.remove('hidden'); 
+  function showLoginError(error){
+    gate.classList.remove('hidden');
     setBlur(true);
-  });
+    gateHint.textContent = authErrorMessage(error);
+    gateHint.classList.add('show');
+  }
+
+  async function doGateLogin(){
+    if (loginInFlight) return loginInFlight;
+    gateEnter.disabled = true;
+    gateEnter.textContent = 'Заходим…';
+    gateHint.classList.remove('show');
+    loginInFlight = (async () => {
+      try {
+        const credentials = await loginCredentials(gateName.value, gatePin.value);
+        loginPreferences = {
+          ...(window.__dpColorPicked ? {color: gateColor.value} : {}),
+          ...(window.__dpEmojiPicked ? {emoji: state.emoji} : {})
+        };
+        const result = await signInWithEmailAndPassword(auth, credentials.email, credentials.password);
+        await finishMemberLogin(result.user);
+        return true;
+      } catch(error){
+        state.authed = false;
+        setRealtimeAuthorized(false);
+        if (auth.currentUser) await signOut(auth).catch(() => {});
+        showLoginError(error);
+        return false;
+      } finally {
+        gatePin.value = '';
+        gateEnter.disabled = false;
+        gateEnter.textContent = 'Войти в комнату';
+      }
+    })();
+    try { return await loginInFlight; }
+    finally { loginInFlight = null; }
+  }
+  window.doGateLogin = doGateLogin;
+  window.dpResumeSession = async () => {
+    await auth.authStateReady();
+    if (!auth.currentUser || auth.currentUser.isAnonymous) return false;
+    try { return await finishMemberLogin(auth.currentUser); }
+    catch(error){ showLoginError(error); return false; }
+  };
+  gateEnter.addEventListener('click', doGateLogin);
+  [gateName, gatePin].forEach(el => el.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); void doGateLogin(); }
+  }));
+
+  async function logoutMember(){
+    const uid = auth.currentUser?.uid;
+    state.authed = false;
+    accountUnsubscribe?.(); accountUnsubscribe = null;
+    setRealtimeAuthorized(false);
+    $player.src = 'about:blank';
+    setBlur(true);
+    gate.classList.remove('hidden');
+    if (uid) {
+      await Promise.allSettled([
+        remove(ref(db, `${basePath}/points/${uid}`)),
+        remove(ref(db, `${basePath}/presence/${uid}`))
+      ]);
+    }
+    await signOut(auth).catch(() => {});
+    window.ccStorage.removeItem('cc_auth');
+    window.ccStorage.removeItem('cc_chat_cache');
+    // A clean page also releases game listeners, timers and account-specific UI.
+    location.reload();
+  }
+  logoutBtn.addEventListener('click', logoutMember);
+
+  async function handleRegistrationCommand(text){
+    if (!/^\/reg(?:\s|$)/i.test(text)) return false;
+    chatInput.value = ''; chatInputOverlay.value = '';
+    const parts = text.match(/^\/reg\s+(\S{1,32})\s+(\S{4,128})\s*$/i);
+    if (!parts) { showToast('Формат: /reg имя пароль'); return true; }
+    try {
+      const name = await registerMember({app, db, auth, account: state.account, name: parts[1], password: parts[2]});
+      showToast(`Готово! ${name} может войти в комнату.`);
+    } catch(error){ showToast(authErrorMessage(error)); }
+    return true;
+  }
 
   function syncSelfClustersBtn(){
     if (!toggleSelfClusters) return;
@@ -4462,6 +4425,7 @@ window.cleanupOldReactions = cleanupOldReactions;
   setBlur(true);
 
   function initVideo(){
+    if (!state.authed || urlParams.has('hostLogin')) return;
     if (isOverlayMode()) {
       $player.classList.add('hidden');
       return;
@@ -4488,7 +4452,7 @@ window.cleanupOldReactions = cleanupOldReactions;
   // Периодически проверяем и будим его
   function keepIframeAlive() {
     const player = document.getElementById('player');
-    if (!player || isOverlayMode()) return;
+    if (!player || isOverlayMode() || !state.authed) return;
     if (!player.src || player.src === 'about:blank') return;
     
     // cross-origin iframe не даст доступ к contentDocument
@@ -4505,7 +4469,7 @@ window.cleanupOldReactions = cleanupOldReactions;
 
   function reloadIframe() {
     const player = document.getElementById('player');
-    if (!player || isOverlayMode()) return;
+    if (!player || isOverlayMode() || !state.authed) return;
     
     console.log('[VDO] reloading iframe...');
     player.src = 'about:blank';
@@ -4738,14 +4702,7 @@ window.cleanupOldReactions = cleanupOldReactions;
     if (typeof chatInputOverlay !== 'undefined' && chatInputOverlay) chatInputOverlay.value = '';
   }
 
-  function _canChangeVdoFromChat(){
-    return !!(
-      window.isOverlayHotkeys ||
-      document.documentElement.classList.contains('overlay-live') ||
-      document.documentElement.classList.contains('overlay-mode') ||
-      window.__ccIsHostName?.(window.state?.name || state.name || window.ccStorage.getItem('cc_name'))
-    );
-  }
+  function _canChangeVdoFromChat(){ return window.__dpIsHost(); }
 
   async function handleVdoChatCommand(txt){
     const match = String(txt || '').trim().match(/^\/([A-Za-z0-9_]{3,64})$/);
@@ -4842,6 +4799,7 @@ async function sendChat(){
   if (!state.authed) return;
   const txt = chatInput.value.trim(); 
   if (!txt) return;
+  if (await handleRegistrationCommand(txt)) return;
 
   // Если редактируем сообщение
   if (editingMessage) {
@@ -4889,156 +4847,11 @@ if (txt === '/random') {
   // Команда /Ge3rgcq — переключает общий VDO view ID у всех, не отправляется в чат.
   if (await handleVdoChatCommand(txt)) return;
 
-  // --- ВНУТРИ ОБРАБОТЧИКА ОТПРАВКИ СООБЩЕНИЯ ---
-
-  // 1. Команда объединения: /id_старый+id_новый
-  // Команда слияния: /ID1 + ID2
   if (txt.startsWith('/') && txt.includes(' + ')) {
-      // Команда слияния аккаунтов: /ID1 + ID2
-      // Требование: итоговый профиль (имя/цвет/эмодзи) = у аккаунта с ПОЗЖЕЙ датой регистрации (createdAt больше),
-      // независимо от порядка ввода.
-      const cleanTxt = txt.substring(1);
-      const [idAraw, idBraw] = cleanTxt.split('+').map(s => s.trim());
-      const idA = idAraw;
-      const idB = idBraw;
-
-      if (typeof chatInput !== 'undefined') chatInput.value = '';
-
-      (async ()=>{
-        try{
-          const refA = ref(db, `${basePath}/users/${idA}`);
-          const refB = ref(db, `${basePath}/users/${idB}`);
-          const snapA = await get(refA);
-          const snapB = await get(refB);
-
-          if (!snapA.exists() || !snapB.exists()){
-            alert('Один из аккаунтов не найден в базе.');
-            return;
-          }
-
-          const a = snapA.val() || {};
-          const b = snapB.val() || {};
-
-          
-          const createdA = Number(a.createdAt || 0);
-          const createdB = Number(b.createdAt || 0);
-
-          // MERGE правило (v47):
-          //  a) UID итогового аккаунта = СТАРЫЙ (ранний createdAt), чтобы совпадало с siteUserId в telegram_links
-          //  b) Профиль (имя/цвет/морда=emoji) берём из НОВОГО (поздний createdAt)
-          //  c) Настройки "панели эмодзи" (если они вообще есть в базе) сохраняем от СТАРОГО
-          const oldId = (createdA <= createdB) ? idA : idB;
-          const newId = (oldId === idA) ? idB : idA;
-
-          const keepId = oldId; // остаётся
-          const dropId = newId; // удаляется
-
-          const oldData = (keepId === idA) ? a : b;
-          const newData = (dropId === idA) ? a : b;
-
-          const keepRef = ref(db, `${basePath}/users/${keepId}`);
-          const dropRef = ref(db, `${basePath}/users/${dropId}`);
-
-          // 1) Мержим активность
-          const mergedActivity = {
-            ...(oldData.activity || {}),
-            ...(newData.activity || {})
-          };
-
-          // 2) createdAt сохраняем как самую раннюю (чтобы "возраст" не омолаживался)
-          const earliestCreated = Math.min(
-            Number(oldData.createdAt || Date.now()),
-            Number(newData.createdAt || Date.now())
-          );
-
-          // 3) Профиль (имя/цвет/морда) берём из НОВОГО
-          const profileName  = (newData.name || newData.displayName || oldData.name || oldData.displayName || 'User');
-          const profileColor = (newData.color || oldData.color || '#16c7b7');
-          const profileEmoji = (newData.emoji || oldData.emoji || '⭕');
-
-          // 4) "Панель эмодзи" — сохраняем от СТАРОГО (если такое поле существует)
-          const emojiPanelState =
-            (oldData.emojiPanelState ?? oldData.emojiPanel ?? oldData.emojiPicker ?? oldData.emojiPanelPrefs ?? null);
-
-          const patch = {
-            activity: mergedActivity,
-            createdAt: earliestCreated,
-            mergedFrom: dropId,
-            mergedAt: Date.now(),
-            name: profileName,
-            color: profileColor,
-            emoji: profileEmoji
-          };
-          if (emojiPanelState != null) patch.emojiPanelState = emojiPanelState;
-
-          await update(keepRef, patch);
-
-          // Обновим points "победителя" профилем, координаты не трогаем
-          try{
-            await update(ref(db, `${basePath}/points/${keepId}`), {
-              name: profileName,
-              color: profileColor,
-              emoji: profileEmoji
-            });
-          }catch{}
-
-          // 5) Переносим telegram_links:
-          // после merge запись должна лежать по ключу keepId и иметь siteUserId = keepId.
-          try{
-            const allLinksSnap = await get(ref(db, `${basePath}/telegram_links`));
-            const allLinks = allLinksSnap.val() || {};
-            let chosen = null;
-
-            for (const [k, v0] of Object.entries(allLinks)){
-              const v = v0 || {};
-              const su = v.siteUserId || k;
-              const related = (k === keepId) || (su === keepId) || (k === dropId) || (su === dropId);
-              if (!related) continue;
-
-              // предпочитаем запись с tgUserId
-              if (!chosen) chosen = { key:k, val:v };
-              else if ((chosen.val.tgUserId == null) && (v.tgUserId != null)) chosen = { key:k, val:v };
-            }
-
-            if (chosen && chosen.val){
-              const finalVal = {
-                ...chosen.val,
-                siteUserId: keepId,
-                siteName: profileName,
-                siteColor: profileColor,
-                migratedAt: Date.now()
-              };
-              await set(ref(db, `${basePath}/telegram_links/${keepId}`), finalVal);
-            }
-
-            // удаляем все прочие записи, которые указывают на keep/drop (кроме нового каноничного keepId)
-            for (const [k, v0] of Object.entries(allLinks)){
-              if (k === keepId) continue;
-              const v = v0 || {};
-              const su = v.siteUserId || k;
-              const related = (k === keepId) || (su === keepId) || (k === dropId) || (su === dropId);
-              if (related){
-                try{ await remove(ref(db, `${basePath}/telegram_links/${k}`)); }catch{}
-              }
-            }
-          }catch(e){ console.warn('merge telegram_links failed', e); }
-
-          // 6) Удаляем points/presence "нового" аккаунта, чтобы не оставалась морда-призрак
-          try{ await remove(ref(db, `${basePath}/points/${dropId}`)); }catch{}
-          try{ await remove(ref(db, `${basePath}/presence/${dropId}`)); }catch{}
-
-          // 7) Удаляем "новый" аккаунт
-          await remove(dropRef);
-
-          alert(`Слияние завершено! UID оставлен: ${keepId} (старый). Профиль взят из: ${dropId} (новый).`);
-}catch(e){
-          console.error(e);
-          alert('Ошибка при слиянии. Смотри консоль.');
-        }
-      })();
-
-      return;
-  } // Чтобы сообщение не улетело в чат
+    chatInput.value = '';
+    showToast('Профили объединяются при переносе аккаунтов. Старые ID больше не нужны.');
+    return;
+  }
 
   // СООБЩЕНИЕ ТОЛЬКО НА СЕРВЕРНОМ ВРЕМЕНИ
   const msg = {
@@ -5080,6 +4893,7 @@ async function sendChatOverlay(){
   if (!state.authed) return;
   const txt = chatInputOverlay.value.trim(); 
   if (!txt) return;
+  if (await handleRegistrationCommand(txt)) return;
 
   // Если редактируем сообщение
   if (editingMessage) {
@@ -5197,7 +5011,7 @@ window.addEventListener('pointerdown', ()=>{ _ensureToastAudio(); }, { once:true
     const tgKey = (m && (m.tgUserId || m.telegramUserId || m.tg_user_id || m.telegram_id || m.tg_id || m.tgId || m.telegramId || m.telegramUserID || m.tguserid || m.tgUserID));
     const resolvedUid = (m && m.uid) ? m.uid : ((tgKey != null && state.tgIndex && state.tgIndex.get) ? state.tgIndex.get(String(tgKey)) : null);
     const resolvedColor = resolvedUid ? (state.presence?.get?.(resolvedUid)?.color || state.points?.get?.(resolvedUid)?.color) : null;
-    const color = (m && m.color) ? m.color : (resolvedColor || (state.color || '#16c7b7'));
+    const color = safeColor((m && m.color) ? m.color : (resolvedColor || state.color), '#16c7b7');
     const resolvedEmoji = resolvedUid ? (state.presence?.get?.(resolvedUid)?.emoji || state.points?.get?.(resolvedUid)?.emoji) : null;
     const emoji = (m && m.emoji) ? m.emoji : (resolvedEmoji || '💬');
     const text  = (m && m.text) ? m.text : '';
@@ -5548,10 +5362,12 @@ document.head.appendChild(ratAnimStyle);
   // Хелпер: уже-залогиненный пользователь сейчас запущен через ghost_overlay.py?
   // Это и есть "хост". Жертвы не могут быть хостом по определению.
   const _amIHostNow = () => (
-    isOverlayMode()
-    || window.isOverlayHotkeys
-    || document.documentElement.classList.contains('overlay-live')
-    || document.documentElement.classList.contains('overlay-mode')
+    window.__dpIsHost() && (
+      isOverlayMode()
+      || window.isOverlayHotkeys
+      || document.documentElement.classList.contains('overlay-live')
+      || document.documentElement.classList.contains('overlay-mode')
+    )
   );
   // Имя хоста для отображения — всегда "Лёха" если флаг hostDuel поднят
   // (этот флаг ставит только запуск через кнопку 🗡️ хостом)
@@ -5574,7 +5390,7 @@ document.head.appendChild(ratAnimStyle);
       auth.currentUser?.uid,
       window.__ccCanonicalUid?.()
     ].filter(Boolean);
-    if (_isHostHere() || window.__ccIsHostName?.(window.state?.name || window.ccStorage.getItem('cc_name'))) {
+    if (_isHostHere()) {
       ids.push(HOST_IDENTITY.uid);
     }
     return [...new Set(ids)];
@@ -5674,14 +5490,16 @@ document.head.appendChild(ratAnimStyle);
   }
 
   // === Подписка на активную дуэль ===
-  onValue(duelActiveRef, (snap)=>{
+  if (window.__ccNeedGames) onValue(duelActiveRef, (snap)=>{
     if (window.overlayComponent) return;
     // Хелпер: есть ли признаки хост-режима (любой подходит)
     const _isHostHere = () => (
-      isOverlayMode()
-      || window.isOverlayHotkeys
-      || document.documentElement.classList.contains('overlay-live')
-      || document.documentElement.classList.contains('overlay-mode')
+      window.__dpIsHost() && (
+        isOverlayMode()
+        || window.isOverlayHotkeys
+        || document.documentElement.classList.contains('overlay-live')
+        || document.documentElement.classList.contains('overlay-mode')
+      )
     );
 
     if (!snap.exists()){
@@ -6138,9 +5956,9 @@ document.head.appendChild(ratAnimStyle);
       card.innerHTML = `
         <div class="duel-title">🗡️ ДУЭЛЬ</div>
         <div class="duel-vs">
-          <span class="duel-name" style="color:${d.challengerColor}">${escapeHtml(d.challengerName||'?')}</span>
+          <span class="duel-name" style="color:${safeColor(d.challengerColor, '#16c7b7')}">${escapeHtml(d.challengerName||'?')}</span>
           <span class="duel-sep">vs</span>
-          <span class="duel-name" style="color:${d.victimColor}">${escapeHtml(d.victimName||'?')}</span>
+          <span class="duel-name" style="color:${safeColor(d.victimColor, '#888888')}">${escapeHtml(d.victimName||'?')}</span>
         </div>
         <div class="duel-timer">СТАРТ ЧЕРЕЗ ${until}С</div>
       `;
@@ -6151,11 +5969,11 @@ document.head.appendChild(ratAnimStyle);
       const cB = Number((d.clicks||{})[d.victim] || 0);
       card.innerHTML = `
         <div class="duel-vs">
-          <span class="duel-name" style="color:${d.challengerColor}">${escapeHtml(d.challengerName||'?')}</span>
+          <span class="duel-name" style="color:${safeColor(d.challengerColor, '#16c7b7')}">${escapeHtml(d.challengerName||'?')}</span>
           <span class="duel-score">${cA}</span>
           <span class="duel-sep">:</span>
           <span class="duel-score">${cB}</span>
-          <span class="duel-name" style="color:${d.victimColor}">${escapeHtml(d.victimName||'?')}</span>
+          <span class="duel-name" style="color:${safeColor(d.victimColor, '#888888')}">${escapeHtml(d.victimName||'?')}</span>
         </div>
         <div class="duel-timer">⏱ ${leftSec}С</div>
       `;
@@ -6169,7 +5987,7 @@ document.head.appendChild(ratAnimStyle);
         color = d.winner === d.challenger ? d.challengerColor : d.victimColor;
         text = `🏆 ПОБЕДИЛ ${escapeHtml(wName||'?')}`;
       }
-      card.innerHTML = `<div class="duel-ended" style="color:${color}">${text}</div>`;
+      card.innerHTML = `<div class="duel-ended" style="color:${safeColor(color, '#fbbf24')}">${text}</div>`;
       // Звуковая последовательность: все слышат один сценарий —
       // сперва lose (разрушение проигравшего), через 1.5 сек — win (фанфары победителя).
       // Ничьи без lose, только лёгкие фанфары.
@@ -6272,7 +6090,7 @@ document.head.appendChild(ratAnimStyle);
       const btn = document.createElement('button');
       btn.className = 'btn ghost small';
       const name = (p.name || '?').substring(0, 14);
-      const color = p.color || '#888';
+      const color = safeColor(p.color, '#888888');
       const emoji = p.emoji || '';
       btn.style.cssText = `
         font-size: 1em; padding: 6px 10px; min-width: 84px;
@@ -6281,7 +6099,7 @@ document.head.appendChild(ratAnimStyle);
         box-shadow: 0 0 12px ${color}55;
       `;
       btn.innerHTML = `
-        <span style="font-size:1.6em;line-height:1;">${emoji || '●'}</span>
+        <span style="font-size:1.6em;line-height:1;">${escapeHtml(emoji || '●')}</span>
         <span style="font-size:0.75em;font-weight:700;color:${color};">${escapeHtml(name)}</span>
       `;
       btn.title = `Снайпер с ${name}`;
@@ -6356,7 +6174,7 @@ document.head.appendChild(ratAnimStyle);
   }
 
   // === Подписка на состояние ===
-  onValue(sniperRootRef, (snap)=>{
+  if (window.__ccNeedGames) onValue(sniperRootRef, (snap)=>{
     if (window.overlayComponent) return;
     if (!snap.exists()){
       if (currentSniper){
@@ -6491,10 +6309,12 @@ document.head.appendChild(ratAnimStyle);
   }
   // Хелпер хоста (он же в дуэли есть, но в другом scope — продублируем)
   function _isHostHere(){
-    return isOverlayMode()
+    return window.__dpIsHost() && (
+      isOverlayMode()
       || window.isOverlayHotkeys
       || document.documentElement.classList.contains('overlay-live')
-      || document.documentElement.classList.contains('overlay-mode');
+      || document.documentElement.classList.contains('overlay-mode')
+    );
   }
 
   // === Регистрация выстрела ===
@@ -6752,20 +6572,20 @@ document.head.appendChild(ratAnimStyle);
     if (d.state === 'starting'){
       const until = Math.max(0, Math.ceil(((d.startedAt||0) + SNIPER.STARTING_MS - Date.now())/1000));
       c.innerHTML = `<div class="s-title">🎯 СНАЙПЕР</div>
-        <div class="s-row">${participants.map(([uid,p])=>`<span class="s-name" style="color:${p.color}">${escapeHtml(p.name||'?')}</span>`).join('<span style="color:#666">vs</span>')}</div>
+        <div class="s-row">${participants.map(([uid,p])=>`<span class="s-name" style="color:${safeColor(p.color, '#888888')}">${escapeHtml(p.name||'?')}</span>`).join('<span style="color:#666">vs</span>')}</div>
         <div class="s-timer">СТАРТ ЧЕРЕЗ ${until}С • ${Math.round(SNIPER.FIGHT_MS/1000)} СЕКУНД</div>`;
     } else if (d.state === 'playing'){
       const leftMs = Math.max(0, (d.endsAt||0) - Date.now());
       const leftSec = Math.ceil(leftMs/1000);
       c.innerHTML = `<div class="s-row">${participants.map(([uid,p])=>`
-        <span class="s-name" style="color:${p.color}">${escapeHtml(p.name||'?')}</span>
+        <span class="s-name" style="color:${safeColor(p.color, '#888888')}">${escapeHtml(p.name||'?')}</span>
         <span class="s-score">${Number(scores[uid]||0)}</span>
       `).join('<span class="s-name" style="color:#444">|</span>')}</div>
         <div class="s-timer">⏱ ${leftSec}С</div>`;
     } else if (d.state === 'ended'){
       const wp = d.winner ? d.participants?.[d.winner] : null;
       const txt = wp ? `🏆 ПОБЕДИЛ ${escapeHtml(wp.name || '?')}` : '🤝 НИЧЬЯ';
-      const col = wp?.color || '#fbbf24';
+      const col = safeColor(wp?.color, '#fbbf24');
       c.innerHTML = `<div class="s-end" style="color:${col}">${txt}</div>`;
       // Звук конца — переиспользуем lose+win
       if (!c.__endSoundPlayed){
@@ -7798,7 +7618,7 @@ document.head.appendChild(ratAnimStyle);
   }
 
   // Подписка на состояние
-  onValue(raceRootRef, (snap) => {
+  if (window.__ccNeedGames) onValue(raceRootRef, (snap) => {
     if (window.overlayComponent) return;
     if (!snap.exists()){
       if (currentRace){
@@ -8180,7 +8000,7 @@ document.head.appendChild(ratAnimStyle);
     if (v.state === 'lobby'){
       const left = Math.max(0, Math.ceil(((v.lobbyEndsAt || 0) - Date.now()) / 1000));
       const list = Object.entries(v.participants || {}).map(([uid,p]) =>
-        `<span style="color:${p.color};font-weight:700">${escapeHtml(p.name||'?')}</span>`
+        `<span style="color:${safeColor(p.color, '#888888')};font-weight:700">${escapeHtml(p.name||'?')}</span>`
       ).join(' • ');
       const joinBtn = amIn ? '' :
         `<button id="raceJoinBtn" class="btn ghost small" style="background:#10b981;border:0;color:#fff;font-weight:800;padding:6px 16px">ВПИСАТЬСЯ</button>`;
@@ -8206,9 +8026,9 @@ document.head.appendChild(ratAnimStyle);
       const left = Math.max(0, Math.ceil(((v.endsAt || 0) - Date.now()) / 1000));
       const list = Object.entries(v.participants || {}).map(([uid,p]) => {
         const c = (uid === myUid) ? _raceMyCarState : (v.cars?.[uid] || {});
-        const laps = c?.laps || 0;
+        const laps = Math.max(0, Number(c?.laps) || 0);
         const fin = c?.finished ? '🏁' : '';
-        return `<span style="color:${p.color};font-weight:700">${escapeHtml(p.name||'?')} ${fin}<span style="color:#fbbf24">${laps}/${RACE.LAPS_TO_WIN}</span></span>`;
+        return `<span style="color:${safeColor(p.color, '#888888')};font-weight:700">${escapeHtml(p.name||'?')} ${fin}<span style="color:#fbbf24">${laps}/${RACE.LAPS_TO_WIN}</span></span>`;
       }).join(' • ');
       el.innerHTML = `
         <div style="font-size:13px">⏱ <b style="color:#fbbf24">${left}с</b> • ${list}</div>
@@ -8225,13 +8045,13 @@ document.head.appendChild(ratAnimStyle);
           const p = v.participants?.[uid];
           if (!p) return;
           const m = medals[i] || `${i+1}.`;
-          html += `<div style="font-size:16px"><span style="font-size:1.4em">${m}</span> <b style="color:${p.color}">${escapeHtml(p.name||'?')}</b></div>`;
+          html += `<div style="font-size:16px"><span style="font-size:1.4em">${m}</span> <b style="color:${safeColor(p.color, '#888888')}">${escapeHtml(p.name||'?')}</b></div>`;
         });
         // Те кто не финишировал
         const dnf = Object.keys(v.participants||{}).filter(u => !order.includes(u));
         if (dnf.length){
           html += '<div style="margin-top:6px;font-size:12px;color:#888">Не финишировали: ';
-          html += dnf.map(u => `<span style="color:${v.participants[u].color}">${escapeHtml(v.participants[u].name||'?')}</span>`).join(', ');
+          html += dnf.map(u => `<span style="color:${safeColor(v.participants[u].color, '#888888')}">${escapeHtml(v.participants[u].name||'?')}</span>`).join(', ');
           html += '</div>';
         }
         html += '</div>';
@@ -8484,7 +8304,7 @@ document.head.appendChild(ratAnimStyle);
       }
     } catch {}
 
-    const isHost = _isHostHere() || window.__ccIsHostName?.(window.state?.name || window.ccStorage.getItem('cc_name'));
+    const isHost = window.__dpIsHost();
     const myName = isHost ? DUEL.HOST_NAME : (getDisplayName(state) || 'Игрок');
     const myColor = isHost ? DUEL.HOST_COLOR : (state.color || '#16c7b7');
     const startedAt = Date.now();
@@ -8547,7 +8367,7 @@ document.head.appendChild(ratAnimStyle);
       const btn = document.createElement('button');
       btn.className = 'btn ghost small';
       const name = (p.name || '?').substring(0, 14);
-      const color = p.color || '#888';
+      const color = safeColor(p.color, '#888888');
       const emoji = p.emoji || '';
       btn.style.cssText = `
         font-size: 1em; padding: 6px 10px; min-width: 84px;
@@ -8556,7 +8376,7 @@ document.head.appendChild(ratAnimStyle);
         box-shadow: 0 0 12px ${color}55;
       `;
       btn.innerHTML = `
-        <span style="font-size:1.6em;line-height:1;">${emoji || '●'}</span>
+        <span style="font-size:1.6em;line-height:1;">${escapeHtml(emoji || '●')}</span>
         <span style="font-size:0.75em;font-weight:700;color:${color};">${escapeHtml(name)}</span>
       `;
       btn.title = `Аэрохоккей с ${name}`;
@@ -8565,7 +8385,7 @@ document.head.appendChild(ratAnimStyle);
     }
   }
 
-  onValue(hockeyRootRef, (snap) => {
+  if (window.__ccNeedGames) onValue(hockeyRootRef, (snap) => {
     if (window.overlayComponent) return;
     if (!snap.exists()){
       if (currentHockey) _onHockeyEnd();
@@ -9399,7 +9219,7 @@ document.head.appendChild(ratAnimStyle);
     _quoteResultRenderKey = '';
   }
 
-  onValue(quoteGameRootRef, (snap) => {
+  if (window.__ccNeedGames) onValue(quoteGameRootRef, (snap) => {
     if (window.overlayComponent) return;
     if (!snap.exists()){
       if (currentQuoteGame) _quoteEndLocal();
@@ -9697,10 +9517,7 @@ document.head.appendChild(ratAnimStyle);
     const old = document.getElementById('gamesModal');
     if (old) old.remove();
 
-    const isHost = isOverlayMode()
-      || window.isOverlayHotkeys
-      || document.documentElement.classList.contains('overlay-live')
-      || document.documentElement.classList.contains('overlay-mode');
+    const isHost = window.__dpIsHost();
 
     const wrap = document.createElement('div');
     wrap.id = 'gamesModal';
@@ -9831,7 +9648,7 @@ document.head.appendChild(ratAnimStyle);
         const btn = document.createElement('button');
         btn.className = 'btn ghost';
         const name = (p.name || '?').substring(0, 14);
-        const color = p.color || '#888';
+        const color = safeColor(p.color, '#888888');
         const emoji = p.emoji || '';
         btn.style.cssText = `
           padding: 10px 14px; min-width: 96px;
@@ -9842,7 +9659,7 @@ document.head.appendChild(ratAnimStyle);
           font-family: inherit;
         `;
         btn.innerHTML = `
-          <span style="font-size:1.8em;line-height:1;">${emoji || '●'}</span>
+          <span style="font-size:1.8em;line-height:1;">${escapeHtml(emoji || '●')}</span>
           <span style="font-size:0.85em;font-weight:800;color:${color};">${escapeHtml(name)}</span>
         `;
         btn.onclick = () => {
@@ -9903,8 +9720,8 @@ document.head.appendChild(ratAnimStyle);
       if (replyMsg) {
         const replyName = escapeHtml(replyMsg.name || 'Чужой');
         const replyText = escapeHtml((replyMsg.text || '').substring(0, 50));
-        html += `<div class="chat-msg-reply-preview" data-reply-to="${m.replyTo}">
-          <b style="color:${replyMsg.color||'#ccc'}">${replyName}</b>: ${replyText}${(replyMsg.text||'').length > 50 ? '...' : ''}
+        html += `<div class="chat-msg-reply-preview" data-reply-to="${escapeHtml(m.replyTo)}">
+          <b style="color:${safeColor(replyMsg.color, '#cccccc')}">${replyName}</b>: ${replyText}${(replyMsg.text||'').length > 50 ? '...' : ''}
         </div>`;
       }
     }
@@ -9912,7 +9729,7 @@ document.head.appendChild(ratAnimStyle);
     const text = escapeHtml(m.text||'');
     const edited = m.edited ? '<span style="color:var(--muted);font-size:0.8em;margin-left:4px">(изменено)</span>' : '';
     html += `<div class="chat-msg-header">
-      <b style="color:${m.color||'#ccc'}">${name}</b>
+      <b style="color:${safeColor(m.color, '#cccccc')}">${name}</b>
     </div>
     <div class="chat-msg-text">${text}${edited}</div>`;
     return html;
@@ -9920,7 +9737,7 @@ document.head.appendChild(ratAnimStyle);
 
   function buildMsgElement(m, msgs){
     const currentUserId = auth.currentUser?.uid || state.id;
-    const isOwnMessage = m.uid === currentUserId;
+    const isOwnMessage = resolveIdentity(m.uid) === currentUserId;
     const el = document.createElement('div');
     el.className = 'chat-msg' + (isOwnMessage ? ' own-message' : '');
     el.dataset.msgKey = m.key;
@@ -9987,6 +9804,11 @@ document.head.appendChild(ratAnimStyle);
   const renderChat = renderChatFull;
   
   function setupMessageHandlers(el, m) {
+    el.__message = m;
+    if (el.__messageHandlersInstalled) return;
+    el.__messageHandlersInstalled = true;
+    // Handlers retain one stable proxy so edits update their data without adding listeners.
+    m = new Proxy({}, { get: (_, key) => el.__message[key] });
     let touchTimer = null;
     let touchStartTime = 0;
     
@@ -10243,7 +10065,7 @@ document.head.appendChild(ratAnimStyle);
     if (!auth.currentUser) return;
     
     const currentUserId = auth.currentUser.uid || state.id;
-    if (msg.uid !== currentUserId) {
+    if (resolveIdentity(msg.uid) !== currentUserId) {
       alert('Вы можете удалять только свои сообщения');
       return;
     }
@@ -10266,7 +10088,7 @@ document.head.appendChild(ratAnimStyle);
         msgs.splice(index, 1);
         removeChatMessageFromDOM(msg.key);
         state.localChat = msgs.slice(-100);
-        window.ccStorage.setItem('cc_chat_cache', JSON.stringify(state.localChat));
+        
       }
       
       hideContextMenu();
@@ -10296,7 +10118,7 @@ document.head.appendChild(ratAnimStyle);
       if ((activeEl === chatInput || activeEl === chatInputOverlay) && activeEl.value.trim() === '') {
         // Находим последнее своё сообщение
         const currentUserId = auth.currentUser?.uid || state.id;
-        const myMessages = msgs.filter(m => m.uid === currentUserId);
+        const myMessages = msgs.filter(m => resolveIdentity(m.uid) === currentUserId);
         if (myMessages.length > 0) {
           const lastMsg = myMessages[myMessages.length - 1];
           const messageTime = lastMsg.t || lastMsg.ts || 0;
@@ -10674,14 +10496,24 @@ window.spawnEmoji = spawnEmoji;
   
   // ===== TINTED EMOJI RENDER (no squares) =====
   // We render emoji to an offscreen canvas in grayscale, then recolor only non-transparent pixels.
+  const _emojiSpriteCache = new Map();
+  let _emojiSpriteBytes = 0;
   const _emojiOff = document.createElement('canvas');
   const _emojiCtx = _emojiOff.getContext('2d', { willReadFrequently: true });
 
   function _drawTintedEmoji(targetCtx, glyph, x, y, fontPx, colorHex, opts){
     if (!glyph) return;
 
-    const rgb = hexToRgb(colorHex || DEFAULT_COLOR);
     opts = opts || {};
+    fontPx = Math.round(fontPx);
+    const cacheKey = JSON.stringify([glyph,fontPx,colorHex,opts.brightness,opts.contrast,opts.outline,opts.outlineWidth,opts.outlineAlpha,opts.mono]);
+    const cached = _emojiSpriteCache.get(cacheKey);
+    if (cached) {
+      _emojiSpriteCache.delete(cacheKey); _emojiSpriteCache.set(cacheKey,cached);
+      targetCtx.drawImage(cached, x-cached.width/2, y-cached.height/2);
+      return;
+    }
+    const rgb = hexToRgb(colorHex || DEFAULT_COLOR);
 
     // opts.brightness used to be additive (-0.3..+0.3). Here we map it to a multiplier for CSS brightness().
     const brightness = (typeof opts.brightness === 'number') ? opts.brightness : 0.0;
@@ -10805,6 +10637,18 @@ window.spawnEmoji = spawnEmoji;
 
     _emojiCtx.restore();
     targetCtx.drawImage(_emojiOff, x - box/2, y - box/2);
+    const bytes = box*box*4;
+    if (bytes <= 1024*1024) {
+      while (_emojiSpriteCache.size >= 96 || _emojiSpriteBytes+bytes > 12*1024*1024) {
+        const oldest=_emojiSpriteCache.keys().next().value;
+        const old=_emojiSpriteCache.get(oldest);
+        _emojiSpriteBytes -= old.width*old.height*4;
+        _emojiSpriteCache.delete(oldest);
+      }
+      const sprite=document.createElement('canvas'); sprite.width=box; sprite.height=box;
+      sprite.getContext('2d').drawImage(_emojiOff,0,0);
+      _emojiSpriteCache.set(cacheKey,sprite); _emojiSpriteBytes += bytes;
+    }
   }
 function drawSingleDot(px, py, radius, p){
   // v38 guard: avoid NaN/Infinity crashing Canvas gradients
@@ -11651,7 +11495,7 @@ ctx.restore();
 
   function loop(ts){
     // when tab is hidden, don't waste CPU
-    if (document.hidden){
+    if (document.hidden || !state.authed){
       requestAnimationFrame(loop);
       return;
     }
@@ -12077,7 +11921,7 @@ function moveStroke(e){
     if (linkData) {
       linkBtn.innerHTML = '✅ TG';
       linkBtn.classList.add('linked');
-      linkBtn.title = `Привязан к @${linkData.tgUsername || linkData.tgFirstName}`;
+      linkBtn.title = `Привязан к @${escapeHtml(linkData.tgUsername || linkData.tgFirstName || '')}`;
     } else {
       linkBtn.innerHTML = '📎';
       linkBtn.classList.remove('linked');
@@ -12232,10 +12076,7 @@ window.closeLinkModal = function() {
         }
 
         // Определяем isHost
-        const isHost = isOverlayMode()
-          || window.isOverlayHotkeys
-          || document.documentElement.classList.contains('overlay-live')
-          || document.documentElement.classList.contains('overlay-mode');
+        const isHost = window.__dpIsHost();
 
         // Кнопка ИГРЫ
         const gamesBtn = document.createElement('button');
@@ -12328,6 +12169,7 @@ window.closeLinkModal = function() {
   // Панель очищается и заполняется аватарками всех присутствующих (кроме хоста).
   // После клика на аватарку — дуэль стартует.
   function _enterDuelPickMode(panel){
+    if (!window.__dpIsHost()) return;
     panel.dataset.mode = 'duel-pick';
     panel.innerHTML = '';
 
@@ -12355,7 +12197,7 @@ window.closeLinkModal = function() {
       const btn = document.createElement('button');
       btn.className = 'btn ghost small';
       const name = (p.name || '?').substring(0, 14);
-      const color = p.color || '#888';
+      const color = safeColor(p.color, '#888888');
       const emoji = p.emoji || '';
       btn.style.cssText = `
         font-size: 1em; padding: 6px 10px; min-width: 84px;
@@ -12364,7 +12206,7 @@ window.closeLinkModal = function() {
         box-shadow: 0 0 12px ${color}55;
       `;
       btn.innerHTML = `
-        <span style="font-size:1.6em;line-height:1;">${emoji || '●'}</span>
+        <span style="font-size:1.6em;line-height:1;">${escapeHtml(emoji || '●')}</span>
         <span style="font-size:0.75em;font-weight:700;color:${color};">${escapeHtml(name)}</span>
       `;
       btn.title = `Вызвать ${name} на дуэль`;
@@ -12376,7 +12218,7 @@ window.closeLinkModal = function() {
   // === Запуск дуэли от хоста ===
   // Отличие от обычной: challenger подменяется на "🐻 Медведь" с синим цветом.
   async function _triggerHostDuel(targetUid, targetPoint){
-    if (!auth.currentUser) return;
+    if (!auth.currentUser || !window.__dpIsHost()) return;
     const hostUid = window.__ccCanonicalUid?.() || HOST_IDENTITY.uid || auth.currentUser.uid;
     if (targetUid === hostUid) return;
 
@@ -12470,12 +12312,14 @@ window.closeLinkModal = function() {
   }
   
   // Слушатель изменений привязки (реалтайм обновление)
+  let linkUnsubscribe = null;
   function listenToLinkChanges() {
+    linkUnsubscribe?.();
     if (!auth.currentUser) return;
     
     const linksRef = ref(db, `${basePath}/telegram_links/${state.id}`);
     
-    onValue(linksRef, async (snapshot) => {
+    linkUnsubscribe = onValue(linksRef, async (snapshot) => {
       if (snapshot.exists()) {
         const linkData = snapshot.val();
         updateLinkButton(linkData);
@@ -12505,7 +12349,7 @@ window.closeLinkModal = function() {
           `;
           notification.innerHTML = `
             ✅ Telegram успешно привязан!<br>
-            <span style="font-size: 0.9em; opacity: 0.9;">@${linkData.tgUsername || linkData.tgFirstName}</span>
+            <span style="font-size: 0.9em; opacity: 0.9;">@${escapeHtml(linkData.tgUsername || linkData.tgFirstName || '')}</span>
           `;
           document.body.appendChild(notification);
           
@@ -12520,22 +12364,32 @@ window.closeLinkModal = function() {
     });
   }
   
-  // Инициализация Telegram привязки
-  onAuthStateChanged(auth, async (user) => {
-    if (user) {
-      // Проверяем привязку
-      const linkData = await checkTelegramLink();
-      updateLinkButton(linkData);
-      
-      // Запускаем слушатель
+  // Start user-specific subscriptions only after verified membership and the canonical UID.
+  window.addEventListener('cc_authenticated', async () => {
+    try {
+      updateLinkButton(await checkTelegramLink());
       listenToLinkChanges();
-
-      // Подписка на свои сохранённые эмодзи (была определена, но не вызывалась —
-      // именно поэтому при перезагрузке у всех был дефолтный набор).
-      try { setupEmojiListener(__ccCanonicalUid(user.uid)); } catch(e){ console.warn('emoji listener fail', e); }
+      setupEmojiListener(state.id);
+    } catch { showToast('Не удалось загрузить настройки Telegram. Попробуй обновить страницу.'); }
+  });
+  onAuthStateChanged(auth, async user => {
+    window.__dpAuthResolved = false;
+    if (!user || user.isAnonymous) {
+      window.__dpAuthResolved = true;
+      if (!loginInFlight) { const wasAuthed=state.authed; state.authed=false; state.account=null; setRealtimeAuthorized(false); setBlur(true); gate.classList.remove('hidden'); $player.src='about:blank'; if(wasAuthed) location.reload(); }
+      return;
+    }
+    try { await finishMemberLogin(user); }
+    catch(error){
+      window.__dpAuthResolved = true;
+      setRealtimeAuthorized(false);
+      state.authed = false;
+      state.account = null;
+      showLoginError(error);
+      await signOut(auth).catch(() => {});
     }
   });
-  
+
   // Анимации для уведомлений
   const telegramAnimStyle = document.createElement('style');
   telegramAnimStyle.textContent = `
@@ -12813,148 +12667,81 @@ function isGray(rgb){
 }
 
 function boot(){
-    const gateColor = document.getElementById('gateColor');
-    const emojiGrid = document.getElementById('emojiGrid');
-    const emojiDisplay = document.getElementById('emojiDisplay');
-    const gateHint = document.getElementById('gateHint');
-
-    if (!gateColor || !emojiGrid || !emojiDisplay) return;
-
-    const emojis = [
-      null,
-      '🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨',
-      '🐯','🦁','🐮','🐷','🐸','🐵','🦉','🐺','🦀','🦝'
-    ];
-
-    let selected = window.ccStorage.getItem('cc_emoji');
-    // null/empty means "no face"
-    if (selected === null) selected = '🐶';
-    try { window.dispatchEvent(new CustomEvent('cc_emoji_changed', { detail: { emoji: selected } })); } catch {}
-
-    function renderGrid(){
-      emojiGrid.innerHTML = '';
-      emojis.forEach((emo)=>{
-        const btn = document.createElement('button');
-        btn.type = 'button';
-        btn.className = 'emoji-btn';
-        btn.textContent = (emo === null) ? '⭕' : emo;
-
-        const isActive = (emo === null) ? (selected === '') : (selected === emo);
-        if (isActive) btn.classList.add('active');
-
-        btn.addEventListener('click', ()=>{
-          selected = (emo === null) ? '' : emo;
-          window.ccStorage.setItem('cc_emoji', selected);
-          try { window.dispatchEvent(new CustomEvent('cc_emoji_changed', { detail: { emoji: selected } })); } catch {}
-          updatePreview();
-          // active style
-          emojiGrid.querySelectorAll('.emoji-btn').forEach(b=>b.classList.remove('active'));
-          btn.classList.add('active');
-          if (emojiSetup) emojiSetup.classList.remove('open');
-        });
-
-        emojiGrid.appendChild(btn);
-      });
-    }
+    const color = document.getElementById('gateColor');
+    const grid = document.getElementById('emojiGrid');
+    const preview = document.getElementById('emojiDisplay');
+    if (!color || !grid || !preview) return;
+    const defaults = ['', '🐶','🐱','🐭','🐹','🐰','🦊','🐻','🐼','🐨','🐯','🦁','🐮','🐷','🐸','🐵','🦉','🐺','🦀','🦝'];
+    let selected = window.ccStorage.getItem('cc_emoji') ?? '🐶';
+    const customRow = document.createElement('div');
+    customRow.className = 'custom-emoji-row'; customRow.hidden = true;
+    const customInput = document.createElement('input');
+    customInput.className = 'in'; customInput.placeholder = 'Любой эмодзи, например 🦄';
+    customInput.setAttribute('aria-label', 'Свой эмодзи'); customInput.maxLength = 32;
+    const apply = document.createElement('button');
+    apply.type = 'button'; apply.className = 'btn'; apply.textContent = '✓';
+    apply.setAttribute('aria-label', 'Выбрать эмодзи');
+    customRow.append(customInput, apply);
+    document.querySelector('.emoji-setup-container').after(customRow);
 
     function updatePreview(){
-      // DOM-based preview (no canvas): preserves emoji shading + lets CSS filters do the magic
-      emojiDisplay.innerHTML = '';
-      emojiDisplay.className = 'emoji-layer';
-
-      if (!selected){
-        const circle = document.createElement('div');
-        circle.className = 'empty-circle';
-        emojiDisplay.appendChild(circle);
-        emojiDisplay.style.filter = 'none';
-        return;
+      preview.replaceChildren();
+      if (!selected) {
+        const circle = document.createElement('div'); circle.className = 'empty-circle';
+        preview.append(circle); preview.style.filter = 'none'; return;
       }
-
-      emojiDisplay.textContent = selected;
-
-      // Compute filter pipeline (sepia+hue-rotate) like cluster rendering
-      const hex = gateColor.value || '#00ffd5';
-      const rgb = (function(){
-        const h = hex.replace('#','');
-        const n = parseInt(h.length===3 ? (h[0]+h[0]+h[1]+h[1]+h[2]+h[2]) : h, 16);
-        return { r:(n>>16)&255, g:(n>>8)&255, b:n&255 };
-      })();
-
-      const isGray = (rgb.r === rgb.g && rgb.g === rgb.b);
-
-      function hueFromRgb(r,g,b){
-        r/=255; g/=255; b/=255;
-        const mx=Math.max(r,g,b), mn=Math.min(r,g,b);
-        const d=mx-mn;
-        if (d===0) return 0;
-        let h;
-        switch(mx){
-          case r: h=((g-b)/d)%6; break;
-          case g: h=((b-r)/d)+2; break;
-          default: h=((r-g)/d)+4; break;
-        }
-        h*=60;
-        if (h<0) h+=360;
-        return h;
-      }
-
-      if (isGray){
-        // No sepia/hue shift for grayscale: keep real difference between white/gray/black
-        // Slight boost so it doesn't drown in same-color bubble
-        emojiDisplay.style.filter = 'grayscale(1) brightness(1.08) contrast(1.22)';
-      } else {
-        const hue = hueFromRgb(rgb.r, rgb.g, rgb.b);
-        // sepia base shifts the hue wheel (≈ +60°). Compensate so the picked HEX hue matches the preview.
-        const hueAdj = ((hue - 60) % 360 + 360) % 360;
-        emojiDisplay.style.filter = `grayscale(1) sepia(1) saturate(1.35) hue-rotate(${hueAdj}deg) brightness(0.95) contrast(1.12)`;
-      }
+      preview.textContent = selected;
+      const h = color.value.slice(1);
+      const n = parseInt(h,16), r=((n>>16)&255)/255, g=((n>>8)&255)/255, b=(n&255)/255;
+      const max=Math.max(r,g,b), min=Math.min(r,g,b), d=max-min;
+      let hue = d === 0 ? 0 : max === r ? ((g-b)/d)%6 : max === g ? (b-r)/d+2 : (r-g)/d+4;
+      hue = ((hue*60-60)%360+360)%360;
+      preview.style.filter = d === 0 ? 'grayscale(1) brightness(1.08) contrast(1.22)' :
+        `grayscale(1) sepia(1) saturate(1.35) hue-rotate(${hue}deg) brightness(.95) contrast(1.12)`;
     }
-      // Outline + subtle glow (like clusters), so the avatar doesn't drown in same-color bubble.
-      function lightenHex(hex, amt){
-        const h = (hex||'#00ffd5').replace('#','');
-        const n = parseInt(h.length===3 ? (h[0]+h[0]+h[1]+h[1]+h[2]+h[2]) : h, 16);
-        let r=(n>>16)&255, g=(n>>8)&255, b=n&255;
-        r = Math.min(255, Math.round(r + (255-r)*amt));
-        g = Math.min(255, Math.round(g + (255-g)*amt));
-        b = Math.min(255, Math.round(b + (255-b)*amt));
-        return `rgb(${r}, ${g}, ${b})`;
-      }
-
-      if (!selected){
-        emojiDisplay.style.textShadow = 'none';
-      } else if (isGray){
-        // neutral outline, no glow
-        emojiDisplay.style.textShadow =
-          '0 0 0.8px rgba(0,0,0,0.85), 0 0 2px rgba(0,0,0,0.55)';
-      } else {
-        const glow = lightenHex(hex, 0.35);
-        // fake outline with multi-shadow + soft glow
-        emojiDisplay.style.textShadow =
-          `0 0 1px ${glow}, 0 0 2px ${glow}, 0 0 8px rgba(0,0,0,0.15),
-           -1px 0 ${glow}, 1px 0 ${glow}, 0 -1px ${glow}, 0 1px ${glow},
-           -1px -1px ${glow}, 1px -1px ${glow}, -1px 1px ${glow}, 1px 1px ${glow}`;
-      }
-
-
-    // color picker: keep in sync with preview
-    function syncColor(){
-      updatePreview();
-      if (window.__neoApplyAccent) window.__neoApplyAccent(gateColor.value);
+    function choose(emoji){
+      selected = emoji;
+      window.__dpEmojiPicked = true;
+      window.ccStorage.setItem('cc_emoji', emoji);
+      window.dispatchEvent(new CustomEvent('cc_emoji_changed', {detail:{emoji}}));
+      renderGrid(); updatePreview(); customRow.hidden=true;
     }
-
-gateColor.addEventListener('input', syncColor);
-    syncColor();
-
-    renderGrid();
-    updatePreview();
-
-    // IMPORTANT: file:// often breaks ES-module imports (Firebase CDN). Give a hint.
-    if (location.protocol === 'file:' && gateHint){
-      gateHint.textContent = 'Открыто как file://. Так ES-модули (Firebase) часто не грузятся. Запусти через локальный сервер (например VS Code Live Server), иначе кнопка “Войти” может не работать.';
-      gateHint.classList.add('show');
+    function renderGrid(){
+      grid.replaceChildren();
+      const emojis = defaults.includes(selected) ? defaults : [...defaults,selected];
+      for (const emoji of emojis){
+        const button = document.createElement('button'); button.type='button';
+        button.className='emoji-btn'; button.textContent=emoji || '⭕';
+        button.setAttribute('aria-label', emoji ? `Выбрать ${emoji}` : 'Без мордочки');
+        button.setAttribute('aria-pressed', String(selected===emoji));
+        button.classList.toggle('active', selected===emoji);
+        button.addEventListener('click',()=>choose(emoji)); grid.append(button);
+      }
+      const plus=document.createElement('button'); plus.type='button'; plus.className='emoji-btn custom-emoji';
+      plus.textContent='+'; plus.title='Свой эмодзи'; plus.setAttribute('aria-label','Выбрать любой эмодзи');
+      plus.addEventListener('click',()=>{customRow.hidden=!customRow.hidden;if(!customRow.hidden)customInput.focus();});
+      grid.append(plus);
+    }
+    function useCustom(){
+      const value=customInput.value.trim();
+      const parts=typeof Intl.Segmenter==='function' ? [...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(value)] : [value];
+      if (!value || value.length>32 || parts.length!==1 || !/[\p{Extended_Pictographic}\p{Regional_Indicator}\u20e3]/u.test(value) || /[<>\r\n]/.test(value)) {
+        customInput.setCustomValidity('Вставь один эмодзи. Можно с оттенком кожи или флаг.');
+        customInput.reportValidity(); return;
+      }
+      customInput.setCustomValidity(''); choose(value);
+    }
+    customInput.addEventListener('input',()=>customInput.setCustomValidity(''));
+    customInput.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();useCustom();}});
+    apply.addEventListener('click',useCustom);
+    color.addEventListener('input',()=>{updatePreview();window.__neoApplyAccent?.(color.value);});
+    window.addEventListener('cc_identity_loaded',e=>{selected=String(e.detail.emoji??'');renderGrid();updatePreview();});
+    renderGrid(); updatePreview();
+    if(location.protocol==='file:') {
+      const hint=document.getElementById('gateHint');
+      hint.textContent='Открой сайт по его обычной ссылке.'; hint.classList.add('show');
     }
   }
-
 
   /* ===== Neon / 3D UI helpers (visual only) ===== */
   (function(){
@@ -12987,6 +12774,12 @@ gateColor.addEventListener('input', syncColor);
       const db = Math.max(0, Math.round(rgb.b * 0.78));
       const acc2 = `rgb(${dr}, ${dg}, ${db})`;
       root.style.setProperty('--accent-2', acc2);
+      // Keep controls readable even for a black, white or very dark avatar color.
+      let ui = [rgb.r,rgb.g,rgb.b];
+      const luminance = c => c.map(v => {v/=255;return v<=.04045?v/12.92:Math.pow((v+.055)/1.055,2.4);}).reduce((n,v,i)=>n+v*[.2126,.7152,.0722][i],0);
+      while ((luminance(ui)+.05)/(.012+.05)<4.5) ui=ui.map(v=>Math.min(255,Math.round(v+(255-v)*.1)));
+      root.style.setProperty('--ui-accent', `rgb(${ui.join(',')})`);
+      root.style.setProperty('--accent-ink', luminance(ui)>.179?'#101114':'#ffffff');
     };
 
     // init accent from saved account color
@@ -12995,31 +12788,6 @@ gateColor.addEventListener('input', syncColor);
       window.__neoApplyAccent(saved);
     }catch(e){}
 
-    // magnetic glow ball follows cursor (throttled)
-    let raf = 0;
-    let lastX = 0, lastY = 0;
-    function apply(){
-      raf = 0;
-      root.style.setProperty('--mx', `${lastX}px`);
-      root.style.setProperty('--my', `${lastY}px`);
-    }
-    function onMove(ev){
-      const p = (ev.touches && ev.touches[0]) ? ev.touches[0] : ev;
-      lastX = p.clientX;
-      lastY = p.clientY;
-      if (!raf) raf = requestAnimationFrame(apply);
-    }
-    window.addEventListener('pointermove', onMove, {passive:true});
-    window.addEventListener('mousemove', onMove, {passive:true});
-    window.addEventListener('touchmove', onMove, {passive:true});
-
-    // nice default if no movement yet
-    requestAnimationFrame(()=>{ 
-      const r = root.getBoundingClientRect();
-      lastX = Math.round(r.width * 0.6);
-      lastY = Math.round(r.height * 0.25);
-      apply();
-    });
   })();
 
 
@@ -13028,9 +12796,10 @@ gateColor.addEventListener('input', syncColor);
 })();
 </script>
 <script type="module">
-  import { ref, onValue, set, update, remove, get } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+  import { ref, onValue, set, update, remove, get } from "./dp-realtime.js";
 
   (function initDurakModule(){
+    if (!window.__ccNeedDurak) return;
     if (!window.db || !window.auth || !window.state) {
       setTimeout(initDurakModule, 100);
       return;
@@ -13080,6 +12849,7 @@ gateColor.addEventListener('input', syncColor);
 
     function esc(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
     function attr(s){ return esc(s).replace(/'/g,'&#39;'); }
+    function cssColor(s, fallback='#94a3b8'){ return window.__dpSafeColor?.(s, fallback) || fallback; }
     function host(){ return window.HOST_IDENTITY || { uid:'host_leha', name:'Лёха', color:'#1e40af', emoji:'🐻' }; }
     function cleanName(raw){ return window.__ccCanonicalName?.(raw) || String(raw || '').trim(); }
     function myName(){
@@ -13106,7 +12876,7 @@ gateColor.addEventListener('input', syncColor);
       return ids().has(v.host) || (isOverlayHost() && isHostName(v.hostName));
     }
     function isOverlayHost(){
-      return !!(
+      return window.__dpIsHost() && !!(
         window.isOverlayHotkeys ||
         document.documentElement.classList.contains('overlay-live') ||
         document.documentElement.classList.contains('overlay-mode') ||
@@ -13637,7 +13407,7 @@ gateColor.addEventListener('input', syncColor);
       const disabled = !inert && options.playable === false && !inspectable;
       const ambiguous = !!options.ambiguous;
       const chosen = !!options.chosen;
-      const style = ownerColor ? ` style="--owner:${attr(ownerColor)}"` : '';
+      const style = ownerColor ? ` style="--owner:${cssColor(ownerColor)}"` : '';
       const attrs = inert && !inspectable ? '' : `type="button" ${options.peek ? `data-da="peek-${attr(card)}"` : `data-card="${attr(card)}"`} ${disabled ? 'disabled' : ''}`;
       return `<${tag} class="durak-card ${inert ? 'inert' : ''} ${ownerColor ? 'owned' : ''} ${options.playable === false ? 'dim' : ''} ${inspectable ? 'inspectable' : ''} ${ambiguous ? 'ambiguous' : ''} ${chosen ? 'chosen' : ''} ${red(card) ? 'red' : 'black'}"${style} ${attrs}>${cardArt(card)}<span>${esc(rank(card))}</span><b>${D.label[suit(card)] || ''}</b></${tag}>`;
     }
@@ -13652,7 +13422,7 @@ gateColor.addEventListener('input', syncColor);
     function miniCardHtml(card, ownerColor, i, total, reveal=false){
       const mid = (Math.max(1, total) - 1) / 2;
       const delta = i - mid;
-      const style = `--owner:${attr(ownerColor || '#94a3b8')};--tx:${(delta * 12).toFixed(1)}px;--rot:${(delta * -7).toFixed(1)}deg`;
+      const style = `--owner:${cssColor(ownerColor)};--tx:${(delta * 12).toFixed(1)}px;--rot:${(delta * -7).toFixed(1)}deg`;
       if (reveal && card) {
         return `<span class="durak-mini-card face ${red(card) ? 'red' : 'black'}" style="${style}">${cardArt(card)}<span>${esc(rank(card))}</span><b>${D.label[suit(card)] || ''}</b></span>`;
       }
@@ -13662,7 +13432,7 @@ gateColor.addEventListener('input', syncColor);
       const p = v.participants?.[pid] || {};
       const cards = sortHand(v.hands?.[pid] || [], v.trump);
       const shown = cards.slice(0, 10);
-      return `<div class="durak-fan" style="--pc:${attr(p.color || '#94a3b8')}">${shown.map((c,i) => miniCardHtml(c, p.color, i, shown.length, revealAllHands)).join('')}<em>${cards.length}</em></div>`;
+      return `<div class="durak-fan" style="--pc:${cssColor(p.color)}">${shown.map((c,i) => miniCardHtml(c, p.color, i, shown.length, revealAllHands)).join('')}<em>${cards.length}</em></div>`;
     }
     function playersCircleHtml(v, myId){
       const order = (v.order || []).filter(pid => v.participants?.[pid]);
@@ -13675,7 +13445,7 @@ gateColor.addEventListener('input', syncColor);
         const rad = angle * Math.PI / 180;
         const left = 50 + Math.cos(rad) * 42;
         const top = 50 + Math.sin(rad) * 39;
-        return `<div class="durak-seat ${pid === myId ? 'me' : ''} ${pid === turn ? 'turn' : ''}" style="--pc:${attr(p.color || '#94a3b8')};left:${left.toFixed(2)}%;top:${top.toFixed(2)}%" title="${attr(p.name || '')}"><div class="durak-face">${esc(p.emoji || '🙂')}</div>${fanHtml(v,pid)}</div>`;
+        return `<div class="durak-seat ${pid === myId ? 'me' : ''} ${pid === turn ? 'turn' : ''}" style="--pc:${cssColor(p.color)};left:${left.toFixed(2)}%;top:${top.toFixed(2)}%" title="${attr(p.name || '')}"><div class="durak-face">${esc(p.emoji || '🙂')}</div>${fanHtml(v,pid)}</div>`;
       }).join('')}</div>`;
     }
     function trickHtml(pair, i, v, myId){
@@ -13793,7 +13563,7 @@ gateColor.addEventListener('input', syncColor);
         return;
       }
       if (v.state === 'lobby') {
-        const list = Object.values(v.participants || {}).map(p => `<span class="durak-lobby-player" style="--pc:${p.color || '#16c7b7'}">${esc(p.emoji || '')} ${esc(p.name || '?')}</span>`).join('');
+        const list = Object.values(v.participants || {}).map(p => `<span class="durak-lobby-player" style="--pc:${cssColor(p.color, '#16c7b7')}">${esc(p.emoji || '')} ${esc(p.name || '?')}</span>`).join('');
         el.className = 'durak-shell lobby';
         el.innerHTML = `<div class="durak-panel lobby-panel"><div class="durak-title">🃏 Дурак</div><div class="durak-sub">${modeLabel(v)} • ${Object.keys(v.participants || {}).length}/${D.max}</div>${modePicker(v)}<div class="durak-lobby-list">${list || '<span class="durak-muted">Пока пусто</span>'}</div><div class="durak-actions">${!inGame ? '<button class="btn ghost small" data-da="join">Вписаться</button>' : ''}${amHost(v) && Object.keys(v.participants || {}).length >= D.min ? '<button class="btn small" data-da="start">Старт</button>' : ''}${amHost(v) ? '<button class="btn ghost small danger" data-da="cancel">Закрыть</button>' : ''}</div></div>`;
         wire(el);
@@ -13974,11 +13744,12 @@ gateColor.addEventListener('input', syncColor);
   })();
 </script>
 <script type="module">
-  import { ref, onValue, set, push, update, remove, get } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
+  import { ref, onValue, set, push, update, remove, get } from "./dp-realtime.js";
   const LOST_AFTER_MS = 10 * 60 * 1000;
   const GONE_AFTER_MS = 30 * 60 * 1000;
 
   function initMusicModule() {
+    if (!window.__ccNeedMusic) return;
     const music_db = window.db;
 
     if (!music_db) {
@@ -14006,6 +13777,10 @@ gateColor.addEventListener('input', syncColor);
 
     function _musicIsHostName(name){
       return !!(window.__ccIsHostName?.(name));
+    }
+
+    function _musicSafeColor(value, fallback='#16c7b7'){
+      return window.__dpSafeColor?.(value, fallback) || fallback;
     }
 
     async function _removeMusicHostPoint(){
@@ -14048,12 +13823,13 @@ gateColor.addEventListener('input', syncColor);
         for (const p of (window.state?.points || new Map()).values()) {
           const pointName = window.__ccCanonicalName?.(p?.name) || p?.name;
           if (pointName === voterName) {
-            voterColor = p.color || voterColor;
+            voterColor = _musicSafeColor(p.color, voterColor);
             break;
           }
         }
       } catch {}
       if (_musicIsHostName(voterName)) voterColor = '#1e40af';
+      voterColor = _musicSafeColor(voterColor);
       await update(ref(music_db), {
         [`${musicPath}/votes/${voterName}`]: vote,
         [`${musicPath}/vote_colors/${voterName}`]: voterColor
@@ -14092,13 +13868,11 @@ gateColor.addEventListener('input', syncColor);
       _syncNowPlayingVisibility();
       if (_lastMusicActive === isActive && wasActive === isActive) return;
 
-      const isOverlayHost =
+      const isOverlayHost = window.__dpIsHost() && (
         document.documentElement.classList.contains('overlay-live') ||
         window.isOverlayHotkeys ||
-        document.documentElement.classList.contains('overlay-mode');
-      const isMusicHost = isOverlayHost ||
-        _musicIsHostName(window.ccStorage.getItem('cc_name')) ||
-        _musicIsHostName(window.state?.name);
+        document.documentElement.classList.contains('overlay-mode'));
+      const isMusicHost = window.__dpIsHost();
 
       if (isActive && !wasActive && isOverlayHost && !window.overlayComponent) {
         try {
@@ -14238,7 +14012,7 @@ gateColor.addEventListener('input', syncColor);
 
       qList.innerHTML = entries.map(([key, t]) => `
         <div style="
-          border-left:4px solid ${t.color || '#16c7b7'}; 
+          border-left:4px solid ${_musicSafeColor(t.color)}; 
           margin-bottom:6px; 
           padding:8px 10px; 
           background:rgba(0,0,0,0.3); 
@@ -14402,9 +14176,7 @@ gateColor.addEventListener('input', syncColor);
 
   function _isHostHere(){
     return (
-      (window.isOverlayHotkeys === true) ||
-      document.documentElement.classList.contains('overlay-live') ||
-      document.documentElement.classList.contains('overlay-mode')
+      window.__dpIsHost()
     );
   }
 
@@ -14646,13 +14418,13 @@ gateColor.addEventListener('input', syncColor);
     // Карта имя голосующего → цвет (берём из state.points)
     function _colorForVoter(voterName){
       if (window.__ccIsHostName?.(voterName) || voterName === 'Хост') return '#1e40af';
-      if (currentVoteColors[voterName]) return currentVoteColors[voterName];
+      if (currentVoteColors[voterName]) return _musicSafeColor(currentVoteColors[voterName]);
       if (!window.state || !window.state.points) return '#16c7b7';
       for (const p of window.state.points.values()){
         const pointName = window.__ccCanonicalName?.(p?.name) || p?.name;
         if (p && pointName === voterName) {
-          if (p.color) currentVoteColors[voterName] = p.color;
-          return p.color || '#16c7b7';
+          if (p.color) currentVoteColors[voterName] = _musicSafeColor(p.color);
+          return _musicSafeColor(p.color);
         }
       }
       return '#16c7b7';
@@ -14710,7 +14482,7 @@ gateColor.addEventListener('input', syncColor);
       svg.appendChild(g);
 
       for (let i = 0; i < N; i++) {
-        const color = _colorForVoter(voters[i]);
+        const color = _musicSafeColor(_colorForVoter(voters[i]));
         const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         path.setAttribute('d', framePath);
         path.setAttribute('fill', 'none');
@@ -14849,7 +14621,7 @@ gateColor.addEventListener('input', syncColor);
         const uid = window.__ccCanonicalUid?.() || window.auth.currentUser.uid;
         if (!window.state || !window.state.points) return;
         let my = window.state.points.get(uid);
-        const isHostSelf = _isHostHere() || window.__ccIsHostName?.(window.state?.name || window.ccStorage.getItem('cc_name'));
+        const isHostSelf = window.__dpIsHost();
         if (!my && isHostSelf) {
           my = {
             id: window.HOST_IDENTITY?.uid || uid,
@@ -15182,7 +14954,7 @@ gateColor.addEventListener('input', syncColor);
     async function initPartyStatus(){
       try {
         const { initializeApp } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js");
-        const { getDatabase, ref, onValue } = await import("https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js");
+        const { getDatabase, ref, onValue } = await import("./dp-realtime.js");
         const firebaseConfig = {
           apiKey: "AIzaSyAcrLDWHWA_diaVHQwtFUeWqq3WAzMYBnc",
           authDomain: "dpgames-66d73.firebaseapp.com",
@@ -15190,8 +14962,8 @@ gateColor.addEventListener('input', syncColor);
           projectId: "dpgames-66d73",
           storageBucket: "dpgames-66d73.firebasestorage.app",
         };
-        const app = initializeApp(firebaseConfig, 'party-mode');
-        const db = getDatabase(app);
+        const db = window.db;
+        if (!db) return;
         const musicPath = 'sessions/DepressivePasties/music';
 
         onValue(ref(db, `${musicPath}/status`), (snap) => {
@@ -15470,7 +15242,12 @@ gateColor.addEventListener('input', syncColor);
 </script>
 
 <!-- DP Horror: мост Firebase/site ↔ Godot Web. -->
-<script type="module" src="./game_adapter.js?v=personal-tasks-packages-blame-v18"></script>
+<script type="module">
+  if (!new URLSearchParams(location.search).get('component')) {
+    import('./game_adapter.js?v=personal-tasks-packages-blame-v18')
+      .catch(error => console.warn('[game_adapter] load failed', error));
+  }
+</script>
 
 </body>
 </html>
