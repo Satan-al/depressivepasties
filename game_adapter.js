@@ -1,7 +1,7 @@
 import {
   ref, onValue, onChildAdded, onChildChanged, onChildRemoved,
   set, update, remove, push, get, serverTimestamp
-} from "./dp-realtime.js";
+} from "https://www.gstatic.com/firebasejs/10.12.5/firebase-database.js";
 
 const SESSION_KEY = "DepressivePasties";
 const GAME_VERSION = "game_v1";
