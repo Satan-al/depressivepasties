@@ -1,8 +1,9 @@
+import {batchStatic} from './batching.js?v=3';
 import * as T from './three.module.js';
 import {at,nearest,random} from './engine.js';
 // Country scenery and event visuals are independent from the driving simulation.
 export class LocationView{
- constructor(scene,track,country){this.scene=scene;this.track=track;this.country=country;this.group=new T.Group();scene.add(this.group);this.live=new Map();this.signs=[];this.materials=new Map();this.geometry=new Set();this.textures=[];this.money=[];this.fires=[];this.visualTime=0;this.build();}
+ constructor(scene,track,country){this.scene=scene;this.track=track;this.country=country;this.group=new T.Group();scene.add(this.group);this.live=new Map();this.signs=[];this.materials=new Map();this.geometry=new Set();this.textures=[];this.money=[];this.fires=[];this.visualTime=0;this.build();const moving=new Set(this.signs);if(this.eye)moving.add(this.eye);for(const f of this.fires)for(const m of [...f.flames,...f.smoke])moving.add(m);this.batchStats=batchStatic(this.group,moving,this.geometry);}
  mat(color,glow=false){const key=color+glow;if(!this.materials.has(key))this.materials.set(key,new T.MeshStandardMaterial({color,roughness:glow?.35:.78,emissive:glow?color:'#000000',emissiveIntensity:glow?1.4:0}));return this.materials.get(key);}
  mesh(geo,color,x,y,z,parent=this.group,glow=false){this.geometry.add(geo);const m=new T.Mesh(geo,this.mat(color,glow));m.position.set(x,y,z);m.castShadow=true;m.receiveShadow=true;parent.add(m);return m;}
  box(w,h,d,c,x,y,z,p=this.group,glow=false){return this.mesh(new T.BoxGeometry(w,h,d),c,x,y,z,p,glow);}
