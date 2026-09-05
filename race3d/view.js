@@ -2,8 +2,8 @@ import {batchStatic} from './batching.js?v=3';
 import {ClientPrediction,VisualCorrection,STEP} from './prediction.js?v=4';
 import {SnapshotBuffer} from './snapshots.js?v=4';
 import * as THREE from './three.module.js';
-import {Events,countryFor} from './events.js';
-import {LocationView} from './locations.js?v=3';
+import {Events,countryFor} from './events.js?v=5';
+import {LocationView} from './locations.js?v=5';
 import {track,random,createCars,step,resetCar,at,clamp} from './engine.js?v=3';
 const $=id=>document.getElementById(id),canvas=$('game');
 let session=null,localId=0,authority=false,canDrive=false,roster=[],remoteInputs={},receivedAt={},seq=0,lastSend=0,done=false,initialized=false,stalled=false,inputSeq=0,inputAck={},pendingSnapshot=null,lastAppliedSeq=-1,processedSnapshots=0,quality=0,lowSeconds=0,lastBoardHTML='';
@@ -117,7 +117,7 @@ function applySnapshot(d){
  if(mode==='countdown')$('banner').textContent=countdown>0?Math.ceil(countdown):'ГАЗ!';else if(mode==='racing')$('banner').textContent='';
 }
 window.addEventListener('pointerdown',()=>{if(!thudAudio){const AC=window.AudioContext||window.webkitAudioContext;if(AC)thudAudio=new AC();}thudAudio?.resume();},{once:true});
-window.__racePerf={version:4,fps:0,drawCalls:0,triangles:0,frameWorkMs:0,snapshotsApplied:0,quality:'Обычная',batches:null};
+window.__racePerf={version:5,fps:0,drawCalls:0,triangles:0,frameWorkMs:0,snapshotsApplied:0,quality:'Обычная',batches:null};
 const qualityButton=document.createElement('button');qualityButton.textContent='Графика: обычная';qualityButton.onclick=()=>setQuality((quality+1)%3);document.querySelector('.help').append(qualityButton);
 function setQuality(level){quality=level;for(const g of meshes)if(g.userData.shadowBlob)g.userData.shadowBlob.visible=level>0;renderer.setPixelRatio(Math.min(devicePixelRatio,[1.25,1,.75][level]));const shadows=level===0;if(renderer.shadowMap.enabled!==shadows){renderer.shadowMap.enabled=shadows;scene.traverse(o=>{if(o.material){for(const m of (Array.isArray(o.material)?o.material:[o.material]))m.needsUpdate=true;}});}renderer.setSize(innerWidth,innerHeight);const labels=['обычная','лёгкая','минимальная'];qualityButton.textContent='Графика: '+labels[level];window.__racePerf.quality=labels[level];}
 post({type:'ready'});
