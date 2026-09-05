@@ -20,7 +20,8 @@ html.signed-out #gate:not(.hidden) { visibility: visible !important; display: gr
   background: #1a1b20; box-shadow: 0 28px 90px #0007; overflow: visible;
   font-family: 'Open Sans', system-ui, sans-serif;
 }
-.gate-card::before, .gate-card::after { content: none !important; }
+.gate-card::before, .gate-card::after { content: none !important; }ааамуемем
+
 .gate-mark { font-size: 31px; line-height: 1; margin-bottom: 17px; }
 .gate-title {
   color: #f3f3f6; font-family: 'Montserrat', system-ui, sans-serif;
