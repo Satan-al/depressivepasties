@@ -2835,6 +2835,8 @@ html.component-mode #dpGameMapPanel{
           applyComponent();
       }, 300);
   });  
+  import { installRace3D } from "./race3d/room.js?v=1";
+  import { runTransaction } from "./dp-realtime.js";
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-app.js";
   import { getDatabase, ref, onValue, set, remove, push, update, child, query, orderByChild, limitToLast, serverTimestamp, onChildAdded, onChildChanged, onChildRemoved, get, goOffline, goOnline } from "./dp-realtime.js";
   import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.12.5/firebase-auth.js";
@@ -7546,6 +7548,8 @@ document.head.appendChild(ratAnimStyle);
      Чужие машинки рисуются по последним данным из БД с интерполяцией.
   */
 
+  const race3D = installRace3D({db,auth,state,basePath,ref,onValue,get,set,update,remove,runTransaction,uid:()=>window.__ccCanonicalUid?.()||auth.currentUser?.uid||state.id,isOverlay:_isHostHere,enabled:window.__ccNeedGames&&!window.overlayComponent});
+
   const RACE_NET = {
     ROOT: `${basePath}/games/active`,
     STARTING_MS: 3000,         // обратный отсчёт после lobby
@@ -7586,6 +7590,10 @@ document.head.appendChild(ratAnimStyle);
   // === Запуск гонок ===
   // Не выбираем соперника — все игроки попадают в лобби и нажимают "вписаться".
   async function _triggerRaceLobby(){
+    return race3D.create();
+  }
+
+  async function _triggerLegacyRaceLobby(){
     if (!auth.currentUser) return;
     const myUid = _raceMyUid();
     if (!myUid) return;
@@ -7638,7 +7646,7 @@ document.head.appendChild(ratAnimStyle);
       return;
     }
     const v = snap.val();
-    if (v.type !== 'race') return;
+    if (v.type !== 'race' || v.engine === '3d-v1') return;
 
     const wasActive = !!currentRace;
     const prevState = currentRace ? currentRace.state : null;
@@ -8086,8 +8094,8 @@ document.head.appendChild(ratAnimStyle);
   window.__race = {
     state: () => currentRace,
     force: () => { try { remove(raceRootRef); } catch{} },
-    join: _raceJoin,
-    start: _raceBeginCountdown,
+    join: () => race3D.join(),
+    start: () => race3D.start(),
   };
 
 

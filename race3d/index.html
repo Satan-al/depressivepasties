@@ -1,0 +1,10 @@
+<!doctype html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Пирожки — гоночная</title><meta name="description" content="Игрушечные гонки: случайные трассы, дрифт и толкотня."><link rel="stylesheet" href="style.css"></head><body>
+<canvas id="game" aria-label="Трёхмерная гоночная трасса"></canvas>
+<header><div class="wordmark"><span class="mark">↗</span> Пирожки<span class="sub">ГОНОЧНАЯ / 01</span></div><div class="track-controls"><button id="random">Другая трасса</button></div><button id="pause" title="Пауза (Esc)">Ⅱ</button></header>
+<aside class="board"><div class="eyebrow">ЗАЕЗД <span>3 КРУГА</span></div><ol id="positions"></ol></aside>
+<div id="effect" role="status"></div>
+<div id="banner" aria-live="polite"></div><div id="impact"></div>
+<section id="startPanel"><div class="eyebrow">ТОЛКАТЬСЯ РАЗРЕШАЕТСЯ</div><h1>Маленькие машины.<br>Большие разборки.</h1><div class="setup"><label>Твой цвет <input type="color" id="color" value="#ae79ff"></label><button class="primary" id="start">На старт →</button></div><div class="bots"><label>Виталик <input id="calm" type="checkbox" checked></label><label>Вадя <input id="aggressive" type="checkbox" checked></label></div><p id="setupHint">Три круга · боты включаются отдельно</p></section>
+<div class="bottom"><div class="help"><span><kbd>WASD</kbd> / <kbd>↑↓←→</kbd> ехать</span><span><kbd>Пробел</kbd> дрифт</span><span><kbd>R</kbd> на трассу</span><button id="camera">Камера: следом</button></div><div class="telemetry"><span id="lap">КРУГ 1 / 3</span><strong id="speed">0</strong><span>км/ч</span><small id="fps">60 FPS</small></div></div>
+<div id="touch"><button data-key="ArrowLeft" aria-label="Влево">←</button><button data-key="ArrowRight" aria-label="Вправо">→</button><button data-key="Space" aria-label="Дрифт">Дрифт</button><button data-key="ArrowDown" aria-label="Тормоз">↓</button><button data-key="ArrowUp" aria-label="Газ">↑</button></div>
+<div id="error" hidden></div><script type="module" src="view.js"></script></body></html>
