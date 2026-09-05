@@ -2077,7 +2077,7 @@ html.component-mode #dpGameMapPanel{
 }
 
 </style>
-  <link rel="stylesheet" href="./room.css?v=1">
+  <link rel="stylesheet" href="./room.css?v=3">
   <meta name="referrer" content="strict-origin-when-cross-origin">
 </head>
 <body>
@@ -3659,7 +3659,7 @@ onValue(ref(db, '.info/connected'), async snapshot => {
       // B) telegram_links/<tgUserId> = { uid, ... }
       const v = info || {};
       const tg = v.tgUserId || v.telegramUserId || v.tg_user_id || v.telegram_id || v.userId || v.telegramId || v.tgId;
-      const uid = v.uid || v.userUID || v.userUid || v.siteUid || v.siteUID;
+      const uid = v.siteUserId || v.uid || v.userUID || v.userUid || v.siteUid || v.siteUID;
       const keyLooksLikeTg = /^\d+$/.test(String(k));
       if (keyLooksLikeTg && uid){
         idx.set(String(k), String(uid));
@@ -5932,7 +5932,7 @@ document.head.appendChild(ratAnimStyle);
 
   function _updateDuelUI(){
     _requestDuelInteractiveIfNeeded();
-    if (!currentDuel){
+    if (!currentDuel || !['starting', 'fighting', 'ended'].includes(currentDuel.state)){
       if (_duelClickCatcher) {
         _duelClickCatcher.remove();
         _duelClickCatcher = null;
@@ -9718,14 +9718,14 @@ document.head.appendChild(ratAnimStyle);
     if (m.replyTo) {
       const replyMsg = msgs.find(msg => msg.key === m.replyTo);
       if (replyMsg) {
-        const replyName = escapeHtml(replyMsg.name || 'Чужой');
+        const replyName = escapeHtml(chatDisplayName(replyMsg));
         const replyText = escapeHtml((replyMsg.text || '').substring(0, 50));
         html += `<div class="chat-msg-reply-preview" data-reply-to="${escapeHtml(m.replyTo)}">
           <b style="color:${safeColor(replyMsg.color, '#cccccc')}">${replyName}</b>: ${replyText}${(replyMsg.text||'').length > 50 ? '...' : ''}
         </div>`;
       }
     }
-    const name = escapeHtml(m.name||'Чужой');
+    const name = escapeHtml(chatDisplayName(m));
     const text = escapeHtml(m.text||'');
     const edited = m.edited ? '<span style="color:var(--muted);font-size:0.8em;margin-left:4px">(изменено)</span>' : '';
     html += `<div class="chat-msg-header">
@@ -9733,6 +9733,12 @@ document.head.appendChild(ratAnimStyle);
     </div>
     <div class="chat-msg-text">${text}${edited}</div>`;
     return html;
+  }
+
+  function chatDisplayName(m){
+    const id = resolveIdentity(m.uid);
+    if (id === 'host_leha' || id === HOST_IDENTITY.uid) return HOST_IDENTITY.name;
+    return m.name || 'Чужой';
   }
 
   function buildMsgElement(m, msgs){
@@ -13744,7 +13750,7 @@ function boot(){
   })();
 </script>
 <script type="module">
-  import { ref, onValue, set, push, update, remove, get } from "./dp-realtime.js";
+  import { ref, onValue, set, push, update, remove, get, onDisconnect } from "./dp-realtime.js";
   const LOST_AFTER_MS = 10 * 60 * 1000;
   const GONE_AFTER_MS = 30 * 60 * 1000;
 
@@ -13841,8 +13847,21 @@ function boot(){
     }
 
     // Прямая установка флага (вызывается из ghost.py при Alt+F6 / кнопке 🎵)
-    window.setMusicActive = function(active) {
-      set(ref(music_db, `${musicPath}/active`), active);
+    const musicActiveRef = ref(music_db, `${musicPath}/active`);
+    const ownsMusicLifecycle = () => window.__dpIsHost?.() && !window.overlayComponent &&
+      new URLSearchParams(location.search).get('overlay') === '1';
+    // Arm server-side cleanup before enabling the mode, including after reconnection.
+    window.setMusicActive = async function(active) {
+      if (active && ownsMusicLifecycle()) await onDisconnect(musicActiveRef).set(false);
+      return set(musicActiveRef, !!active);
+    };
+    onValue(ref(music_db, '.info/connected'), snap => {
+      if (snap.val() && ownsMusicLifecycle()) {
+        onDisconnect(musicActiveRef).set(false).catch(console.warn);
+      }
+    });
+    window.stopMusicForExit = async function(){
+      if (ownsMusicLifecycle()) await set(musicActiveRef, false);
     };
 
     // Единственная подписка – реагируем на изменение флага
@@ -14128,20 +14147,24 @@ function boot(){
     const openQueueBtn = document.getElementById('openQueueBtn');
 
     document.getElementById('searchClose')?.addEventListener('click', () => {
+      if (window.overlayComponent === 'music_search') { console.log('[MUSIC_SEARCH_CLOSE]'); return; }
       if (searchPanel) searchPanel.style.display = 'none';
       if (openSearchBtn) openSearchBtn.style.display = 'block';
     });
     document.getElementById('queueClose')?.addEventListener('click', () => {
+      if (window.overlayComponent === 'music_queue') { console.log('[MUSIC_QUEUE_CLOSE]'); return; }
       if (queuePanel) queuePanel.style.display = 'none';
       if (openQueueBtn) openQueueBtn.style.display = 'block';
     });
     openSearchBtn?.addEventListener('click', () => {
+      if (window.overlayComponent === 'music_search_btn') return;
       if (searchPanel) searchPanel.style.display = '';
       openSearchBtn.style.display = 'none';
       // Фокус в поле поиска
       setTimeout(()=>document.getElementById('spotifySearchInput')?.focus(), 50);
     });
     openQueueBtn?.addEventListener('click', () => {
+      if (window.overlayComponent === 'music_queue_btn') return;
       if (queuePanel) queuePanel.style.display = '';
       openQueueBtn.style.display = 'none';
     });
@@ -14819,6 +14842,10 @@ function boot(){
     const panelEl = document.getElementById(panel);
     
     if (!handleEl || !panelEl) return;
+    if (['music_search', 'music_queue'].includes(window.overlayComponent)) {
+      handleEl.style.cursor = 'default';
+      return;
+    }
 
     let isDragging = false;
     let startX, startY, startLeft, startTop;
