@@ -1,6 +1,7 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
+  <meta name="dp-build" content="overlay-fix-v9.2">
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DepressivePasties</title>
@@ -4056,14 +4057,17 @@ const getT = (m)=> (m.t ?? m.ts ?? 0); // совместимость со ста
     msgs.sort((a,b)=> getT(a) - getT(b) || (a.key < b.key ? -1 : 1));
 
     // бейджик "непрочитанных" — только сообщения от других и новее порога
-    const isForeign = (m.uid !== __ccCanonicalUid());
-    if (isForeign && getT(m) > lastReadT){
-      if (chatCollapsed) state.unreadCount += 1;
+    const isForeign = (resolveIdentity(m.uid) !== __ccCanonicalUid());
+    if (getT(m) > lastReadT){
       lastReadT = getT(m);
       state.lastReadTs = lastReadT;
-      updateUnreadBadge();
-      playNotificationSound();
-      vibrate();
+      if (isForeign) {
+        if (chatCollapsed) state.unreadCount += 1;
+        updateUnreadBadge();
+        playNotificationSound();
+        vibrate();
+      }
+      // The overlay is broadcast to everyone, including the host's own messages.
       if (isOverlayMode()) showOverlayToast(m);
     }
 
@@ -6447,18 +6451,18 @@ document.head.appendChild(ratAnimStyle);
       body.sniper-active canvas {
         pointer-events: none !important;
       }
-      html.overlay-live #sniperOverlay,
-      html.overlay-mode #sniperOverlay {
+      html.overlay-live body.sniper-active #sniperOverlay,
+      html.overlay-mode body.sniper-active #sniperOverlay {
         display: block !important;
         position: fixed !important;
         inset: 0 !important;
         z-index: 2147482900 !important;
         pointer-events: none !important;
       }
-      html.overlay-live #sniperBall,
-      html.overlay-live #sniperCard,
-      html.overlay-mode #sniperBall,
-      html.overlay-mode #sniperCard {
+      html.overlay-live body.sniper-active #sniperBall,
+      html.overlay-live body.sniper-active #sniperCard,
+      html.overlay-mode body.sniper-active #sniperBall,
+      html.overlay-mode body.sniper-active #sniperCard {
         display: block !important;
         visibility: visible !important;
         opacity: 1 !important;
@@ -6561,8 +6565,12 @@ document.head.appendChild(ratAnimStyle);
   }
 
   function _updateSniperUI(){
+    // Never mount a score card for an idle/unknown game state.
+    if (!currentSniper || !['starting', 'playing', 'ended'].includes(currentSniper.state)) {
+      if (_sniperCard) { _sniperCard.remove(); _sniperCard = null; }
+      return;
+    }
     const c = _ensureSniperCard();
-    if (!currentSniper){ c.style.display = 'none'; return; }
     c.style.display = 'block';
 
     const d = currentSniper;
