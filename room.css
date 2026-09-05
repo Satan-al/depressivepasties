@@ -101,3 +101,48 @@ button:focus-visible { outline: 2px solid var(--ui-accent); outline-offset: 3px;
 #gate .emoji-btn::before, #gate .emoji-btn::after { content: none !important; }
 html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) .stage { width: calc(100% - 32px); }
 html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) .btn:not(.ghost) { background: var(--ui-accent); color: var(--accent-ink); }
+
+/* Compact room, v2. Keep cinema visibility and game geometry owned by index.html. */
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) body { font-family: "Trebuchet MS", "Segoe UI", Arial, sans-serif; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) :is(#mainHeader, #chatPanel, #mainFooter, #gate) :is(button, input, label) { font-family: inherit; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader { margin: 8px 12px 0; padding: 7px 12px; gap: 5px; background: #191b20 !important; border-color: #373a43; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) :is(#mainHeader, #mainFooter)::before,
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) :is(#mainHeader, #mainFooter)::after,
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) :is(#mainHeader, #chatPanel, #mainFooter) .btn::before,
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) :is(#mainHeader, #chatPanel, #mainFooter) .btn::after,
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-msg::before,
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-msg::after { content: none !important; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader .brand { font-family: Georgia, "Times New Roman", serif; font-size: 22px; font-weight: 600; letter-spacing: -.04em; color: var(--ui-accent); background: none; -webkit-text-fill-color: currentColor; filter: none; text-shadow: none; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader .header-row { gap: 5px; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #toolsBar { gap: 5px !important; margin-left: 3px !important; flex-wrap: wrap; min-width: 0; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) :is(#mainHeader, #mainFooter) .btn { min-height: 29px; padding: 4px 9px; font-size: 13px; line-height: 1.25; font-weight: 600; box-shadow: none !important; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) :is(#mainHeader, #chatPanel, #mainFooter) .btn.ghost { background: #25282f !important; color: #ececf0; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #headerEmojis { margin-top: 0; padding-top: 4px; border-top-color: #30333c; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader #reactionsBar { flex-wrap: wrap; gap: 2px !important; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader #reactionsBar .btn { min-width: 32px; min-height: 32px; padding: 3px 6px !important; font-size: 19px !important; line-height: 1.2; background: transparent !important; border: 1px solid transparent !important; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader #reactionsBar .btn img { width: 26px !important; height: 26px !important; object-fit: contain; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader #reactionsBar .btn:hover,
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader #reactionsBar .btn:active,
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader #reactionsBar .btn.reaction-clicked { background: rgba(var(--acc-r),var(--acc-g),var(--acc-b),.18) !important; border-color: var(--ui-accent) !important; box-shadow: none !important; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader #reactionsBar .btn.reaction-clicked { animation: compact-reaction-pulse .3s ease-out; }
+@keyframes compact-reaction-pulse { 50% { transform: scale(1.12); } }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainFooter { padding: 4px 12px; font-size: 12px; line-height: 1.3; background: #101114; box-shadow: none; backdrop-filter: none; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) .stage { margin-top: 8px; margin-bottom: 6px; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel { font-family: "Trebuchet MS", "Segoe UI", Arial, sans-serif; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-bg { filter: none; mix-blend-mode: normal; opacity: 1; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-shell { flex: 1 1 0; min-height: 0; min-width: 0; height: 100%; overflow: hidden; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-header { min-height: 0; padding: .35em .55em; gap: .35em; flex: 0 0 auto; box-shadow: none; font-size: .92em; font-weight: 600; letter-spacing: 0; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-header-left { gap: .35em; min-width: 0; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .btn { font-size: .9em; line-height: 1.25; min-height: 0; padding: .4em .55em; font-weight: 600; flex-shrink: 0; box-shadow: none !important; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-body { flex: 1 1 0; min-height: 0; max-height: none; padding: .5em; gap: .4em; overflow-y: auto; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-msg { flex-shrink: 0; min-height: 0; padding: .5em .65em; line-height: 1.4; box-shadow: none !important; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-input { flex: 0 0 auto; min-width: 0; padding: .4em .5em; gap: .4em; border-top-color: #363941; background: #191b20; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-input input { min-width: 0; width: 0; flex: 1 1 0; padding: .4em .6em; font-size: .95em; line-height: 1.3; border-color: #42464f; background: #121318; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel .chat-input input:focus { border-color: var(--ui-accent); box-shadow: 0 0 0 1px var(--ui-accent); }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #chatPanel.collapsed .chat-shell { flex: none; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #gate .gate-card { font-family: "Trebuchet MS", "Segoe UI", Arial, sans-serif; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #gate .gate-title { font-family: Georgia, "Times New Roman", serif; font-weight: 500; letter-spacing: -.03em; }
+html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #gate .in { font-family: inherit; }
+@media (prefers-reduced-motion: reduce) {
+  html:not(.overlay-mode):not(.overlay-live):not(.component-mode):not(.party-mode) #mainHeader #reactionsBar .btn.reaction-clicked { animation: none; }
+}
