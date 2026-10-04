@@ -15292,5 +15292,143 @@ function boot(){
   }
 </script>
 
+<!-- Browser-only, independent auto-hide reactions dock. Original buttons retain their handlers. -->
+<style id="reactionDockStyles">
+#headerEmojis.reaction-dock {
+  position: fixed; top: var(--reaction-dock-top, 0px); left: 0; right: 0; z-index: 900;
+  width: 100%; max-height: 48px; overflow: hidden;
+  display: flex; flex-direction: column; flex-wrap: nowrap; gap: 0;
+  pointer-events: none; transition: max-height .22s ease;
+}
+#headerEmojis.reaction-dock.is-open { max-height: min(50vh, 320px); }
+#headerEmojis.reaction-dock #reactionsBar {
+  box-sizing: border-box; width: 100%; min-height: 48px; max-height: min(50vh, 320px); flex-shrink: 0;
+  overflow-y: auto; overscroll-behavior: contain;
+  flex-wrap: wrap; justify-content: center; gap: 6px !important;
+  margin: 0 !important; padding: 12px;
+  background: rgba(15, 23, 42, .96); backdrop-filter: blur(16px);
+  border: 1px solid var(--border, #334155); border-top: 0;
+  border-radius: 0 0 14px 14px;
+  visibility: hidden; pointer-events: none;
+  transition: visibility 0s .22s;
+}
+#headerEmojis.reaction-dock.is-open #reactionsBar {
+  visibility: visible; pointer-events: auto; transition-delay: 0s;
+}
+#reactionDockHandle {
+  position: absolute; top: 0; left: 0; box-sizing: border-box; width: 100%; height: 48px; padding: 0;
+  display: block; border: 0; border-radius: 0;
+  background: transparent; cursor: pointer; pointer-events: auto;
+  touch-action: manipulation;
+}
+#headerEmojis.reaction-dock.is-open #reactionDockHandle { pointer-events: none; }
+#reactionDockHandle:focus-visible { outline: 2px solid var(--accent, #16c7b7); outline-offset: -2px; }
+html.overlay-mode #headerEmojis.reaction-dock,
+html.overlay-live #headerEmojis.reaction-dock,
+html.component-mode #headerEmojis.reaction-dock,
+html.party-mode #headerEmojis.reaction-dock { display: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  #headerEmojis.reaction-dock, #headerEmojis.reaction-dock #reactionsBar { transition: none; }
+}
+
+/* Reactions retain their hover feedback outside #mainHeader. */
+#headerEmojis.reaction-dock #reactionsBar button {
+  cursor: pointer !important;
+  background: transparent !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+  transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
+}
+#headerEmojis.reaction-dock #reactionsBar button::before,
+#headerEmojis.reaction-dock #reactionsBar button::after { display: none !important; }
+#headerEmojis.reaction-dock #reactionsBar button img { cursor: pointer !important; }
+#headerEmojis.reaction-dock #reactionsBar button:hover,
+#headerEmojis.reaction-dock #reactionsBar button:focus-visible {
+  background: rgba(var(--acc-r),var(--acc-g),var(--acc-b),.18) !important;
+  border-color: var(--ui-accent, var(--accent, #16c7b7)) !important;
+  box-shadow: 0 0 12px rgba(var(--acc-r),var(--acc-g),var(--acc-b),.22) !important;
+}
+#headerEmojis.reaction-dock #reactionsBar button:active {
+  background: rgba(var(--acc-r),var(--acc-g),var(--acc-b),.28) !important;
+}
+</style>
+<script id="reactionDockScript">
+(() => {
+  const params = new URLSearchParams(location.search);
+  if (params.get('overlay') === '1' || params.get('component') || params.get('party') === '1' ||
+      document.documentElement.matches('.overlay-live, .overlay-mode, .party-mode')) return;
+  const dock = document.getElementById('headerEmojis');
+  const bar = document.getElementById('reactionsBar');
+  if (!dock || !bar) return;
+  const handle = document.createElement('button');
+  handle.id = 'reactionDockHandle';
+  handle.type = 'button';
+  handle.title = 'Реакции — наведи мышку или нажми';
+  handle.setAttribute('aria-label', 'Показать реакции');
+  handle.setAttribute('aria-controls', 'reactionsBar');
+  dock.prepend(handle);
+  document.body.appendChild(dock);
+  dock.classList.add('reaction-dock');
+  // Follow the header's actual size, including wrapping and fullscreen changes.
+  const header = document.getElementById('mainHeader');
+  const canvasArea = document.getElementById('videoWrap');
+  const syncDockPosition = () => {
+    const top = Math.max(0, header?.getBoundingClientRect().bottom || 0,
+      canvasArea?.getBoundingClientRect().top || 0);
+    dock.style.setProperty('--reaction-dock-top', `${top}px`);
+  };
+  const dockPositionObserver = new ResizeObserver(syncDockPosition);
+  if (header) dockPositionObserver.observe(header);
+  if (canvasArea) dockPositionObserver.observe(canvasArea);
+  new MutationObserver(syncDockPosition).observe(document.body, {attributes: true, attributeFilter: ['class']});
+  document.addEventListener('fullscreenchange', syncDockPosition);
+  window.addEventListener('resize', syncDockPosition);
+  window.addEventListener('scroll', syncDockPosition, {passive: true});
+  syncDockPosition();
+  let timer;
+  let keyboardFocus = false;
+  const setOpen = (open) => {
+    clearTimeout(timer);
+    dock.classList.toggle('is-open', open);
+    bar.inert = !open;
+    handle.setAttribute('aria-expanded', String(open));
+    handle.setAttribute('aria-label', open ? 'Скрыть реакции' : 'Показать реакции');
+  };
+  const scheduleClose = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => {
+      if (!keyboardFocus || !dock.contains(document.activeElement)) setOpen(false);
+    }, 400);
+  };
+  dock.addEventListener('pointerenter', (e) => { if (e.pointerType !== 'touch') setOpen(true); });
+  dock.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch') scheduleClose(); });
+  dock.addEventListener('pointerdown', () => { keyboardFocus = false; });
+  dock.addEventListener('keydown', (e) => {
+    keyboardFocus = true;
+    if (e.key === 'Escape') {
+      handle.focus();
+      setOpen(false);
+      e.stopPropagation();
+    }
+  });
+  dock.addEventListener('focusin', (e) => {
+    if (e.target.matches(':focus-visible')) { keyboardFocus = true; setOpen(true); }
+  });
+  dock.addEventListener('focusout', () => {
+    if (keyboardFocus) scheduleClose();
+  });
+  handle.addEventListener('click', (e) => {
+    // Mouse hover has already opened it. Touch/keyboard can toggle explicitly.
+    if (e.detail === 0 || e.pointerType === 'touch' || !matchMedia('(hover: hover)').matches)
+      setOpen(!dock.classList.contains('is-open'));
+    else setOpen(true);
+  });
+  document.addEventListener('pointerdown', (e) => { if (!dock.contains(e.target)) setOpen(false); });
+  window.addEventListener('blur', () => setOpen(false));
+  setOpen(false);
+})();
+</script>
+
 </body>
 </html>
