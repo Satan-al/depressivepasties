@@ -13770,6 +13770,50 @@ function boot(){
   const LOST_AFTER_MS = 10 * 60 * 1000;
   const GONE_AFTER_MS = 30 * 60 * 1000;
 
+  // Общая область видимости: цвет нужен и записи голоса, и SVG-индикаторам.
+  function _musicSafeColor(value, fallback='#16c7b7'){
+    return window.__dpSafeColor?.(value, fallback) || fallback;
+  }
+
+  function _musicVoterName(rawName){
+    const name = String(rawName || '').trim();
+    if (!name) return '';
+    const normalized = name.normalize('NFKC').toLowerCase()
+      .replace(/\[(?:tg|тг)\]/gu, '').replaceAll('ё', 'е')
+      .replace(/[^\p{L}\p{N}]+/gu, '');
+    return normalized === 'леха' || normalized === 'host' ? 'Лёха' : name;
+  }
+
+  function _musicVoteTally(votes, points, presence, now = Date.now()){
+    // Presence определяет подключение; старая морда не оживляет ушедшего.
+    // Лёха остаётся участником даже без морды и окна браузера.
+    const activeNames = new Set(['Лёха']);
+    for (const uid of new Set([...Object.keys(points), ...Object.keys(presence)])) {
+      const point = points[uid] || {};
+      const connected = presence[uid];
+      const participant = { ...point, ...(connected || {}) };
+      const name = _musicVoterName(participant.name);
+      if (!name || ['gone', 'offline'].includes(participant.state)) continue;
+      const lastSeen = Number(participant.lastActive || participant.ts || 0);
+      if (lastSeen && now - lastSeen >= GONE_AFTER_MS) continue;
+      activeNames.add(name);
+    }
+    const ballots = new Map();
+    for (const [rawName, zone] of Object.entries(votes)) {
+      const name = _musicVoterName(rawName);
+      if (activeNames.has(name)) ballots.set(name, zone);
+    }
+    const playlistVoters = [...ballots].filter(([, zone]) => zone === 'da' || zone === 'da_no').map(([name]) => name);
+    const skipVoters = [...ballots].filter(([, zone]) => zone === 'no' || zone === 'da_no').map(([name]) => name);
+    const total = activeNames.size;
+    const needed = Math.floor(total / 2) + 1;
+    return {
+      total, needed, playlistVoters, skipVoters,
+      playlistPassed: playlistVoters.length >= needed,
+      skipPassed: skipVoters.length >= needed
+    };
+  }
+
   function initMusicModule() {
     if (!window.__ccNeedMusic) return;
     const music_db = window.db;
@@ -13783,7 +13827,6 @@ function boot(){
 
     const musicPath = 'sessions/DepressivePasties/music';
     const musicRef = ref(music_db, musicPath);
-    const musicPresencePath = 'sessions/DepressivePasties/presence';
 
     function _musicClientUid(){
       return window.__ccCanonicalUid?.()
@@ -13799,10 +13842,6 @@ function boot(){
 
     function _musicIsHostName(name){
       return !!(window.__ccIsHostName?.(name));
-    }
-
-    function _musicSafeColor(value, fallback='#16c7b7'){
-      return window.__dpSafeColor?.(value, fallback) || fallback;
     }
 
     async function _removeMusicHostPoint(){
@@ -13915,7 +13954,6 @@ function boot(){
           if (!ready) return;
           await remove(ref(music_db, `${musicPath}/votes`));
           await remove(ref(music_db, `${musicPath}/vote_colors`));
-          await remove(ref(music_db, musicPresencePath));
           await remove(ref(music_db, `${musicPath}/vote_result`));
           await remove(ref(music_db, `${musicPath}/decisions`));
         } catch(e) {
@@ -14306,8 +14344,10 @@ function boot(){
     let currentVoteColors = {};
     let currentMusicStatus = {};
     let _lastDecisionKey = '';
-    const autoExcVotes = new Map();
-    const autoExcColors = new Map();
+    let currentPoints = {};
+    let currentPresence = {};
+    let musicActive = false;
+    const votingReady = { votes: false, points: false, presence: false };
     onValue(ref(music_db, `${musicPath}/status`), (snap) => {
       currentMusicStatus = snap.val() || {};
     });
@@ -14320,59 +14360,10 @@ function boot(){
     async function _evaluateMusicVotes(){
       if (window.overlayComponent) return;
       if (!window.state?.authed || !window.auth?.currentUser) return;
-      const entries = Object.entries(currentVotes).filter(([, zone]) => ['da', 'da_no', 'no'].includes(zone));
-      const excNames = new Set(Object.entries(currentVotes)
-        .filter(([, zone]) => zone === 'exc')
-        .map(([name]) => window.__ccCanonicalName?.(name) || name)
-        .filter(Boolean));
-      const allVoteNames = new Set(Object.keys(currentVotes)
-        .map(name => window.__ccCanonicalName?.(name) || name)
-        .filter(Boolean));
-      const activeNames = new Set();
-      const now = Date.now();
-      const addActiveName = (rawName, item = {}) => {
-        const name = window.__ccCanonicalName?.(rawName) || rawName;
-        if (!name) return;
-        if (excNames.has(name)) return;
-        const state = item.state || 'online';
-        if (state === 'gone' || state === 'offline') return;
-        const lastSeen = Number(item.lastActive || item.ts || 0);
-        if (lastSeen && (now - lastSeen) >= GONE_AFTER_MS) return;
-        activeNames.add(name);
-      };
-      try {
-        const [pointsSnap, presenceSnap] = await Promise.all([
-          get(ref(music_db, pointsPath)).catch(() => null),
-          get(ref(music_db, presencePath)).catch(() => null)
-        ]);
-        const pointsDb = pointsSnap?.val?.() || {};
-        const presenceDb = presenceSnap?.val?.() || {};
-        for (const p of Object.values(pointsDb)) addActiveName(p?.name, p || {});
-        for (const p of Object.values(presenceDb)) addActiveName(p?.name, p || {});
-        for (const [, p] of (window.state?.points || new Map()).entries()){
-          if (!p) continue;
-          addActiveName(p.name, p);
-        }
-        for (const [, p] of (window.state?.presence || new Map()).entries()){
-          if (!p) continue;
-          addActiveName(p.name, p);
-        }
-      } catch {}
-      for (const name of allVoteNames) {
-        if (!excNames.has(name)) activeNames.add(name);
-      }
-      const total = activeNames.size;
-      if (!total || total < 2) {
-        try { await remove(ref(music_db, `${musicPath}/vote_result`)); } catch {}
-        _lastDecisionKey = '';
-        return;
-      }
-
-      const playlistVoters = entries.filter(([, zone]) => zone === 'da' || zone === 'da_no').map(([name]) => name);
-      const skipVoters = entries.filter(([, zone]) => zone === 'no' || zone === 'da_no').map(([name]) => name);
-      const needed = Math.floor(total / 2) + 1;
-      const playlistPassed = playlistVoters.length >= needed;
-      const skipPassed = skipVoters.length >= needed && skipVoters.length > playlistVoters.length;
+      if (!musicActive || !Object.values(votingReady).every(Boolean)) return;
+      const {
+        total, needed, playlistVoters, skipVoters, playlistPassed, skipPassed
+      } = _musicVoteTally(currentVotes, currentPoints, currentPresence);
       const trackId = _trackDecisionId();
       const result = {
         trackId,
@@ -14402,17 +14393,26 @@ function boot(){
     }
 
     onValue(ref(music_db, `${musicPath}/votes`), (snap) => {
-      currentVotes = {
-        ...Object.fromEntries(autoExcVotes.entries()),
-        ...(snap.val() || {})
-      };
+      currentVotes = snap.val() || {};
+      votingReady.votes = true;
+      _evaluateMusicVotes();
+    });
+    onValue(ref(music_db, pointsPath), (snap) => {
+      currentPoints = snap.val() || {};
+      votingReady.points = true;
+      _evaluateMusicVotes();
+    });
+    onValue(ref(music_db, presencePath), (snap) => {
+      currentPresence = snap.val() || {};
+      votingReady.presence = true;
+      _evaluateMusicVotes();
+    });
+    onValue(ref(music_db, `${musicPath}/active`), (snap) => {
+      musicActive = snap.val() === true;
       _evaluateMusicVotes();
     });
     onValue(ref(music_db, `${musicPath}/vote_colors`), (snap) => {
-      currentVoteColors = {
-        ...Object.fromEntries(autoExcColors.entries()),
-        ...(snap.val() || {})
-      };
+      currentVoteColors = snap.val() || {};
     });
 
     const _lostNotified = new Set();
@@ -14512,8 +14512,8 @@ function boot(){
 
       const PL = 1000;
       const segLen = PL / N;
-      const gap = Math.min(segLen * 0.25, 60);
-      const dashLen = segLen - gap;
+      // Отдельные неоновые дуги: движение видно даже при одном голосе.
+      const dashLen = Math.min(260, segLen * 0.72);
 
       // Группа для вращения
       const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -14536,8 +14536,7 @@ function boot(){
         path.dataset.startOffset = String(startOffset);
         path.dataset.pathLength = String(PL);
         path.dataset.duration = String(Math.max(2.4, 5.5 - N * 0.35));
-        path.style.setProperty('--zone-ring-start', String(startOffset));
-        path.style.animation = `zoneRingOrbit ${path.dataset.duration}s linear infinite`;
+        path.setAttribute('vector-effect', 'non-scaling-stroke');
         path.style.filter = `drop-shadow(0 0 6px ${color})`;
         g.appendChild(path);
       }
@@ -14553,20 +14552,7 @@ function boot(){
       badge.textContent = String(N);
     }
 
-    // CSS анимация кольца
-    if (!document.getElementById('zoneRayStyles')){
-      const st = document.createElement('style');
-      st.id = 'zoneRayStyles';
-      st.textContent = `
-        @keyframes zoneRingOrbit {
-          0%   { stroke-dashoffset: var(--zone-ring-start, 0); }
-          100% { stroke-dashoffset: calc(var(--zone-ring-start, 0) - 1000); }
-        }
-      `;
-      document.head.appendChild(st);
-    }
-
-    // Обновляем каждые 300мс (можно чаще, но дешевле)
+    // Один источник анимации: CSS не перекрывает stroke-dashoffset из RAF.
     if (!window.__zoneRingRaf) {
       window.__zoneRingRaf = true;
       const animateZoneRings = (now) => {
@@ -14592,10 +14578,10 @@ function boot(){
       for (const zoneId of zoneIds){
         const zoneEl = document.getElementById('zone_' + zoneId);
         if (!zoneEl) continue;
-        const voters = grouped[zoneId] || [];
-        const renderKey = voters.slice().sort().join('|');
+        const voters = (grouped[zoneId] || []).sort();
+        const renderKey = JSON.stringify(voters.map(name => [name, _colorForVoter(name)]));
         const hasRing = !!zoneEl.querySelector('.zone-ring-svg');
-        if (_zoneRenderKeys.get(zoneId) === renderKey && (renderKey === '' || hasRing)) continue;
+        if (_zoneRenderKeys.get(zoneId) === renderKey && (voters.length === 0 || hasRing)) continue;
         _zoneRenderKeys.set(zoneId, renderKey);
         _renderRays(zoneEl, voters, zoneId);
       }
@@ -14618,8 +14604,8 @@ function boot(){
       if (!clockZone) return;
       const status = snap.val() || {};
       if (!document.body.classList.contains('music-active')) return;
-      // Используем track_name как ID (если нет настоящего id) - меняется при смене
-      const tid = status.track_name || '';
+      // Разные записи могут называться одинаково: сначала настоящий Spotify ID.
+      const tid = status.track_id || status.track_name || '';
       if (!tid) return;
       if (tid !== _clockTrackId){
         const isFirst = !_clockTrackId;
@@ -14630,10 +14616,10 @@ function boot(){
           !window.overlayComponent ||
           (window.overlayComponent === 'music_vote_zone' && new URLSearchParams(location.search).get('zone') === 'time')
         );
-        if (canClearVotes) {
+        // Новый Spotify-скрипт очищает голоса до публикации track_id.
+        // Для старого скрипта оставляем очистку здесь.
+        if (canClearVotes && !isFirst && !status.track_id) {
           try {
-            autoExcVotes.clear();
-            autoExcColors.clear();
             currentVotes = {};
             currentVoteColors = {};
             await remove(ref(music_db, `${musicPath}/votes`));
@@ -14824,8 +14810,6 @@ function boot(){
             [`${musicPath}/votes/${voterName}`]: 'exc',
             [`${musicPath}/vote_colors/${voterName}`]: voterColor
           });
-          autoExcVotes.set(voterName, 'exc');
-          autoExcColors.set(voterName, voterColor);
           currentVotes = { ...currentVotes, [voterName]: 'exc' };
           currentVoteColors = { ...currentVoteColors, [voterName]: voterColor };
           _voteCommitted.set(uid, { zone: 'exc', t: now });
@@ -15290,144 +15274,6 @@ function boot(){
     import('./game_adapter.js?v=personal-tasks-packages-blame-v18')
       .catch(error => console.warn('[game_adapter] load failed', error));
   }
-</script>
-
-<!-- Browser-only, independent auto-hide reactions dock. Original buttons retain their handlers. -->
-<style id="reactionDockStyles">
-#headerEmojis.reaction-dock {
-  position: fixed; top: var(--reaction-dock-top, 0px); left: 0; right: 0; z-index: 900;
-  width: 100%; max-height: 48px; overflow: hidden;
-  display: flex; flex-direction: column; flex-wrap: nowrap; gap: 0;
-  pointer-events: none; transition: max-height .22s ease;
-}
-#headerEmojis.reaction-dock.is-open { max-height: min(50vh, 320px); }
-#headerEmojis.reaction-dock #reactionsBar {
-  box-sizing: border-box; width: 100%; min-height: 48px; max-height: min(50vh, 320px); flex-shrink: 0;
-  overflow-y: auto; overscroll-behavior: contain;
-  flex-wrap: wrap; justify-content: center; gap: 6px !important;
-  margin: 0 !important; padding: 12px;
-  background: rgba(15, 23, 42, .96); backdrop-filter: blur(16px);
-  border: 1px solid var(--border, #334155); border-top: 0;
-  border-radius: 0 0 14px 14px;
-  visibility: hidden; pointer-events: none;
-  transition: visibility 0s .22s;
-}
-#headerEmojis.reaction-dock.is-open #reactionsBar {
-  visibility: visible; pointer-events: auto; transition-delay: 0s;
-}
-#reactionDockHandle {
-  position: absolute; top: 0; left: 0; box-sizing: border-box; width: 100%; height: 48px; padding: 0;
-  display: block; border: 0; border-radius: 0;
-  background: transparent; cursor: pointer; pointer-events: auto;
-  touch-action: manipulation;
-}
-#headerEmojis.reaction-dock.is-open #reactionDockHandle { pointer-events: none; }
-#reactionDockHandle:focus-visible { outline: 2px solid var(--accent, #16c7b7); outline-offset: -2px; }
-html.overlay-mode #headerEmojis.reaction-dock,
-html.overlay-live #headerEmojis.reaction-dock,
-html.component-mode #headerEmojis.reaction-dock,
-html.party-mode #headerEmojis.reaction-dock { display: none !important; }
-
-@media (prefers-reduced-motion: reduce) {
-  #headerEmojis.reaction-dock, #headerEmojis.reaction-dock #reactionsBar { transition: none; }
-}
-
-/* Reactions retain their hover feedback outside #mainHeader. */
-#headerEmojis.reaction-dock #reactionsBar button {
-  cursor: pointer !important;
-  background: transparent !important;
-  border-color: transparent !important;
-  box-shadow: none !important;
-  transition: background .15s ease, border-color .15s ease, box-shadow .15s ease;
-}
-#headerEmojis.reaction-dock #reactionsBar button::before,
-#headerEmojis.reaction-dock #reactionsBar button::after { display: none !important; }
-#headerEmojis.reaction-dock #reactionsBar button img { cursor: pointer !important; }
-#headerEmojis.reaction-dock #reactionsBar button:hover,
-#headerEmojis.reaction-dock #reactionsBar button:focus-visible {
-  background: rgba(var(--acc-r),var(--acc-g),var(--acc-b),.18) !important;
-  border-color: var(--ui-accent, var(--accent, #16c7b7)) !important;
-  box-shadow: 0 0 12px rgba(var(--acc-r),var(--acc-g),var(--acc-b),.22) !important;
-}
-#headerEmojis.reaction-dock #reactionsBar button:active {
-  background: rgba(var(--acc-r),var(--acc-g),var(--acc-b),.28) !important;
-}
-</style>
-<script id="reactionDockScript">
-(() => {
-  const params = new URLSearchParams(location.search);
-  if (params.get('overlay') === '1' || params.get('component') || params.get('party') === '1' ||
-      document.documentElement.matches('.overlay-live, .overlay-mode, .party-mode')) return;
-  const dock = document.getElementById('headerEmojis');
-  const bar = document.getElementById('reactionsBar');
-  if (!dock || !bar) return;
-  const handle = document.createElement('button');
-  handle.id = 'reactionDockHandle';
-  handle.type = 'button';
-  handle.title = 'Реакции — наведи мышку или нажми';
-  handle.setAttribute('aria-label', 'Показать реакции');
-  handle.setAttribute('aria-controls', 'reactionsBar');
-  dock.prepend(handle);
-  document.body.appendChild(dock);
-  dock.classList.add('reaction-dock');
-  // Follow the header's actual size, including wrapping and fullscreen changes.
-  const header = document.getElementById('mainHeader');
-  const canvasArea = document.getElementById('videoWrap');
-  const syncDockPosition = () => {
-    const top = Math.max(0, header?.getBoundingClientRect().bottom || 0,
-      canvasArea?.getBoundingClientRect().top || 0);
-    dock.style.setProperty('--reaction-dock-top', `${top}px`);
-  };
-  const dockPositionObserver = new ResizeObserver(syncDockPosition);
-  if (header) dockPositionObserver.observe(header);
-  if (canvasArea) dockPositionObserver.observe(canvasArea);
-  new MutationObserver(syncDockPosition).observe(document.body, {attributes: true, attributeFilter: ['class']});
-  document.addEventListener('fullscreenchange', syncDockPosition);
-  window.addEventListener('resize', syncDockPosition);
-  window.addEventListener('scroll', syncDockPosition, {passive: true});
-  syncDockPosition();
-  let timer;
-  let keyboardFocus = false;
-  const setOpen = (open) => {
-    clearTimeout(timer);
-    dock.classList.toggle('is-open', open);
-    bar.inert = !open;
-    handle.setAttribute('aria-expanded', String(open));
-    handle.setAttribute('aria-label', open ? 'Скрыть реакции' : 'Показать реакции');
-  };
-  const scheduleClose = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      if (!keyboardFocus || !dock.contains(document.activeElement)) setOpen(false);
-    }, 400);
-  };
-  dock.addEventListener('pointerenter', (e) => { if (e.pointerType !== 'touch') setOpen(true); });
-  dock.addEventListener('pointerleave', (e) => { if (e.pointerType !== 'touch') scheduleClose(); });
-  dock.addEventListener('pointerdown', () => { keyboardFocus = false; });
-  dock.addEventListener('keydown', (e) => {
-    keyboardFocus = true;
-    if (e.key === 'Escape') {
-      handle.focus();
-      setOpen(false);
-      e.stopPropagation();
-    }
-  });
-  dock.addEventListener('focusin', (e) => {
-    if (e.target.matches(':focus-visible')) { keyboardFocus = true; setOpen(true); }
-  });
-  dock.addEventListener('focusout', () => {
-    if (keyboardFocus) scheduleClose();
-  });
-  handle.addEventListener('click', (e) => {
-    // Mouse hover has already opened it. Touch/keyboard can toggle explicitly.
-    if (e.detail === 0 || e.pointerType === 'touch' || !matchMedia('(hover: hover)').matches)
-      setOpen(!dock.classList.contains('is-open'));
-    else setOpen(true);
-  });
-  document.addEventListener('pointerdown', (e) => { if (!dock.contains(e.target)) setOpen(false); });
-  window.addEventListener('blur', () => setOpen(false));
-  setOpen(false);
-})();
 </script>
 
 </body>
