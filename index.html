@@ -1846,7 +1846,6 @@ input[type="range"]{
     border-radius: 8px;
     backdrop-filter: blur(8px);
   }
-  body.hide-vote-ui:not(.overlay-mode):not(.overlay-live) #music-ui-container,
   body.hide-vote-ui:not(.overlay-mode):not(.overlay-live) #vote-zones-container,
   body.hide-vote-ui:not(.overlay-mode):not(.overlay-live) #now-playing {
     display: none !important;
@@ -14325,9 +14324,6 @@ function boot(){
         .filter(([, zone]) => zone === 'exc')
         .map(([name]) => window.__ccCanonicalName?.(name) || name)
         .filter(Boolean));
-      const allVoteNames = new Set(Object.keys(currentVotes)
-        .map(name => window.__ccCanonicalName?.(name) || name)
-        .filter(Boolean));
       const activeNames = new Set();
       const now = Date.now();
       const addActiveName = (rawName, item = {}) => {
@@ -14358,9 +14354,6 @@ function boot(){
           addActiveName(p.name, p);
         }
       } catch {}
-      for (const name of allVoteNames) {
-        if (!excNames.has(name)) activeNames.add(name);
-      }
       const total = activeNames.size;
       if (!total || total < 2) {
         try { await remove(ref(music_db, `${musicPath}/vote_result`)); } catch {}
@@ -14372,7 +14365,7 @@ function boot(){
       const skipVoters = entries.filter(([, zone]) => zone === 'no' || zone === 'da_no').map(([name]) => name);
       const needed = Math.floor(total / 2) + 1;
       const playlistPassed = playlistVoters.length >= needed;
-      const skipPassed = skipVoters.length >= needed && skipVoters.length > playlistVoters.length;
+      const skipPassed = skipVoters.length >= needed;
       const trackId = _trackDecisionId();
       const result = {
         trackId,
@@ -14593,7 +14586,7 @@ function boot(){
         const zoneEl = document.getElementById('zone_' + zoneId);
         if (!zoneEl) continue;
         const voters = grouped[zoneId] || [];
-        const renderKey = voters.slice().sort().join('|');
+        const renderKey = voters.slice().sort().map(name => name + ":" + _colorForVoter(name)).join("|");
         const hasRing = !!zoneEl.querySelector('.zone-ring-svg');
         if (_zoneRenderKeys.get(zoneId) === renderKey && (renderKey === '' || hasRing)) continue;
         _zoneRenderKeys.set(zoneId, renderKey);
