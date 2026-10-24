@@ -13769,6 +13769,11 @@ function boot(){
   const LOST_AFTER_MS = 10 * 60 * 1000;
   const GONE_AFTER_MS = 30 * 60 * 1000;
 
+  // Shared by vote writing and the visual renderer (both are module siblings).
+  function _musicSafeColor(value, fallback='#16c7b7'){
+    return window.__dpSafeColor?.(value, fallback) || fallback;
+  }
+
   function initMusicModule() {
     if (!window.__ccNeedMusic) return;
     const music_db = window.db;
@@ -13798,10 +13803,6 @@ function boot(){
 
     function _musicIsHostName(name){
       return !!(window.__ccIsHostName?.(name));
-    }
-
-    function _musicSafeColor(value, fallback='#16c7b7'){
-      return window.__dpSafeColor?.(value, fallback) || fallback;
     }
 
     async function _removeMusicHostPoint(){
@@ -13914,7 +13915,6 @@ function boot(){
           if (!ready) return;
           await remove(ref(music_db, `${musicPath}/votes`));
           await remove(ref(music_db, `${musicPath}/vote_colors`));
-          await remove(ref(music_db, musicPresencePath));
           await remove(ref(music_db, `${musicPath}/vote_result`));
           await remove(ref(music_db, `${musicPath}/decisions`));
         } catch(e) {
@@ -14303,103 +14303,14 @@ function boot(){
     const presencePath = 'sessions/DepressivePasties/presence';
     let currentVotes = {};
     let currentVoteColors = {};
-    let currentMusicStatus = {};
-    let _lastDecisionKey = '';
     const autoExcVotes = new Map();
     const autoExcColors = new Map();
-    onValue(ref(music_db, `${musicPath}/status`), (snap) => {
-      currentMusicStatus = snap.val() || {};
-    });
-
-    function _trackDecisionId(){
-      const raw = currentMusicStatus.track_id || currentMusicStatus.track_uri || currentMusicStatus.uri || currentMusicStatus.track_name || currentMusicStatus.song || 'current';
-      return String(raw).replace(/[.#$\[\]/]/g, '_').slice(0, 140) || 'current';
-    }
-
-    async function _evaluateMusicVotes(){
-      if (window.overlayComponent) return;
-      if (!window.state?.authed || !window.auth?.currentUser) return;
-      const entries = Object.entries(currentVotes).filter(([, zone]) => ['da', 'da_no', 'no'].includes(zone));
-      const excNames = new Set(Object.entries(currentVotes)
-        .filter(([, zone]) => zone === 'exc')
-        .map(([name]) => window.__ccCanonicalName?.(name) || name)
-        .filter(Boolean));
-      const activeNames = new Set();
-      const now = Date.now();
-      const addActiveName = (rawName, item = {}) => {
-        const name = window.__ccCanonicalName?.(rawName) || rawName;
-        if (!name) return;
-        if (excNames.has(name)) return;
-        const state = item.state || 'online';
-        if (state === 'gone' || state === 'offline') return;
-        const lastSeen = Number(item.lastActive || item.ts || 0);
-        if (lastSeen && (now - lastSeen) >= GONE_AFTER_MS) return;
-        activeNames.add(name);
-      };
-      try {
-        const [pointsSnap, presenceSnap] = await Promise.all([
-          get(ref(music_db, pointsPath)).catch(() => null),
-          get(ref(music_db, presencePath)).catch(() => null)
-        ]);
-        const pointsDb = pointsSnap?.val?.() || {};
-        const presenceDb = presenceSnap?.val?.() || {};
-        for (const p of Object.values(pointsDb)) addActiveName(p?.name, p || {});
-        for (const p of Object.values(presenceDb)) addActiveName(p?.name, p || {});
-        for (const [, p] of (window.state?.points || new Map()).entries()){
-          if (!p) continue;
-          addActiveName(p.name, p);
-        }
-        for (const [, p] of (window.state?.presence || new Map()).entries()){
-          if (!p) continue;
-          addActiveName(p.name, p);
-        }
-      } catch {}
-      const total = activeNames.size;
-      if (!total || total < 2) {
-        try { await remove(ref(music_db, `${musicPath}/vote_result`)); } catch {}
-        _lastDecisionKey = '';
-        return;
-      }
-
-      const playlistVoters = entries.filter(([, zone]) => zone === 'da' || zone === 'da_no').map(([name]) => name);
-      const skipVoters = entries.filter(([, zone]) => zone === 'no' || zone === 'da_no').map(([name]) => name);
-      const needed = Math.floor(total / 2) + 1;
-      const playlistPassed = playlistVoters.length >= needed;
-      const skipPassed = skipVoters.length >= needed;
-      const trackId = _trackDecisionId();
-      const result = {
-        trackId,
-        total,
-        needed,
-        playlist: { count: playlistVoters.length, voters: playlistVoters, passed: playlistPassed },
-        skip: { count: skipVoters.length, voters: skipVoters, passed: skipPassed },
-        updatedAt: Date.now()
-      };
-      try { await set(ref(music_db, `${musicPath}/vote_result`), result); } catch {}
-
-      const decisionKey = `${trackId}:${playlistPassed ? 'P' : '-'}:${skipPassed ? 'S' : '-'}`;
-      if ((playlistPassed || skipPassed) && decisionKey !== _lastDecisionKey) {
-        _lastDecisionKey = decisionKey;
-        try {
-          await update(ref(music_db, `${musicPath}/decisions/${trackId}`), {
-            playlist: playlistPassed,
-            skip: skipPassed,
-            playlistVoters,
-            skipVoters,
-            total,
-            needed,
-            decidedAt: Date.now()
-          });
-        } catch(e) { console.warn('music decision write fail', e); }
-      }
-    }
 
     onValue(ref(music_db, `${musicPath}/votes`), (snap) => {
       currentVotes = {
         ...Object.fromEntries(autoExcVotes.entries()),
         ...(snap.val() || {})
       };
-      _evaluateMusicVotes();
     });
     onValue(ref(music_db, `${musicPath}/vote_colors`), (snap) => {
       currentVoteColors = {
@@ -14612,14 +14523,18 @@ function boot(){
       const status = snap.val() || {};
       if (!document.body.classList.contains('music-active')) return;
       // Используем track_name как ID (если нет настоящего id) - меняется при смене
-      const tid = status.track_name || '';
+      const tid = status.track_id || status.track_name || '';
       if (!tid) return;
       if (tid !== _clockTrackId){
         const isFirst = !_clockTrackId;
         _clockTrackId = tid;
         _clockStartedAt = Date.now();
         _clockHidden = false;
-        const canClearVotes = _isHostHere() && (
+        autoExcVotes.clear();
+        autoExcColors.clear();
+        currentVotes = {};
+        currentVoteColors = {};
+        const canClearVotes = !status.votes_managed_by_host && _isHostHere() && (
           !window.overlayComponent ||
           (window.overlayComponent === 'music_vote_zone' && new URLSearchParams(location.search).get('zone') === 'time')
         );
