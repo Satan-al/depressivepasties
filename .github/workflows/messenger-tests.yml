@@ -20,4 +20,4 @@ jobs:
         if: always()
         with:
           name: messenger-screenshots
-          path: ../screenshots/*.png
+          path: screenshots/*.png

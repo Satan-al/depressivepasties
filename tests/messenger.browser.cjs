@@ -6,7 +6,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
 
 (async () => {
   const root = path.resolve(__dirname, '..');
-  const output = path.resolve(__dirname, '../../screenshots');
+  const output = path.resolve(__dirname, '../screenshots');
   fs.mkdirSync(output, { recursive: true });
   const browser = await chromium.launch({
     headless: true,
