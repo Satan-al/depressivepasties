@@ -1,0 +1,21 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="referrer" content="no-referrer">
+  <title>DepressivePasties Messenger</title>
+  <link rel="stylesheet" href="./messenger.css">
+</head>
+<body class="dp-auth-page">
+  <form class="dp-login" id="messengerLogin">
+    <h1>DepressivePasties</h1>
+    <p>Messenger</p>
+    <label>Имя<input name="name" autocomplete="username" maxlength="32" required></label>
+    <label>Пароль<input name="password" type="password" autocomplete="current-password" minlength="4" maxlength="128" required></label>
+    <button class="dp-primary" type="submit">Войти</button>
+    <output id="loginStatus" aria-live="polite"></output>
+  </form>
+  <script type="module" src="./session.js"></script>
+</body>
+</html>

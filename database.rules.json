@@ -2,6 +2,11 @@
   "rules": {
     ".read": false,
     ".write": false,
+    "messenger": {
+      ".read": false,
+      ".write": false,
+      "messages": { "$roomId": { ".indexOn": ["telegramState"] } }
+    },
     "access": {
       ".read": "auth != null && auth.token.firebase.sign_in_provider === 'password' && root.child('access').child(auth.uid).child('enabled').val() === true && root.child('access').child(auth.uid).child('version').val() === 1 && root.child('access').child(auth.uid).child('role').val() === 'host'",
       "$uid": {
@@ -157,3 +162,4 @@
     }
   }
 }
+
