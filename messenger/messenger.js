@@ -287,6 +287,13 @@ export class MessengerWindow {
     const atBottom = this.messageList.scrollHeight - this.messageList.scrollTop - this.messageList.clientHeight < 80;
     const oldHeight = this.messageList.scrollHeight;
     for (const message of result.messages) this.messages.set(message.id, message);
+    const images = [...this.messages.values()].filter(item => item.image).sort((a,b) => a.id.localeCompare(b.id));
+    for (const item of images.slice(0, Math.max(0, images.length - 20))) {
+      const cacheKey = roomId + '/' + item.image.id;
+      this.imageUrls.get(cacheKey)?.then(url => URL.revokeObjectURL(url)).catch(() => {});
+      this.imageUrls.delete(cacheKey);
+      item.image = null; item.imageExpired = true;
+    }
     if (initial || older || result.messages.length) {
       this.renderMessages();
       if (older) this.messageList.scrollTop = this.messageList.scrollHeight - oldHeight;
@@ -332,6 +339,7 @@ export class MessengerWindow {
       row.dataset.messageId = message.id;
       row.append(element('strong', 'dp-author', profile.name));
       row.querySelector('.dp-author').style.color = /^#[0-9a-f]{6}$/i.test(profile.color) ? profile.color : '#888888';
+      if (message.imageExpired) row.append(element('small', 'dp-expired', 'Изображение больше не хранится'));
       if (message.image) {
         const button = element('button', 'dp-message-image');
         button.type = 'button'; button.setAttribute('aria-label', 'Открыть картинку');
