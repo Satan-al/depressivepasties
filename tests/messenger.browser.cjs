@@ -41,7 +41,7 @@ const { chromium } = require(process.env.PLAYWRIGHT_MODULE || 'playwright');
     if (url.pathname.startsWith('/api')) {
       assert.equal('Bearer fake-member-token', route.request().headers().authorization);
       const suffix = url.pathname.slice(4);
-      if (suffix === '/me') return json(route, { user: people[0], telegramEnabled: true });
+      if (suffix === '/me') return json(route, { user: people[0], telegramEnabled: true, imagesEnabled: true });
       if (suffix === '/members') return json(route, { members: people });
       if (suffix === '/rooms' && method === 'GET') {
         return json(route, { rooms: rooms.map(room => ({ ...room, lastMessage: messages[room.id]?.at(-1) || null })) });

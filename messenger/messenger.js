@@ -108,6 +108,7 @@ export class MessengerWindow {
     this.attachButton = tool('paperclip', 'Прикрепить картинку', () => this.fileInput.click());
     this.sendButton = tool('send', 'Отправить', () => this.send());
     this.sendButton.classList.add('dp-send');
+    this.attachButton.hidden = true;
     this.find('.dp-compose-row').prepend(this.attachButton);
     this.find('.dp-compose-row').append(this.sendButton);
     this.find('.dp-compose').addEventListener('submit', event => { event.preventDefault(); this.send(); });
@@ -171,6 +172,7 @@ export class MessengerWindow {
       const data = await this.request('/me');
       this.user = data.user;
       this.telegramEnabled = data.telegramEnabled;
+      this.attachButton.hidden = !data.imagesEnabled;
       this.find('.dp-self').replaceChildren(avatar([this.user]), element('span', '', this.user.name));
       await this.refresh();
     } catch (error) { this.showError(error); }
@@ -193,6 +195,7 @@ export class MessengerWindow {
     try {
       if (!this.user) {
         const data = await this.request('/me'); this.user = data.user; this.telegramEnabled = data.telegramEnabled;
+        this.attachButton.hidden = !data.imagesEnabled;
         this.find('.dp-self').replaceChildren(avatar([this.user]), element('span', '', this.user.name));
       }
       const pending = this.rooms.find(room => room.id === this.roomId)?.telegram?.state !== 'ready';
@@ -380,6 +383,7 @@ export class MessengerWindow {
   }
 
   chooseImage(file) {
+    if (this.attachButton.hidden) return;
     if (!file) return;
     if (!/^image\/(png|jpeg|webp)$/.test(file.type) || file.size > 8 * 1024 * 1024) {
       this.showError(new Error('Выбери PNG, JPEG или WebP до 8 МБ.')); return;
