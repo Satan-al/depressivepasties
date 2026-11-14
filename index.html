@@ -12437,6 +12437,11 @@ window.closeLinkModal = function() {
     }
   `;
   document.head.appendChild(telegramAnimStyle);
+  if (!window.overlayComponent && !window.isPartyMode) {
+    import('./messenger/messenger.js?v=1').then(({ installMessenger }) => {
+      installMessenger({ auth, state });
+    }).catch(error => console.warn('Messenger UI unavailable', error));
+  }
   
     // Сохранение
   function saveEmojiToDb(index, newValue) {
