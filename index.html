@@ -3784,6 +3784,7 @@ state.presence.clear();
   const EMOJI_SLOTS_MAX = 36;          // потолок чтобы не разнесло БД
   const EMOJI_SLOTS_BASE = DEFAULT_EMOJIS.length; // 18 первых жёстких слотов в HTML
 
+  import { openEmojiEditor } from './emoji-editor.js?v=1';
   let userEmojis = []; // Сюда загрузим твои кастомные штуки
   // Поддерживаемые элементы массива:
   //   "👍"                                    — обычная эмодзи (строка)
@@ -3847,25 +3848,11 @@ state.presence.clear();
     // Правый клик: меню — изменить эмодзи / сбросить
     btn.oncontextmenu = (e) => {
       e.preventDefault();
-      const isPng = btn.getAttribute('data-reaction-type') === 'png';
-      const choice = prompt(
-        isPng
-          ? `Слот #${i+1}: PNG картинка.\n\nЧто сделать?\nВведи новую эмодзи или напиши "сброс" чтобы вернуть дефолт.`
-          : `Слот #${i+1}: ${btn.getAttribute('data-emo')||btn.textContent}\n\nВведи новую эмодзи (или "сброс" для дефолта):`,
-        isPng ? '' : (btn.getAttribute('data-emo') || '')
-      );
-      if (choice === null) return;
-      const trimmed = choice.trim();
-      if (trimmed === '' || trimmed.toLowerCase() === 'сброс'){
-        // Сброс к дефолту (или удаление если слот выше дефолтных)
-        if (i < DEFAULT_EMOJIS.length){
-          saveEmojiToDb(i, DEFAULT_EMOJIS[i]);
-        } else {
-          _removeEmojiSlot(i);
-        }
-      } else {
-        saveEmojiToDb(i, trimmed);
-      }
+      openEmojiEditor({
+        index: i, value: userEmojis[i] || DEFAULT_EMOJIS[i] || '',
+        compress: _imageFileToCompressedPNG, save: value => saveEmojiToDb(i, value),
+        reset: () => i < DEFAULT_EMOJIS.length ? saveEmojiToDb(i, DEFAULT_EMOJIS[i]) : _removeEmojiSlot(i)
+      });
     };
     // Drag & drop: бросаем картинку → она становится PNG-эмодзи
     btn.addEventListener('dragover', (e) => { e.preventDefault(); btn.style.outline = '2px dashed #16c7b7'; });
@@ -3900,7 +3887,7 @@ state.presence.clear();
     }
     if (!auth.currentUser) return;
     const emojiRef = ref(db, `${basePath}/users/${__ccCanonicalUid()}/settings/emojis`);
-    set(emojiRef, userEmojis).then(()=>applyUserEmojis()).catch(()=>{});
+    return set(emojiRef, userEmojis).then(()=>applyUserEmojis());
   }
 
   // Сжимает картинку до квадрата `size`x`size` PNG, возвращает data URL.
@@ -3984,21 +3971,14 @@ state.presence.clear();
       plus.id = 'emoAddBtn';
       plus.className = 'btn ghost small';
       plus.style.cssText = 'font-size:1.2em;padding:6px 12px;border:1px dashed rgba(255,255,255,0.25);opacity:0.7';
-      plus.title = 'Добавить новый слот эмодзи (или перетащи картинку на любой слот для PNG)';
+      plus.title = 'Добавить эмодзи или картинку';
       plus.textContent = '+';
       plus.onclick = () => {
         if (!Array.isArray(userEmojis)) userEmojis = [];
         const next = Math.max(EMOJI_SLOTS_BASE, userEmojis.length);
         if (next >= EMOJI_SLOTS_MAX) return;
-        // Просим эмодзи (можно отменить — тогда добавится пустой слот ◯)
-        const choice = prompt(`Слот #${next+1}\nВведи эмодзи (или Cancel — добавится пустой):`, '');
-        if (!auth.currentUser) return;
-        const value = (choice && choice.trim()) ? choice.trim() : '';
-        // Проставляем именно в позицию next
-        while (userEmojis.length < next) userEmojis.push('');
-        userEmojis[next] = value;
-        const emojiRef = ref(db, `${basePath}/users/${__ccCanonicalUid()}/settings/emojis`);
-        set(emojiRef, userEmojis).then(()=>applyUserEmojis()).catch(()=>{});
+        openEmojiEditor({ index: next, value: '', compress: _imageFileToCompressedPNG,
+          save: value => saveEmojiToDb(next, value) });
       };
       bar.appendChild(plus);
     } else {
@@ -12445,7 +12425,7 @@ window.closeLinkModal = function() {
   
     // Сохранение
   function saveEmojiToDb(index, newValue) {
-    if (!auth.currentUser) return;
+    if (!auth.currentUser) return Promise.reject(new Error('Войди в аккаунт'));
     if (index >= EMOJI_SLOTS_MAX) return; // защита от выхода за лимит
     // нормализуем массив до нужной длины, дыры заполняем дефолтами
     if (!Array.isArray(userEmojis)) userEmojis = [];
@@ -12459,12 +12439,8 @@ window.closeLinkModal = function() {
 
     // RTDB лучше хранить как массив через set на child-путь, а читать уметь и объектом тоже
     const emojiRef = ref(db, `${basePath}/users/${__ccCanonicalUid()}/settings/emojis`);
-    set(emojiRef, userEmojis).then(()=>{ try{ applyUserEmojis(); }catch{} }).catch((err)=>{
-      console.warn('emoji save failed', err);
-      // Если PNG слишком большой — Firebase может отвергнуть; покажем юзеру
-      if (newValue && typeof newValue === 'object' && err && /size|too large/i.test(err.message||'')){
-        alert('Картинка слишком большая для БД. Попробуй другую.');
-      }
+    return set(emojiRef, userEmojis).then(()=>{ try{ applyUserEmojis(); }catch{} }).catch((err)=>{
+      throw err;
     });
   }
 
