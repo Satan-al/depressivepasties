@@ -2861,8 +2861,7 @@ html.component-mode #dpGameMapPanel{
     // selects a player; it grants no access to the server or to the room.
     const native = window.__DP_NATIVE__;
     if (params.get('dpStream') !== 'vdo' && native?.streamVersion === 1 &&
-        native.playerUrl === 'https://dp-stream.invalid/player' &&
-        ['Wti6Xdr', VDO_DEFAULT_VIEW_ID].includes(normalizeVdoViewId(viewId) || VDO_DEFAULT_VIEW_ID)) {
+        native.playerUrl === 'https://dp-stream.invalid/player') {
       return native.playerUrl;
     }
     const url = new URL('https://vdo.ninja/');
